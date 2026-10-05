@@ -1148,8 +1148,24 @@ mcmc_single <- function(
     if("min_total_fall" %in% names(priors$batches))
       min_total_fall <- priors$batches$min_total_fall
     candidate_batches <- batch_candidates(snapshot_with_Rt_index_df, min_total_fall)
-    if(is.null(revision_current$batches))
-      revision_current$batches <- initial_batches(candidate_batches, batch_parameters)
+    # start only with those batches without which reported cases are
+    # impossible: candidates containing a fall exceeding max_erroneous
+    if(is.null(revision_current$batches)) {
+      large_falls_df <- snapshot_with_Rt_index_df %>%
+        dplyr::group_by(.data$time_onset) %>%
+        dplyr::arrange(.data$time_reported, .by_group=TRUE) %>%
+        dplyr::mutate(fall=c(0, -diff(.data$cases_reported))) %>%
+        dplyr::ungroup() %>%
+        dplyr::filter(.data$fall > max_erroneous)
+      is_needed <- purrr::map_lgl(seq_len(nrow(candidate_batches)), function(k) {
+        any(large_falls_df$time_reported == candidate_batches$time_detected[k] &
+              large_falls_df$time_onset >= candidate_batches$start[k] &
+              large_falls_df$time_onset < candidate_batches$start[k] +
+              candidate_batches$width[k])
+      })
+      revision_current$batches <- initial_batches(candidate_batches[is_needed, ],
+                                                  batch_parameters)
+    }
   }
 
   reporting_current <- initial_reporting_parameters

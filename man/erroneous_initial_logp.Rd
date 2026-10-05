@@ -13,7 +13,9 @@ erroneous_initial_logp(
   reporting_parameters,
   revision_parameters,
   max_erroneous = 3,
-  mean_erroneous_extra = 0
+  mean_erroneous_extra = 0,
+  phi_batch = 0,
+  max_batch = 0
 )
 }
 \arguments{
@@ -38,12 +40,22 @@ for a single onset day at any one time}
 
 \item{mean_erroneous_extra}{expected number of misdated records present on
 the first reporting day (a single value or one for each element of cases_true)}
+
+\item{phi_batch}{intensity of a batch whose footprint contains the onset
+day and which has not been detected by the first reporting day (zero if none).
+The count of its records, X, on the first reporting day has prior distribution:
+\deqn{X \sim Poisson(phi * I_true * (S(day_onset) - S(day_first)))}
+and the distribution calculated is then that of (E, X) conditional on the
+cases first reported, C = D + E + X.}
+
+\item{max_batch}{maximum count of batch records (zero if there is no batch)}
 }
 \value{
 a matrix of log-probabilities with a row for each element of
 cases_true and a column for each count of erroneous records from zero to
-max_erroneous. If cases_first is impossible for an element of cases_true,
-its row is -Inf.
+max_erroneous. If max_batch exceeds zero, there is a column for each
+combination of counts, with (e, x) in column 1 + e + (max_erroneous + 1) * x.
+If cases_first is impossible for an element of cases_true, its row is -Inf.
 }
 \description{
 If cases are first reported on the onset day, no erroneous records have yet

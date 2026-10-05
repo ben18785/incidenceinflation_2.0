@@ -12,7 +12,10 @@ observation_process_revisions_logp(
   reporting_parameters,
   revision_parameters,
   max_erroneous = 3,
-  misdated_entries = NULL
+  misdated_entries = NULL,
+  batch = NULL,
+  max_batch = 30,
+  use_compiled = TRUE
 )
 }
 \arguments{
@@ -38,6 +41,18 @@ this onset day from neighbouring onset days: a named list of 'initial' and
 'periods' as returned by \code{misdated_entries}. Each can alternatively
 vary across elements of cases_true: 'initial' as a vector and 'periods' as a
 matrix with a row for each element. If NULL (the default) there are none.}
+
+\item{batch}{a named list of 'phi' and 'time_detected' describing a batch of
+erroneous records whose footprint contains the onset day (see
+\code{sample_batches}); or NULL (the default) if there is none. Records
+belonging to the batch are entered at rate phi * I_true * (S(day_1) - S(day_2))
+until the batch is detected, and all are withdrawn on the first reporting
+day on or after time_detected. Their count is summed over along with E.}
+
+\item{max_batch}{maximum count of batch records for the onset day}
+
+\item{use_compiled}{if TRUE (the default) the recursion is carried out by
+compiled code; the alternative is slower and does not allow for batches}
 }
 \value{
 a log-probability or vector of log-probabilities

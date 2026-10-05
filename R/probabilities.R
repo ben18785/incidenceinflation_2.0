@@ -204,19 +204,30 @@ misdated_entries <- function(observation_days, day_onset, cases_by_onset,
 #' @inheritParams observation_process_revisions_logp
 #' @param mean_erroneous_extra expected number of misdated records present on
 #' the first reporting day (a single value or one for each element of cases_true)
+#' @param phi_batch intensity of a batch whose footprint contains the onset
+#' day and which has not been detected by the first reporting day (zero if none).
+#' The count of its records, X, on the first reporting day has prior distribution:
+#' \deqn{X \sim Poisson(phi * I_true * (S(day_onset) - S(day_first)))}
+#' and the distribution calculated is then that of (E, X) conditional on the
+#' cases first reported, C = D + E + X.
+#' @param max_batch maximum count of batch records (zero if there is no batch)
 #'
 #' @return a matrix of log-probabilities with a row for each element of
 #' cases_true and a column for each count of erroneous records from zero to
-#' max_erroneous. If cases_first is impossible for an element of cases_true,
-#' its row is -Inf.
+#' max_erroneous. If max_batch exceeds zero, there is a column for each
+#' combination of counts, with (e, x) in column 1 + e + (max_erroneous + 1) * x.
+#' If cases_first is impossible for an element of cases_true, its row is -Inf.
 erroneous_initial_logp <- function(day_first, cases_first, cases_true, day_onset,
                                    reporting_parameters, revision_parameters,
-                                   max_erroneous=3, mean_erroneous_extra=0) {
+                                   max_erroneous=3, mean_erroneous_extra=0,
+                                   phi_batch=0, max_batch=0) {
   n_cases <- length(cases_true)
-  log_alpha <- matrix(-Inf, nrow=n_cases, ncol=max_erroneous + 1)
+  n_erroneous <- max_erroneous + 1
+  log_alpha <- matrix(-Inf, nrow=n_cases, ncol=n_erroneous * (max_batch + 1))
 
   n_days <- floor(day_first - day_onset)
-  if(n_days < 1 | (revision_parameters$eta == 0 & all(mean_erroneous_extra == 0))) {
+  if(n_days < 1 | (revision_parameters$eta == 0 & all(mean_erroneous_extra == 0) &
+                   phi_batch == 0)) {
     log_alpha[, 1] <- 0
     return(log_alpha)
   }
@@ -234,9 +245,14 @@ erroneous_initial_logp <- function(day_first, cases_first, cases_true, day_onset
   p_unrecorded <- unrecorded_prob(c(day_onset, day_first), day_onset,
                                   reporting_parameters, revision_parameters)
   p_detect <- 1 - p_unrecorded[2] / p_unrecorded[1]
-  for(e in 0:max_erroneous)
-    log_alpha[, e + 1] <- stats::dpois(e, mean_erroneous, log=TRUE) +
-      dbinom_log_safe(rep(cases_first - e, n_cases), cases_true, p_detect)
+  mean_batch <- phi_batch * cases_true * (p_undetected[1] - p_undetected[n_days + 1])
+  for(x in 0:max_batch) {
+    logp_batch <- if(max_batch > 0) stats::dpois(x, mean_batch, log=TRUE) else 0
+    for(e in 0:max_erroneous)
+      log_alpha[, 1 + e + n_erroneous * x] <-
+        stats::dpois(e, mean_erroneous, log=TRUE) + logp_batch +
+        dbinom_log_safe(rep(cases_first - e - x, n_cases), cases_true, p_detect)
+  }
 
   # condition on cases first reported
   log_normaliser <- matrixStats::rowLogSumExps(log_alpha)
@@ -276,13 +292,25 @@ erroneous_initial_logp <- function(day_first, cases_first, cases_true, day_onset
 #' 'periods' as returned by \code{misdated_entries}. Each can alternatively
 #' vary across elements of cases_true: 'initial' as a vector and 'periods' as a
 #' matrix with a row for each element. If NULL (the default) there are none.
+#' @param batch a named list of 'phi' and 'time_detected' describing a batch of
+#' erroneous records whose footprint contains the onset day (see
+#' \code{sample_batches}); or NULL (the default) if there is none. Records
+#' belonging to the batch are entered at rate phi * I_true * (S(day_1) - S(day_2))
+#' until the batch is detected, and all are withdrawn on the first reporting
+#' day on or after time_detected. Their count is summed over along with E.
+#' @param max_batch maximum count of batch records for the onset day
+#' @param use_compiled if TRUE (the default) the recursion is carried out by
+#' compiled code; the alternative is slower and does not allow for batches
 #'
 #' @return a log-probability or vector of log-probabilities
 observation_process_revisions_logp <- function(observation_df, cases_true,
                                                day_onset, reporting_parameters,
                                                revision_parameters,
                                                max_erroneous=3,
-                                               misdated_entries=NULL) {
+                                               misdated_entries=NULL,
+                                               batch=NULL,
+                                               max_batch=30,
+                                               use_compiled=TRUE) {
   observation_days <- observation_df$time_reported
   observation_cases <- observation_df$cases_reported
   if(any(diff(observation_days) <= 0))
@@ -293,6 +321,14 @@ observation_process_revisions_logp <- function(observation_df, cases_true,
   n_cases <- length(cases_true)
   if(eta < 0 | rho <= 0 | rho >= 1)
     return(rep(-Inf, n_cases))
+
+  if(use_compiled)
+    return(observation_process_revisions_compiled_logp(
+      observation_days, observation_cases, cases_true, day_onset,
+      reporting_parameters, revision_parameters, max_erroneous,
+      misdated_entries, batch, max_batch))
+  if(!is.null(batch))
+    stop("Batches are only allowed for if use_compiled is TRUE.")
 
   transitions <- erroneous_transitions(max_erroneous)
   n_transitions <- nrow(transitions)
@@ -360,6 +396,70 @@ observation_process_revisions_logp <- function(observation_df, cases_true,
         log_terms[, transitions$erroneous_current == e, drop=FALSE])
   }
   matrixStats::rowLogSumExps(log_alpha)
+}
+
+#' Prepares inputs for and calls the compiled forward recursion
+#'
+#' @param observation_days vector of days on which cases were reported
+#' @param observation_cases vector of cases reported on those days
+#' @inheritParams observation_process_revisions_logp
+#'
+#' @return a vector of log-probabilities
+observation_process_revisions_compiled_logp <- function(
+    observation_days, observation_cases, cases_true, day_onset,
+    reporting_parameters, revision_parameters, max_erroneous,
+    misdated_entries, batch, max_batch) {
+
+  n_cases <- length(cases_true)
+  num_periods <- length(observation_days) - 1
+  mean_initial_extra <- 0
+  mean_entered_extra <- matrix(0, nrow=n_cases, ncol=num_periods)
+  if(!is.null(misdated_entries)) {
+    mean_initial_extra <- misdated_entries$initial
+    mean_entered_extra <- misdated_entries$periods
+    if(!is.matrix(mean_entered_extra))
+      mean_entered_extra <- matrix(mean_entered_extra, nrow=n_cases,
+                                   ncol=num_periods, byrow=TRUE)
+  }
+
+  # a batch detected by the first reporting day has no effect
+  phi <- 0
+  period_detected <- 0
+  if(!is.null(batch) && observation_days[1] < batch$time_detected) {
+    phi <- batch$phi
+    is_after <- observation_days[-1] >= batch$time_detected
+    period_detected <- if(any(is_after)) which(is_after)[1] else num_periods + 1
+  } else {
+    max_batch <- 0
+  }
+
+  log_alpha <- erroneous_initial_logp(observation_days[1], observation_cases[1],
+                                      cases_true, day_onset,
+                                      reporting_parameters, revision_parameters,
+                                      max_erroneous, mean_initial_extra,
+                                      phi, max_batch)
+
+  p_undetected <- 1 - pgamma_mean_sd(observation_days + 0.5 - day_onset,
+                                     reporting_parameters$mean,
+                                     reporting_parameters$sd)
+  p_unrecorded <- p_undetected
+  if(misdating_prob(revision_parameters) > 0)
+    p_unrecorded <- unrecorded_prob(observation_days, day_onset,
+                                    reporting_parameters, revision_parameters)
+
+  revisions_logp_cpp(
+    cases_true=as.numeric(cases_true),
+    observation_cases=as.numeric(observation_cases),
+    p_detect=-diff(p_unrecorded) / p_unrecorded[-(num_periods + 1)],
+    p_newly_detected=-diff(p_undetected),
+    p_withdrawn=1 - (1 - revision_parameters$rho)^diff(observation_days),
+    eta=revision_parameters$eta,
+    mean_entered_extra=mean_entered_extra,
+    log_alpha_initial=log_alpha,
+    max_erroneous=max_erroneous,
+    phi=phi,
+    period_detected=period_detected,
+    max_batch=max_batch)
 }
 
 #' Calculates observation process log probability density

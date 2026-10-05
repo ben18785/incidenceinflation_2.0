@@ -511,6 +511,30 @@ test_that("metropolis_step_overdispersion works ok", {
   expect_true(list_param_logp$logp > logp_current)
 })
 
+test_that("metropolis_step_overdispersion uses log of prior density", {
+
+  cases_history_rt_df <- df %>%
+    dplyr::select("time_onset", "cases_true") %>%
+    unique() %>%
+    dplyr::mutate(Rt=2)
+  s_params <- list(mean=2, sd=3)
+  prior <- list(mean=10, sd=100)
+
+  # always accepts
+  list_param_logp <- metropolis_step_overdispersion(
+    overdispersion_current=100,
+    logp_current=-Inf,
+    cases_history_rt_df,
+    serial_parameters=s_params,
+    prior_overdispersion_parameter=prior,
+    overdispersion_metropolis_sd=1)
+  overdispersion <- list_param_logp$overdispersion
+  logp_expected <- state_process_nb_logp_all_onsets(
+    overdispersion, cases_history_rt_df, s_params) +
+    dgamma_mean_sd(overdispersion, prior$mean, prior$sd, log=TRUE)
+  expect_equal(list_param_logp$logp, logp_expected)
+})
+
 test_that("maximise_reporting_logp maximises prob", {
   prior_params <- list(mean_mu=2, mean_sigma=100,
                        sd_mu=2, sd_sigma=100)

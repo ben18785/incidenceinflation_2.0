@@ -721,7 +721,8 @@ metropolis_step_overdispersion <- function(
 
   logp_prior <- dgamma_mean_sd(overdispersion_proposed,
                                prior_overdispersion_parameter$mean,
-                               prior_overdispersion_parameter$sd)
+                               prior_overdispersion_parameter$sd,
+                               log=TRUE)
   logp_proposed <- state_process_nb_logp_all_onsets(
     overdispersion_proposed, cases_history_rt_df, serial_parameters
   ) + logp_prior
@@ -962,7 +963,10 @@ mcmc_single <- function(
     # sample reporting parameters
     df_temp <- df_temp %>%
       dplyr::rename(cases_true=cases_estimated)
-    if(i == 1) {
+    # recalculated each iteration since it depends on the true cases, which
+    # have just been updated
+    logp_current_reporting <- NULL
+    if(!maximise) {
       logp_current_reporting <- observation_process_all_times_logp(
         snapshot_with_true_cases_df=df_temp,
         reporting_parameters=reporting_current
@@ -978,7 +982,6 @@ mcmc_single <- function(
       maximise=maximise,
       ndraws=1)
     reporting_temp <- list_reporting_logp$reporting_parameters
-    logp_current_reporting <- list_reporting_logp$logp
     reporting_temp$draw_index <- NULL
     reporting_current <- reporting_temp
     reporting_current$iteration <- i
@@ -999,14 +1002,15 @@ mcmc_single <- function(
         dplyr::select(time_onset, cases_true, Rt) %>%
         unique()
 
-      if(i == 1) {
-        logp_prior <- dgamma_mean_sd(overdispersion_current,
-                                     priors$overdispersion$mean,
-                                     priors$overdispersion$sd)
-        logp_overdispersion <- state_process_nb_logp_all_onsets(
-          overdispersion_current, df_nb_tmp, serial_parameters
-        ) + logp_prior
-      }
+      # recalculated each iteration since it depends on the true cases and Rt,
+      # which have just been updated
+      logp_prior <- dgamma_mean_sd(overdispersion_current,
+                                   priors$overdispersion$mean,
+                                   priors$overdispersion$sd,
+                                   log=TRUE)
+      logp_overdispersion <- state_process_nb_logp_all_onsets(
+        overdispersion_current, df_nb_tmp, serial_parameters
+      ) + logp_prior
 
       list_parameter_logp <- metropolis_step_overdispersion(
         overdispersion_current,
@@ -1017,7 +1021,6 @@ mcmc_single <- function(
         overdispersion_metropolis_sd
       )
       overdispersion_current <- list_parameter_logp$overdispersion
-      logp_overdispersion <- list_parameter_logp$logp
 
       overdipersion_tmp <- dplyr::tibble(
         overdispersion=overdispersion_current,

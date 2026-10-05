@@ -37,7 +37,14 @@ sample_true_cases_single_onset <- function(
                                     kappa, is_negative_binomial,
                                     cases_future, Rt_future)
   } else {
-    possible_cases <- max(0, max_observed_cases - max_erroneous):max_cases
+    # reported cases can exceed true cases by the erroneous records, including
+    # those of any batch whose footprint contains the onset day
+    max_excess <- max_erroneous
+    if(!is.null(batch_for_onset(day_onset, revision_parameters$batches)))
+      max_excess <- max_excess +
+        ifelse(is.null(revision_parameters$max_batch), 30,
+               revision_parameters$max_batch)
+    possible_cases <- max(0, max_observed_cases - max_excess):max_cases
     logps <- conditional_cases_revisions_logp(
       possible_cases, observation_df, cases_history,
       Rt, day_onset, serial_parameters, reporting_parameters,
@@ -1033,6 +1040,15 @@ metropolis_step_revisions <- function(
 #' supplied, priors must contain an element 'revisions' (see
 #' \code{prior_revision_parameters}) and can optionally contain 'max_erroneous'
 #' (which defaults to 3).
+#' If cases can be misdated the list also contains 'pi', 'shifts' and
+#' 'shift_probs' (see \code{unrecorded_prob}) and priors$revisions contains
+#' 'pi_alpha' and 'pi_beta'. Batches of erroneous records are allowed for if
+#' priors contains an element 'batches': a named list of 'beta', 'zeta',
+#' 'phi_mu', 'phi_sigma' and 'rho_batch' (see \code{sample_batches}), which
+#' can also contain priors for these (see \code{sample_batch_parameters}),
+#' 'max_batch' (default 30) and 'min_total_fall' (see \code{batch_candidates}).
+#' Initial batches can be given as an element 'batches' of this list; by
+#' default they are chosen from falls in reported cases which coincide.
 #' @param revision_metropolis_parameters named list of 'eta_step' and 'rho_step'
 #' containing step sizes for Metropolis step for revision parameters (see
 #' \code{propose_revision_parameters})
@@ -1099,7 +1115,9 @@ mcmc_single <- function(
       stop("Initial revision parameters must satisfy: eta > 0 and 0 < rho < 1.")
     if("max_erroneous" %in% names(priors))
       max_erroneous <- priors$max_erroneous
-    check_revisions_possible(snapshot_with_Rt_index_df, max_erroneous)
+    # larger falls in reported cases are possible if there are batches
+    if(!"batches" %in% names(priors))
+      check_revisions_possible(snapshot_with_Rt_index_df, max_erroneous)
     if(misdating_prob(revision_current) > 0) {
       if(!condition_on_future_cases)
         stop("condition_on_future_cases must be TRUE if cases can be misdated.")
@@ -1112,6 +1130,26 @@ mcmc_single <- function(
          abs(sum(revision_current$shift_probs) - 1) > 1e-8)
         stop("Shifts must be non-zero and their probabilities must sum to one.")
     }
+  }
+
+  # batches of erroneous records
+  is_batches <- "batches" %in% names(priors)
+  if(is_batches) {
+    if(!is_revisions)
+      stop("Batches are only allowed for if initial_revision_parameters is supplied.")
+    names_batch <- c("beta", "zeta", "phi_mu", "phi_sigma", "rho_batch")
+    if(!all(names_batch %in% names(priors$batches)))
+      stop("priors$batches must contain: 'beta', 'zeta', 'phi_mu', 'phi_sigma' and 'rho_batch'.")
+    batch_parameters <- priors$batches[names_batch]
+    revision_current$max_batch <- 30
+    if("max_batch" %in% names(priors$batches))
+      revision_current$max_batch <- priors$batches$max_batch
+    min_total_fall <- max_erroneous + 1
+    if("min_total_fall" %in% names(priors$batches))
+      min_total_fall <- priors$batches$min_total_fall
+    candidate_batches <- batch_candidates(snapshot_with_Rt_index_df, min_total_fall)
+    if(is.null(revision_current$batches))
+      revision_current$batches <- initial_batches(candidate_batches, batch_parameters)
   }
 
   reporting_current <- initial_reporting_parameters
@@ -1221,6 +1259,8 @@ mcmc_single <- function(
         max_erroneous=max_erroneous
       ) + prior_reporting_parameters(reporting_current,
                                      priors$reporting)
+      if(is_revisions & !is.finite(logp_current_reporting))
+        stop("Reported cases have zero probability at current parameter values: max_erroneous (or max_batch) may need to be increased.")
     }
     list_reporting_logp <- sample_reporting(
       snapshot_with_true_cases_df=df_temp,
@@ -1264,6 +1304,42 @@ mcmc_single <- function(
       else
         revision_samples <- revision_samples %>%
           dplyr::bind_rows(revision_tmp)
+    }
+
+    # sample batches and the parameters governing them
+    if(is_batches) {
+      lists <- observation_lists(df_temp, reporting_current)
+      revision_current$batches <- sample_batches_step(
+        batches=revision_current$batches,
+        onset_times=lists$onset_times,
+        l_observations=lists$l_observations,
+        cases_by_onset=lists$cases_by_onset,
+        l_reporting=lists$l_reporting,
+        revision_parameters=revision_current,
+        max_erroneous=max_erroneous,
+        batch_parameters=batch_parameters,
+        candidates=candidate_batches)
+      batch_parameters <- sample_batch_parameters(
+        revision_current$batches, batch_parameters, priors$batches,
+        lists$onset_times)
+
+      batches_tmp <- revision_current$batches %>%
+        dplyr::mutate(iteration=i)
+      batch_parameters_tmp <- dplyr::tibble(
+        beta=batch_parameters$beta,
+        zeta=batch_parameters$zeta,
+        rho_batch=batch_parameters$rho_batch,
+        n_batches=nrow(revision_current$batches),
+        iteration=i)
+      if(i == 1) {
+        batches_samples <- batches_tmp
+        batch_parameters_samples <- batch_parameters_tmp
+      } else {
+        batches_samples <- batches_samples %>%
+          dplyr::bind_rows(batches_tmp)
+        batch_parameters_samples <- batch_parameters_samples %>%
+          dplyr::bind_rows(batch_parameters_tmp)
+      }
     }
     reporting_current$iteration <- i
     if(i == 1)
@@ -1361,6 +1437,11 @@ mcmc_single <- function(
   if(is_revisions)
     list_results$revisions <- revision_samples
 
+  if(is_batches) {
+    list_results$batches <- batches_samples
+    list_results$batch_parameters <- batch_parameters_samples
+  }
+
   list_results
 }
 
@@ -1422,6 +1503,13 @@ combine_chains <- function(list_of_results, is_negative_binomial=FALSE) {
 
   if(is_revisions)
     list_combined$revisions <- revisions_overall
+
+  for(name in c("batches", "batch_parameters")) {
+    if(name %in% names(list_of_results[[1]]))
+      list_combined[[name]] <- purrr::map_dfr(
+        seq_along(list_of_results),
+        ~dplyr::mutate(list_of_results[[.]][[name]], chain=.))
+  }
 
   list_combined
 }
@@ -1491,6 +1579,9 @@ mcmc <- function(
       res$overdispersion$chain <- 1
     if(!is.null(initial_revision_parameters))
       res$revisions$chain <- 1
+    for(name in c("batches", "batch_parameters"))
+      if(name %in% names(res))
+        res[[name]] <- dplyr::mutate(res[[name]], chain=1)
   } else {
 
     list_of_results <- vector(mode = "list", length = nchains)

@@ -285,7 +285,11 @@ erroneous_initial_logp <- function(day_first, cases_first, cases_true, day_onset
 #' @param revision_parameters named list of 'eta' (>= 0), the expected number of
 #' erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),
 #' the daily probability an erroneous record is withdrawn. If NULL (the default
-#' where this is optional), reported cases cannot be revised downwards.
+#' where this is optional), reported cases cannot be revised downwards. The
+#' list can also contain 'pi', 'shifts' and 'shift_probs' if cases can be
+#' misdated (see \code{unrecorded_prob}); and 'batches', a tibble of batches of
+#' erroneous records as returned by \code{sample_batches}, along with
+#' 'max_batch', which are used if the batch argument is not supplied.
 #' @inheritParams erroneous_transitions
 #' @param misdated_entries expected numbers of misdated records entered for
 #' this onset day from neighbouring onset days: a named list of 'initial' and
@@ -321,6 +325,13 @@ observation_process_revisions_logp <- function(observation_df, cases_true,
   n_cases <- length(cases_true)
   if(eta < 0 | rho <= 0 | rho >= 1)
     return(rep(-Inf, n_cases))
+
+  # batches can alternatively be carried within the revision parameters
+  if(is.null(batch) & !is.null(revision_parameters$batches)) {
+    batch <- batch_for_onset(day_onset, revision_parameters$batches)
+    if(!is.null(revision_parameters$max_batch))
+      max_batch <- revision_parameters$max_batch
+  }
 
   if(use_compiled)
     return(observation_process_revisions_compiled_logp(

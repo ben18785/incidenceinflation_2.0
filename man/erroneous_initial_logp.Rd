@@ -33,7 +33,11 @@ characterising the reporting delay distribution}
 \item{revision_parameters}{named list of 'eta' (>= 0), the expected number of
 erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),
 the daily probability an erroneous record is withdrawn. If NULL (the default
-where this is optional), reported cases cannot be revised downwards.}
+where this is optional), reported cases cannot be revised downwards. The
+list can also contain 'pi', 'shifts' and 'shift_probs' if cases can be
+misdated (see \code{unrecorded_prob}); and 'batches', a tibble of batches of
+erroneous records as returned by \code{sample_batches}, along with
+'max_batch', which are used if the batch argument is not supplied.}
 
 \item{max_erroneous}{maximum number of erroneous records that can be held
 for a single onset day at any one time}

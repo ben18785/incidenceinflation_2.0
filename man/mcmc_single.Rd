@@ -90,7 +90,16 @@ case counts (see \code{observation_process_revisions_logp}). If NULL (the
 default), reported case counts are assumed never to be revised downwards. If
 supplied, priors must contain an element 'revisions' (see
 \code{prior_revision_parameters}) and can optionally contain 'max_erroneous'
-(which defaults to 3).}
+(which defaults to 3).
+If cases can be misdated the list also contains 'pi', 'shifts' and
+'shift_probs' (see \code{unrecorded_prob}) and priors$revisions contains
+'pi_alpha' and 'pi_beta'. Batches of erroneous records are allowed for if
+priors contains an element 'batches': a named list of 'beta', 'zeta',
+'phi_mu', 'phi_sigma' and 'rho_batch' (see \code{sample_batches}), which
+can also contain priors for these (see \code{sample_batch_parameters}),
+'max_batch' (default 30) and 'min_total_fall' (see \code{batch_candidates}).
+Initial batches can be given as an element 'batches' of this list; by
+default they are chosen from falls in reported cases which coincide.}
 
 \item{revision_metropolis_parameters}{named list of 'eta_step' and 'rho_step'
 containing step sizes for Metropolis step for revision parameters (see

@@ -333,6 +333,7 @@ thin_series <- function(case_obs) {
 #'
 #' @inheritParams true_cases
 #' @inheritParams observed_cases
+#' @inheritParams observed_cases_revisions
 #' @param thinned a Boolean indicating whether to thin cases to only informative time points
 #'
 #' @return a tibble with observed case trajectories for each time of onset
@@ -364,7 +365,8 @@ generate_snapshots <- function(days_total, Rt_function, serial_parameters,
                                days_max_follow_up=30,
                                initial_parameters=list(mean=30, length=20),
                                serial_max=40,
-                               revision_parameters=NULL) {
+                               revision_parameters=NULL,
+                               batches=NULL) {
 
   check_parameter_names(reporting_parameters,
                         serial_parameters)
@@ -376,14 +378,215 @@ generate_snapshots <- function(days_total, Rt_function, serial_parameters,
     serial_max=serial_max
   )
 
-  reported_cases <- observed_cases(
-    cases_true=real_cases,
-    reporting_parameters=reporting_parameters,
-    days_max_follow_up=days_max_follow_up,
-    revision_parameters=revision_parameters)
+  is_misdating <- !is.null(revision_parameters) &&
+    misdating_prob(revision_parameters) > 0
+  if(is_misdating | !is.null(batches))
+    reported_cases <- observed_cases_revisions(
+      cases_true=real_cases,
+      reporting_parameters=reporting_parameters,
+      revision_parameters=revision_parameters,
+      days_max_follow_up=days_max_follow_up,
+      batches=batches)
+  else
+    reported_cases <- observed_cases(
+      cases_true=real_cases,
+      reporting_parameters=reporting_parameters,
+      days_max_follow_up=days_max_follow_up,
+      revision_parameters=revision_parameters)
 
   if(thinned)
     reported_cases <- thin_series(reported_cases)
 
   reported_cases
+}
+
+#' Draws batches of erroneous records from their prior
+#'
+#' Onset days are considered in order. An onset day lying within the footprint
+#' of an earlier batch starts no batch; any other onset day starts a batch with
+#' probability beta. A batch has a footprint of width 1 + Poisson(zeta) onset
+#' days, a gamma-distributed intensity and is detected a geometrically
+#' distributed number of days after its footprint starts.
+#'
+#' @param days_total number of onset days
+#' @param batch_parameters named list of 'beta', the probability a batch starts
+#' on an onset day; 'zeta', the mean number of onset days beyond the first in a
+#' footprint; 'phi_mu' and 'phi_sigma', the mean and sd of the gamma
+#' distribution of intensities; and 'rho_batch', the daily probability a batch
+#' is detected
+#'
+#' @return a tibble with a row for each batch and columns: 'start', the first
+#' onset day of its footprint; 'width', the number of onset days in its
+#' footprint; 'phi', its intensity; and 'time_detected', the day on which it
+#' is detected
+#' @export
+sample_batches <- function(days_total, batch_parameters) {
+  starts <- c()
+  widths <- c()
+  day <- 1
+  while(day <= days_total) {
+    if(stats::runif(1) < batch_parameters$beta) {
+      width <- 1 + stats::rpois(1, batch_parameters$zeta)
+      starts <- c(starts, day)
+      widths <- c(widths, width)
+      day <- day + width
+    } else {
+      day <- day + 1
+    }
+  }
+  n_batches <- length(starts)
+  dplyr::tibble(
+    start=as.numeric(starts),
+    width=as.numeric(widths),
+    phi=stats::rgamma(n_batches,
+                      shape=batch_parameters$phi_mu^2 / batch_parameters$phi_sigma^2,
+                      rate=batch_parameters$phi_mu / batch_parameters$phi_sigma^2),
+    time_detected=as.numeric(starts) + 1 +
+      stats::rgeom(n_batches, batch_parameters$rho_batch))
+}
+
+#' Finds the batch (if any) whose footprint contains an onset day
+#'
+#' @param day_onset an onset day
+#' @param batches a tibble as returned by \code{sample_batches} or NULL
+#'
+#' @return a named list of 'phi' and 'time_detected' or NULL if the onset day
+#' is in no footprint
+batch_for_onset <- function(day_onset, batches) {
+  if(is.null(batches) || nrow(batches) == 0)
+    return(NULL)
+  index <- which(batches$start <= day_onset &
+                   day_onset < batches$start + batches$width)
+  if(length(index) == 0)
+    return(NULL)
+  if(length(index) > 1)
+    stop("Footprints of batches must not overlap.")
+  list(phi=batches$phi[index], time_detected=batches$time_detected[index])
+}
+
+#' Generate reported case trajectories allowing for all types of revision
+#'
+#' Reported cases for each onset day are simulated day by day. As well as
+#' genuine cases being detected, reported counts can include: spurious records,
+#' which are entered and later deleted; misdated records, which are genuine
+#' cases recorded under a nearby onset day until corrected, when they move to
+#' their true onset day; and records belonging to a batch, which accumulate for
+#' the onset days in its footprint until the batch is detected, when all are
+#' withdrawn. No erroneous record is entered on its onset day itself, and a
+#' record cannot be given an onset day on or after the day it is entered.
+#'
+#' @inheritParams observed_cases
+#' @param revision_parameters named list of 'eta', 'rho' and optionally 'pi',
+#' 'shifts' and 'shift_probs' (see \code{unrecorded_prob}); or NULL
+#' @param batches a tibble of batches as returned by \code{sample_batches}; or NULL
+#'
+#' @return a tibble with observed case trajectories for each time of onset
+#' @export
+observed_cases_revisions <- function(cases_true, reporting_parameters,
+                                     revision_parameters=NULL,
+                                     days_max_follow_up=30,
+                                     batches=NULL) {
+
+  if(methods::is(reporting_parameters, "list"))
+    reporting_parameters <- create_reporting_from_single_parameters_df(
+      seq_along(cases_true),
+      reporting_parameters)
+  if(nrow(reporting_parameters) != length(cases_true))
+    stop("Number of rows in reporting parameters tibble must match number of cases.")
+
+  eta <- 0
+  rho <- 0
+  p_misdated <- 0
+  shifts <- c()
+  shift_probs <- c()
+  if(!is.null(revision_parameters)) {
+    eta <- revision_parameters$eta
+    rho <- revision_parameters$rho
+    p_misdated <- misdating_prob(revision_parameters)
+    if(p_misdated > 0) {
+      shifts <- revision_parameters$shifts
+      shift_probs <- revision_parameters$shift_probs
+    }
+  }
+
+  d_max <- length(cases_true)
+  n_shifts <- length(shifts)
+  I_detected <- rep(0, d_max) # genuine cases detected, wherever recorded
+  I_genuine <- rep(0, d_max) # genuine cases recorded under their onset day
+  I_spurious <- rep(0, d_max)
+  I_batch <- rep(0, d_max)
+  # misdated records by true onset day (rows) and shift (columns)
+  m_misdated <- matrix(0, nrow=d_max, ncol=max(n_shifts, 1))
+  l_batch <- purrr::map(seq_len(d_max), ~batch_for_onset(., batches))
+  m_reported <- matrix(NA, nrow=d_max, ncol=d_max)
+  diag(m_reported) <- 0
+
+  for(day in seq_len(d_max)[-1]) {
+    for(t in 1:(day - 1)) {
+      r_params <- list(mean=reporting_parameters$mean[t],
+                       sd=reporting_parameters$sd[t])
+      p_newly_detected <- undetected_prob(day - 1 + 0.5, t, r_params) -
+        undetected_prob(day + 0.5, t, r_params)
+
+      # corrections of misdated records present on previous day
+      if(n_shifts > 0) {
+        corrected <- stats::rbinom(n_shifts, m_misdated[t, ], rho)
+        m_misdated[t, ] <- m_misdated[t, ] - corrected
+        I_genuine[t] <- I_genuine[t] + sum(corrected)
+      }
+
+      # newly detected genuine cases, some of which are misdated
+      new_cases <- observed_cases_single(I_detected[t], cases_true[t],
+                                         day, day - 1, t, r_params)
+      I_detected[t] <- I_detected[t] + new_cases
+      new_misdated <- 0
+      if(n_shifts > 0 & new_cases > 0) {
+        is_possible <- shifts <= day - t - 1
+        if(any(is_possible)) {
+          new_misdated <- stats::rbinom(1, new_cases,
+                                        p_misdated * sum(shift_probs[is_possible]))
+          if(new_misdated > 0)
+            m_misdated[t, is_possible] <- m_misdated[t, is_possible] +
+              as.vector(stats::rmultinom(1, new_misdated, shift_probs[is_possible]))
+        }
+      }
+      I_genuine[t] <- I_genuine[t] + new_cases - new_misdated
+
+      # spurious records
+      withdrawn <- stats::rbinom(1, I_spurious[t], rho)
+      entered <- stats::rpois(1, eta * cases_true[t] * p_newly_detected)
+      I_spurious[t] <- I_spurious[t] + entered - withdrawn
+
+      # records belonging to a batch
+      batch <- l_batch[[t]]
+      if(!is.null(batch)) {
+        if(day < batch$time_detected)
+          I_batch[t] <- I_batch[t] +
+            stats::rpois(1, batch$phi * cases_true[t] * p_newly_detected)
+        else
+          I_batch[t] <- 0
+      }
+    }
+
+    # misdated records are reported under the onset day they were given
+    I_misdated <- rep(0, d_max)
+    for(i in seq_len(n_shifts)) {
+      days_given <- seq_len(d_max) + shifts[i]
+      is_within <- days_given >= 1 & days_given <= d_max
+      I_misdated[days_given[is_within]] <- I_misdated[days_given[is_within]] +
+        m_misdated[is_within, i]
+    }
+    onset_days <- 1:(day - 1)
+    m_reported[onset_days, day] <- (I_genuine + I_spurious + I_batch +
+                                      I_misdated)[onset_days]
+  }
+
+  purrr::map_dfr(seq_len(d_max), function(t) {
+    obs_time <- seq(t, min(c(d_max, t + days_max_follow_up)), 1)
+    dplyr::tibble(
+      time_onset=rep(t, length(obs_time)),
+      time_reported=obs_time,
+      cases_reported=m_reported[t, obs_time],
+      cases_true=cases_true[t])
+  })
 }

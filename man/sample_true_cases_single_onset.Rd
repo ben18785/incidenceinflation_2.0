@@ -19,7 +19,8 @@ sample_true_cases_single_onset(
   cases_future = NULL,
   Rt_future = NULL,
   revision_parameters = NULL,
-  max_erroneous = 3
+  max_erroneous = 3,
+  f_observation_logp = NULL
 )
 }
 \arguments{
@@ -61,6 +62,12 @@ where this is optional), reported cases cannot be revised downwards.}
 
 \item{max_erroneous}{maximum number of erroneous records that can be held
 for a single onset day at any one time}
+
+\item{f_observation_logp}{a function taking a vector of true case counts and
+returning the log-probability of all observations which depend on them. If
+NULL (the default) this is \code{observation_process_logp} for this onset
+day. With misdating, observations for neighbouring onset days also depend on
+the true case count (see \code{misdating_observation_logp_function}).}
 }
 \value{
 a sampled case count arising on a given onset day

@@ -13,6 +13,7 @@
 #'
 #' @param max_cases maximum possible cases thought to arise on a given day
 #' @inheritParams conditional_cases_logp
+#' @inheritParams conditional_cases_revisions_logp
 #' @param ndraws number of draws of cases
 #' @param maximise rather than sample a case count give the case count with the
 #' maximum probability (by default is FALSE)
@@ -23,7 +24,8 @@ sample_true_cases_single_onset <- function(
   Rt, day_onset, serial_parameters, reporting_parameters,
   ndraws=1, maximise=FALSE, kappa=NULL, is_negative_binomial=FALSE,
   cases_future=NULL, Rt_future=NULL,
-  revision_parameters=NULL, max_erroneous=3) {
+  revision_parameters=NULL, max_erroneous=3,
+  f_observation_logp=NULL) {
 
   max_observed_cases <- max(observation_df$cases_reported)
   if(max_observed_cases > max_cases)
@@ -42,7 +44,8 @@ sample_true_cases_single_onset <- function(
       revision_parameters,
       kappa, is_negative_binomial,
       cases_future, Rt_future,
-      max_erroneous)
+      max_erroneous,
+      f_observation_logp=f_observation_logp)
   }
   probs <- exp(logps - matrixStats::logSumExp(logps))
   if(dplyr::last(probs) > 0.01)
@@ -149,6 +152,32 @@ sample_cases_history <- function(
       observation_history_df$cases_estimated)
   }
 
+  is_misdating <- !is.null(revision_parameters) &&
+    misdating_prob(revision_parameters) > 0
+  if(is_misdating) {
+    if(!condition_on_future)
+      stop("cases_true_current must be supplied if cases can be misdated.")
+    observation_sorted_df <- observation_history_df %>%
+      dplyr::arrange(.data$time_onset, .data$time_reported)
+    l_observations <- split(
+      as.data.frame(observation_sorted_df[, c("time_reported", "cases_reported")]),
+      observation_sorted_df$time_onset)
+    reporting_by_onset_df <- observation_sorted_df %>%
+      dplyr::select("time_onset", "reporting_piece_index") %>%
+      unique() %>%
+      dplyr::left_join(reporting_parameters, by="reporting_piece_index")
+    l_reporting <- stats::setNames(
+      purrr::map(seq_len(nrow(reporting_by_onset_df)),
+                 ~list(mean=reporting_by_onset_df$mean[.],
+                       sd=reporting_by_onset_df$sd[.])),
+      reporting_by_onset_df$time_onset)
+    cases_estimated_df <- observation_sorted_df %>%
+      dplyr::select("time_onset", "cases_estimated") %>%
+      unique()
+    cases_by_onset <- stats::setNames(cases_estimated_df$cases_estimated,
+                                      cases_estimated_df$time_onset)
+  }
+
   for(i in seq_along(onset_times_uncertain_period)) {
 
     onset_time <- onset_times_uncertain_period[i]
@@ -184,6 +213,12 @@ sample_cases_history <- function(
       Rt_future <- Rt_function(post_observation_df$time_onset)
     }
 
+    f_observation_logp <- NULL
+    if(is_misdating)
+      f_observation_logp <- misdating_observation_logp_function(
+        onset_time, l_observations, cases_by_onset, l_reporting,
+        revision_parameters, max_erroneous)
+
     case <- sample_true_cases_single_onset(
       observation_df=snapshots_at_onset_time_df,
       cases_history=cases_history,
@@ -199,9 +234,12 @@ sample_cases_history <- function(
       cases_future=cases_future,
       Rt_future=Rt_future,
       revision_parameters=revision_parameters,
-      max_erroneous=max_erroneous)
+      max_erroneous=max_erroneous,
+      f_observation_logp=f_observation_logp)
     index_onset_time <- which(observation_history_df$time_onset==onset_time)
     observation_history_df$cases_estimated[index_onset_time] <- case
+    if(is_misdating)
+      cases_by_onset[as.character(onset_time)] <- case
   }
   observation_history_df
 }
@@ -820,12 +858,15 @@ sample_reporting <- function(
 #' Proposals are made using normal kernels centered at the current values of
 #' log(eta) and logit(rho), so that proposed values always lie within bounds.
 #'
-#' @param current_revision_parameters named list of 'eta' and 'rho'
-#' @param metropolis_parameters named list of 'eta_step' and 'rho_step'
-#' containing step sizes (on the log and logit scales respectively). A step
-#' size of zero holds a parameter fixed at its current value.
+#' @param current_revision_parameters named list of 'eta' and 'rho' and, if
+#' cases can be misdated, 'pi', 'shifts' and 'shift_probs' (see
+#' \code{unrecorded_prob})
+#' @param metropolis_parameters named list of 'eta_step' and 'rho_step' (and
+#' optionally 'pi_step') containing step sizes (on the log, logit and logit
+#' scales respectively). A step size of zero holds a parameter fixed at its
+#' current value.
 #'
-#' @return a named list of 'eta' and 'rho'
+#' @return a named list like current_revision_parameters with proposed values
 propose_revision_parameters <- function(
     current_revision_parameters,
     metropolis_parameters) {
@@ -834,32 +875,51 @@ propose_revision_parameters <- function(
                           metropolis_parameters$eta_step)
   logit_rho <- stats::rnorm(1, stats::qlogis(current_revision_parameters$rho),
                             metropolis_parameters$rho_step)
-  list(eta=exp(log_eta),
-       rho=stats::plogis(logit_rho))
+  proposed_revision_parameters <- current_revision_parameters
+  proposed_revision_parameters$eta <- exp(log_eta)
+  proposed_revision_parameters$rho <- stats::plogis(logit_rho)
+
+  # misdating probability (if cases can be misdated)
+  if(misdating_prob(current_revision_parameters) > 0 &
+     !is.null(metropolis_parameters$pi_step)) {
+    logit_pi <- stats::rnorm(1, stats::qlogis(current_revision_parameters$pi),
+                             metropolis_parameters$pi_step)
+    proposed_revision_parameters$pi <- stats::plogis(logit_pi)
+  }
+  proposed_revision_parameters
 }
 
 #' Prior for revision parameters
 #'
-#' A gamma prior is assumed for eta and a beta prior for rho.
+#' A gamma prior is assumed for eta and a beta prior for rho (and for pi, if
+#' cases can be misdated).
 #'
 #' @inheritParams propose_revision_parameters
 #' @param prior_parameters named list with elements 'eta_mu', 'eta_sigma',
-#' representing the mean and sd of the gamma prior for eta; and 'rho_alpha',
-#' 'rho_beta' representing the shape parameters of the beta prior for rho
+#' representing the mean and sd of the gamma prior for eta; 'rho_alpha',
+#' 'rho_beta' representing the shape parameters of the beta prior for rho; and,
+#' if cases can be misdated, 'pi_alpha', 'pi_beta' representing the shape
+#' parameters of the beta prior for pi
 #'
 #' @return a log-probability density
 prior_revision_parameters <- function(
     current_revision_parameters,
     prior_parameters) {
 
-  dgamma_mean_sd(current_revision_parameters$eta,
-                 prior_parameters$eta_mu,
-                 prior_parameters$eta_sigma,
-                 log=TRUE) +
+  logp <- dgamma_mean_sd(current_revision_parameters$eta,
+                         prior_parameters$eta_mu,
+                         prior_parameters$eta_sigma,
+                         log=TRUE) +
     stats::dbeta(current_revision_parameters$rho,
                  prior_parameters$rho_alpha,
                  prior_parameters$rho_beta,
                  log=TRUE)
+  if(misdating_prob(current_revision_parameters) > 0)
+    logp <- logp + stats::dbeta(current_revision_parameters$pi,
+                                prior_parameters$pi_alpha,
+                                prior_parameters$pi_beta,
+                                log=TRUE)
+  logp
 }
 
 #' Log-determinant of Jacobian of transformation from (log(eta), logit(rho))
@@ -874,7 +934,11 @@ prior_revision_parameters <- function(
 log_jacobian_revision_parameters <- function(current_revision_parameters) {
   eta <- current_revision_parameters$eta
   rho <- current_revision_parameters$rho
-  log(eta) + log(rho) + log(1 - rho)
+  log_jacobian <- log(eta) + log(rho) + log(1 - rho)
+  p_misdated <- misdating_prob(current_revision_parameters)
+  if(p_misdated > 0)
+    log_jacobian <- log_jacobian + log(p_misdated) + log(1 - p_misdated)
+  log_jacobian
 }
 
 #' Sample revision parameters using a single Metropolis step
@@ -1036,6 +1100,18 @@ mcmc_single <- function(
     if("max_erroneous" %in% names(priors))
       max_erroneous <- priors$max_erroneous
     check_revisions_possible(snapshot_with_Rt_index_df, max_erroneous)
+    if(misdating_prob(revision_current) > 0) {
+      if(!condition_on_future_cases)
+        stop("condition_on_future_cases must be TRUE if cases can be misdated.")
+      if(revision_current$pi >= 1)
+        stop("Initial misdating probability must be less than one.")
+      if(is.null(revision_current$shifts) |
+         length(revision_current$shifts) != length(revision_current$shift_probs))
+        stop("If cases can be misdated, 'shifts' and 'shift_probs' of equal length must be given.")
+      if(any(revision_current$shifts == 0) |
+         abs(sum(revision_current$shift_probs) - 1) > 1e-8)
+        stop("Shifts must be non-zero and their probabilities must sum to one.")
+    }
   }
 
   reporting_current <- initial_reporting_parameters
@@ -1181,6 +1257,7 @@ mcmc_single <- function(
       revision_tmp <- dplyr::tibble(
         eta=revision_current$eta,
         rho=revision_current$rho,
+        pi=misdating_prob(revision_current),
         iteration=i)
       if(i == 1)
         revision_samples <- revision_tmp

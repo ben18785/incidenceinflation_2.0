@@ -11,7 +11,8 @@ observation_process_revisions_logp(
   day_onset,
   reporting_parameters,
   revision_parameters,
-  max_erroneous = 3
+  max_erroneous = 3,
+  misdated_entries = NULL
 )
 }
 \arguments{
@@ -31,6 +32,12 @@ where this is optional), reported cases cannot be revised downwards.}
 
 \item{max_erroneous}{maximum number of erroneous records that can be held
 for a single onset day at any one time}
+
+\item{misdated_entries}{expected numbers of misdated records entered for
+this onset day from neighbouring onset days: a named list of 'initial' and
+'periods' as returned by \code{misdated_entries}. Each can alternatively
+vary across elements of cases_true: 'initial' as a vector and 'periods' as a
+matrix with a row for each element. If NULL (the default) there are none.}
 }
 \value{
 a log-probability or vector of log-probabilities

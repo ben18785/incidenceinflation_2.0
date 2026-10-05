@@ -7,14 +7,17 @@
 propose_revision_parameters(current_revision_parameters, metropolis_parameters)
 }
 \arguments{
-\item{current_revision_parameters}{named list of 'eta' and 'rho'}
+\item{current_revision_parameters}{named list of 'eta' and 'rho' and, if
+cases can be misdated, 'pi', 'shifts' and 'shift_probs' (see
+\code{unrecorded_prob})}
 
-\item{metropolis_parameters}{named list of 'eta_step' and 'rho_step'
-containing step sizes (on the log and logit scales respectively). A step
-size of zero holds a parameter fixed at its current value.}
+\item{metropolis_parameters}{named list of 'eta_step' and 'rho_step' (and
+optionally 'pi_step') containing step sizes (on the log, logit and logit
+scales respectively). A step size of zero holds a parameter fixed at its
+current value.}
 }
 \value{
-a named list of 'eta' and 'rho'
+a named list like current_revision_parameters with proposed values
 }
 \description{
 Proposals are made using normal kernels centered at the current values of

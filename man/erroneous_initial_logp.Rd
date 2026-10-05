@@ -12,7 +12,8 @@ erroneous_initial_logp(
   day_onset,
   reporting_parameters,
   revision_parameters,
-  max_erroneous = 3
+  max_erroneous = 3,
+  mean_erroneous_extra = 0
 )
 }
 \arguments{
@@ -34,6 +35,9 @@ where this is optional), reported cases cannot be revised downwards.}
 
 \item{max_erroneous}{maximum number of erroneous records that can be held
 for a single onset day at any one time}
+
+\item{mean_erroneous_extra}{expected number of misdated records present on
+the first reporting day (a single value or one for each element of cases_true)}
 }
 \value{
 a matrix of log-probabilities with a row for each element of

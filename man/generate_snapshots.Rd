@@ -14,7 +14,8 @@ generate_snapshots(
   days_max_follow_up = 30,
   initial_parameters = list(mean = 30, length = 20),
   serial_max = 40,
-  revision_parameters = NULL
+  revision_parameters = NULL,
+  batches = NULL
 )
 }
 \arguments{
@@ -48,6 +49,8 @@ distribution}
 erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),
 the daily probability an erroneous record is withdrawn. If NULL (the default
 where this is optional), reported cases cannot be revised downwards.}
+
+\item{batches}{a tibble of batches as returned by \code{sample_batches}; or NULL}
 }
 \value{
 a tibble with observed case trajectories for each time of onset

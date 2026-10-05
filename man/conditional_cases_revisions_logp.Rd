@@ -20,7 +20,8 @@ conditional_cases_revisions_logp(
   cases_future = NULL,
   Rt_future = NULL,
   max_erroneous = 3,
-  log_negligible = 50
+  log_negligible = 50,
+  f_observation_logp = NULL
 )
 }
 \arguments{
@@ -60,6 +61,12 @@ for a single onset day at any one time}
 
 \item{log_negligible}{difference in log-probability from a pilot case count
 beyond which case counts are assigned zero probability}
+
+\item{f_observation_logp}{a function taking a vector of true case counts and
+returning the log-probability of all observations which depend on them. If
+NULL (the default) this is \code{observation_process_logp} for this onset
+day. With misdating, observations for neighbouring onset days also depend on
+the true case count (see \code{misdating_observation_logp_function}).}
 }
 \value{
 a vector of (unnormalised) log-probabilities

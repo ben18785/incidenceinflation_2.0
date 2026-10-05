@@ -8,7 +8,9 @@ to (eta, rho)}
 log_jacobian_revision_parameters(current_revision_parameters)
 }
 \arguments{
-\item{current_revision_parameters}{named list of 'eta' and 'rho'}
+\item{current_revision_parameters}{named list of 'eta' and 'rho' and, if
+cases can be misdated, 'pi', 'shifts' and 'shift_probs' (see
+\code{unrecorded_prob})}
 }
 \value{
 a log-determinant

@@ -20,19 +20,24 @@ time_onset, time_reported, cases_reported, cases_true}
 
 \item{reporting_parameters}{a tibble with columns: 'reporting_piece_index', 'mean', 'sd'}
 
-\item{current_revision_parameters}{named list of 'eta' and 'rho'}
+\item{current_revision_parameters}{named list of 'eta' and 'rho' and, if
+cases can be misdated, 'pi', 'shifts' and 'shift_probs' (see
+\code{unrecorded_prob})}
 
 \item{logp_current}{the value of the log-probability at current parameter
 values: this is the sum of \code{observation_process_all_times_logp},
 \code{prior_revision_parameters} and \code{log_jacobian_revision_parameters}}
 
 \item{prior_parameters}{named list with elements 'eta_mu', 'eta_sigma',
-representing the mean and sd of the gamma prior for eta; and 'rho_alpha',
-'rho_beta' representing the shape parameters of the beta prior for rho}
+representing the mean and sd of the gamma prior for eta; 'rho_alpha',
+'rho_beta' representing the shape parameters of the beta prior for rho; and,
+if cases can be misdated, 'pi_alpha', 'pi_beta' representing the shape
+parameters of the beta prior for pi}
 
-\item{metropolis_parameters}{named list of 'eta_step' and 'rho_step'
-containing step sizes (on the log and logit scales respectively). A step
-size of zero holds a parameter fixed at its current value.}
+\item{metropolis_parameters}{named list of 'eta_step' and 'rho_step' (and
+optionally 'pi_step') containing step sizes (on the log, logit and logit
+scales respectively). A step size of zero holds a parameter fixed at its
+current value.}
 
 \item{max_erroneous}{maximum number of erroneous records that can be held
 for a single onset day at any one time}

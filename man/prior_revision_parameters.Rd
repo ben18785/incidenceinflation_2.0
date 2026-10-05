@@ -7,15 +7,20 @@
 prior_revision_parameters(current_revision_parameters, prior_parameters)
 }
 \arguments{
-\item{current_revision_parameters}{named list of 'eta' and 'rho'}
+\item{current_revision_parameters}{named list of 'eta' and 'rho' and, if
+cases can be misdated, 'pi', 'shifts' and 'shift_probs' (see
+\code{unrecorded_prob})}
 
 \item{prior_parameters}{named list with elements 'eta_mu', 'eta_sigma',
-representing the mean and sd of the gamma prior for eta; and 'rho_alpha',
-'rho_beta' representing the shape parameters of the beta prior for rho}
+representing the mean and sd of the gamma prior for eta; 'rho_alpha',
+'rho_beta' representing the shape parameters of the beta prior for rho; and,
+if cases can be misdated, 'pi_alpha', 'pi_beta' representing the shape
+parameters of the beta prior for pi}
 }
 \value{
 a log-probability density
 }
 \description{
-A gamma prior is assumed for eta and a beta prior for rho.
+A gamma prior is assumed for eta and a beta prior for rho (and for pi, if
+cases can be misdated).
 }

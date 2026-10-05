@@ -102,7 +102,9 @@ interval.
 increments are independent across onset days.
 \item $E(t\given t_0)=0$, so that $D(t\given t_0)=C(t\given t_0)$. This is an
 approximation: it assumes that no erroneous records are present at the first
-observation.
+observation. Since $D$ cannot decrease, it implies that
+$C(t\given t_j)\ge C(t\given t_0)$ for all $j$: the reported count for an onset
+day can never fall below the count first reported.
 \end{enumerate}
 
 \paragraph{Properties.}
@@ -144,7 +146,13 @@ has probability zero. The likelihood contribution of onset day $t$ is
 \begin{equation}\label{eq:lik}
 L_t\bigl(I(t);\theta,\eta,\rho\bigr) := \sum_{e=0}^{\Emax}\alpha_J(e;t),
 \end{equation}
-at a cost of $O(J\,\Emax^3)$ per value of $I(t)$.
+at a cost of $O(J\,\Emax^3)$ per value of $I(t)$. The likelihood is zero for
+every value of $I(t)$ unless the reported count never falls by more than $\Emax$
+from any earlier count, that is unless
+\begin{equation}\label{eq:feasible}
+\max_{j<k}\bigl[C(t\given t_j)-C(t\given t_k)\bigr]\le\Emax ,
+\end{equation}
+and unless convention (iii) is respected.
 
 \section{Changes to the sampling algorithm}
 
@@ -166,17 +174,41 @@ q\bigl(I(t)\bigr) ={}& L_t\bigl(I(t);\theta,\eta,\rho\bigr)
 \end{equation}
 The lower bound $I(t)\ge C(t\given t_J)$ in equation (2.5) of \cite{bajaj2025}
 is removed; values of $I(t)$ that are too small to be consistent with the data
-receive zero probability through \eqref{eq:forward}. The update remains a draw
+receive zero probability through \eqref{eq:forward}. In particular
+$I(t)\ge\max_j C(t\given t_j)-\Emax$. The update remains a draw
 from a one-dimensional discrete distribution.
 
 \paragraph{Sampling the reporting parameters.} Equation (2.7) of
 \cite{bajaj2025} becomes
-\begin{equation}
-p\bigl(\theta,\eta,\rho \,\big|\, \{I(t)\}_{t=1}^{T},\{C(t\given t_j)\}\bigr)
-\propto p(\theta)\,p(\eta)\,p(\rho)\prod_{t=1}^{T}L_t\bigl(I(t);\theta,\eta,\rho\bigr),
+\begin{equation}\label{eq:theta}
+p\bigl(\theta \,\big|\, \eta,\rho,\{I(t)\}_{t=1}^{T},\{C(t\given t_j)\}\bigr)
+\propto p(\theta)\prod_{t=1}^{T}L_t\bigl(I(t);\theta,\eta,\rho\bigr),
 \end{equation}
-which is sampled by random-walk Metropolis as before, with $\eta$ and $\rho$
-added to the block.
+which is sampled by random-walk Metropolis as before, holding $\eta$ and $\rho$
+fixed.
+
+\paragraph{Sampling the revision parameters.} This is an additional step, which
+follows the update of $\theta$. The conditional posterior is
+\begin{equation}\label{eq:revision}
+p\bigl(\eta,\rho \,\big|\, \theta,\{I(t)\}_{t=1}^{T},\{C(t\given t_j)\}\bigr)
+\propto p(\eta)\,p(\rho)\prod_{t=1}^{T}L_t\bigl(I(t);\theta,\eta,\rho\bigr).
+\end{equation}
+Because both parameters are bounded and $\eta$ is expected to lie close to
+zero, proposals are made on a transformed scale,
+\begin{equation}
+\log\eta' \sim \mathcal{N}\bigl(\log\eta,\,\sigma_\eta^2\bigr),
+\qquad
+\operatorname{logit}\rho' \sim \mathcal{N}\bigl(\operatorname{logit}\rho,\,\sigma_\rho^2\bigr),
+\end{equation}
+and the pair $(\eta',\rho')$ is accepted with probability $\min(1,r)$, where
+\begin{equation}
+r = \frac{p(\eta')\,p(\rho')\prod_{t=1}^{T}L_t\bigl(I(t);\theta,\eta',\rho'\bigr)}
+         {p(\eta)\,p(\rho)\prod_{t=1}^{T}L_t\bigl(I(t);\theta,\eta,\rho\bigr)}
+    \times\frac{\eta'\,\rho'\,(1-\rho')}{\eta\,\rho\,(1-\rho)} ,
+\end{equation}
+the second factor being the Jacobian of the transformation. Setting
+$\sigma_\rho=0$ holds $\rho$ fixed at its initial value. We assume a gamma prior
+for $\eta$ and a beta prior for $\rho$.
 
 \section{Remarks}
 
@@ -184,8 +216,9 @@ added to the block.
 \item \emph{Identifiability.} The parameters $\eta$ and $\rho$ are informed
 only by the rare intervals in which $\Delta C_j(t)<0$. An erroneous record not
 withdrawn by $t_J$ is indistinguishable from a genuine case. Informative priors
-concentrated near zero are therefore advisable (for example
-$\eta\sim\operatorname{beta}(1,500)$), and it may be preferable to fix $\rho$.
+concentrated near zero are therefore advisable (for example a gamma prior for
+$\eta$ with mean and standard deviation both equal to $0.002$), and it may be
+preferable to fix $\rho$.
 \item \emph{Nowcasts.} For recent onset days some of $C(t\given t_J)$ may be
 erroneous, so the posterior for $I(t)$ is shifted slightly downwards and
 widened relative to the original model.
@@ -195,8 +228,49 @@ late genuine report on day $t^*$. Modelling the two jointly would couple onset
 days and require block updates of $\bigl(I(t),I(t^*)\bigr)$.
 \item \emph{Truncation.} $\Emax$ should be chosen so that the posterior
 probability of $E(t\given t_j)=\Emax$ is negligible; this can be checked from
-the forward probabilities.
+the forward probabilities. By \eqref{eq:feasible} it must be at least as large
+as the largest fall in reported cases seen in the data, and should exceed it.
 \end{itemize}
+
+\section{Implementation}
+
+The model is implemented in version 2.0 of the \texttt{incidenceinflation} R
+package. Supplying initial values of $(\eta,\rho)$ to the sampler switches the
+extension on; otherwise the original model is used. The following points
+concern the implementation rather than the model.
+
+\begin{itemize}[itemsep=2pt]
+\item \emph{Later onset days.} Version 2.0 includes the product over later
+onset days, $\tau>t$, when sampling $I(t)$, as in equation (2.6) of
+\cite{bajaj2025}; earlier versions of the package conditioned only on earlier
+onset days. The product is taken over at most the next 40 onset days by
+default.
+\item \emph{Survival function.} As in earlier versions, the survival function
+is evaluated at the end of each reporting day:
+$S_\theta(t\given t')=1-\operatorname{CDF}_\theta(t'+\tfrac12-t)$.
+\item \emph{Onset days with complete reporting.} Onset days old enough that
+reporting is deemed complete are not sampled. Their true counts are fixed at
+the latest reported count, $I(t)=C(t\given t_J)$; without downward revisions
+this equals the largest reported count, which earlier versions used.
+\item \emph{Checks on the data.} Before sampling, the package checks
+\eqref{eq:feasible} and convention (iii), and stops with an error if either is
+violated for any onset day.
+\item \emph{Negligible case counts.} Since $L_t\le 1$, the renewal terms in
+$q(I(t))$ bound it from above. To reduce cost, $L_t$ is evaluated only for
+values of $I(t)$ whose bound is within a factor $e^{-50}$ of $q$ at a pilot
+value; the remaining values are assigned zero probability.
+\item \emph{Priors.} The gamma prior for $\eta$ is specified by its mean and
+standard deviation, and the beta prior for $\rho$ by its two shape parameters.
+\item \emph{Optimisation.} The iterative maximisation mode of the package is
+not available when downward revisions are allowed.
+\end{itemize}
+
+\paragraph{Checks.} The likelihood \eqref{eq:lik} has been verified against
+direct enumeration of all paths of $\bigl(d_j(t),n_j(t),m_j(t)\bigr)$, against
+the frequencies of simulated trajectories, and for summing to one over all
+possible reported counts; with $\eta=0$ it reproduces the likelihood of the
+original model. The update of $I(t)$ has been verified against a joint
+posterior obtained by exhaustive enumeration in a small example.
 
 \begin{thebibliography}{1}
 \bibitem{bajaj2025}

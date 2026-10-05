@@ -2,6 +2,7 @@
 
 export(convert_results_to_posterior_format)
 export(generate_snapshots)
+export(max_downward_revision)
 export(mcmc)
 export(mcmc_single)
 export(observed_cases)

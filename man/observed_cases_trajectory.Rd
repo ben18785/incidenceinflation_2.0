@@ -9,7 +9,8 @@ observed_cases_trajectory(
   cases_true,
   days_reporting,
   day_onset,
-  reporting_parameters
+  reporting_parameters,
+  revision_parameters = NULL
 )
 }
 \arguments{
@@ -21,11 +22,18 @@ observed_cases_trajectory(
 
 \item{reporting_parameters}{named list of 'mean' and 'sd' of gamma distribution
 characterising the reporting delay distribution}
+
+\item{revision_parameters}{named list of 'eta' (>= 0), the expected number of
+erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),
+the daily probability an erroneous record is withdrawn. If NULL (the default
+where this is optional), reported cases cannot be revised downwards.}
 }
 \value{
 a vector of reported case counts of same length as days_reporting
 }
 \description{
-Generate trajectory of reported cases for a given count originating on a
-particular day
+If revision_parameters is supplied, the reported case counts also include
+erroneous records, which are entered and later withdrawn, so that counts can
+be revised downwards (see \code{observation_process_revisions_logp}). No
+erroneous records are entered before the first day on which cases are counted.
 }

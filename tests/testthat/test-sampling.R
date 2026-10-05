@@ -1287,3 +1287,305 @@ test_that("mcmc_single runs both with and without conditioning on later cases", 
     expect_equal(nrow(res$Rt), 2 * niter)
   }
 })
+
+test_that("sample_true_cases_single_onset allows true cases below max reported
+if revision parameters supplied", {
+  # reported cases long after onset with a short delay settle at three
+  observation_matrix <- dplyr::tibble(time_reported=c(1, 3, 5, 20, 21, 22),
+                                      cases_reported=c(0, 5, 5, 3, 3, 3))
+  reporting_parameters <- list(mean=2, sd=1)
+  s_params <- list(mean=2, sd=1)
+  cases_history <- rep(4, 5)
+  f_map <- function(revision_parameters) {
+    sample_true_cases_single_onset(
+      observation_df=observation_matrix,
+      cases_history=cases_history,
+      max_cases=100,
+      Rt=1,
+      day_onset=1,
+      serial_parameters=s_params,
+      reporting_parameters=reporting_parameters,
+      maximise=TRUE,
+      revision_parameters=revision_parameters)
+  }
+  expect_error(f_map(NULL))
+  expect_equal(f_map(list(eta=0.1, rho=0.2)), 3)
+
+  # draws never fall more than max_erroneous below max reported
+  draws <- sample_true_cases_single_onset(
+    observation_df=observation_matrix[1:3, ],
+    cases_history=cases_history,
+    max_cases=100,
+    Rt=1,
+    day_onset=1,
+    serial_parameters=s_params,
+    reporting_parameters=reporting_parameters,
+    ndraws=500,
+    revision_parameters=list(eta=0.5, rho=0.2),
+    max_erroneous=2)
+  expect_true(min(draws) >= 3)
+  expect_true(any(draws < 5))
+})
+
+test_that("sample_cases_history uses latest reported cases for onset times
+outside of uncertain period", {
+  set.seed(3)
+  days_total <- 40
+  r_list <- list(mean=3, sd=2)
+  revision_parameters <- list(eta=0.2, rho=0.3)
+  Rt_function <- stats::approxfun(1:days_total, rep(1.2, days_total))
+  s_params <- list(mean=5, sd=3)
+  df <- generate_snapshots(days_total, Rt_function, s_params, r_list,
+                           revision_parameters=revision_parameters) %>%
+    dplyr::select(-cases_true) %>%
+    dplyr::mutate(reporting_piece_index=1)
+  r_params <- dplyr::tibble(reporting_piece_index=1, mean=3, sd=2)
+
+  max_erroneous <- max_downward_revision(df) + 1
+  df_est <- sample_cases_history(df, 2000, Rt_function, s_params, r_params,
+                                 revision_parameters=revision_parameters,
+                                 max_erroneous=max_erroneous)
+  expect_equal(sum(is.na(df_est$cases_estimated)), 0)
+
+  df_summary <- df_est %>%
+    dplyr::group_by(time_onset) %>%
+    dplyr::summarise(cases_latest=cases_reported[which.max(time_reported)],
+                     cases_max=max(cases_reported),
+                     cases_estimated=cases_estimated[1])
+  days_uncertain <- max_uncertain_days(0.99, r_list)
+  df_certain <- df_summary %>%
+    dplyr::filter(time_onset < days_total - days_uncertain)
+  expect_true(any(df_certain$cases_latest < df_certain$cases_max))
+  expect_equal(df_certain$cases_estimated, df_certain$cases_latest)
+
+  # without revision parameters these data cannot be handled
+  expect_error(sample_cases_history(df, 2000, Rt_function, s_params, r_params))
+})
+
+test_that("sample_cases_history with downward revisions targets joint
+posterior of case counts", {
+  set.seed(15)
+  days_total <- 8
+  s_params <- list(mean=2, sd=1)
+  r_list <- list(mean=3, sd=2)
+  revision_parameters <- list(eta=0.3, rho=0.3)
+  max_erroneous <- 2
+  Rt_function <- function(t) rep(1.4, length(t))
+  # reported cases for the three latest onset times include downward revisions
+  df <- dplyr::tibble(
+    time_onset=c(1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 5,
+                 6, 6, 6, 7, 7, 8),
+    time_reported=c(1, 8, 2, 8, 3, 8, 4, 8, 5, 6, 8,
+                    6, 7, 8, 7, 8, 8),
+    cases_reported=c(0, 4, 0, 3, 0, 5, 0, 4, 0, 4, 3,
+                     0, 3, 2, 0, 2, 0),
+    reporting_piece_index=1)
+  r_params <- dplyr::tibble(reporting_piece_index=1, mean=3, sd=2)
+  max_cases <- 24
+  p_gamma_cutoff <- 0.55
+
+  onset_times <- sort(unique(df$time_onset))
+  max_reported <- purrr::map_dbl(
+    onset_times, ~max(df$cases_reported[df$time_onset==.]))
+  latest_reported <- purrr::map_dbl(
+    onset_times, ~dplyr::last(df$cases_reported[df$time_onset==.]))
+  days_uncertain <- onset_times[
+    onset_times >= days_total - max_uncertain_days(p_gamma_cutoff, r_list)]
+  expect_equal(days_uncertain, c(6, 7, 8))
+
+  # exact joint posterior of uncertain case counts by enumeration
+  cases_fixed <- latest_reported[onset_times < min(days_uncertain)]
+  l_possible <- purrr::map(
+    days_uncertain,
+    ~max(0, max_reported[onset_times==.] - max_erroneous):max_cases)
+  l_logp_observation <- purrr::map(seq_along(days_uncertain), function(k) {
+    observations <- df[df$time_onset==days_uncertain[k],
+                       c("time_reported", "cases_reported")]
+    if(nrow(observations) > 1)
+      observation_process_revisions_logp(
+        observations, l_possible[[k]], days_uncertain[k], r_list,
+        revision_parameters, max_erroneous)
+    else
+      rep(0, length(l_possible[[k]]))
+  })
+  grid <- as.matrix(expand.grid(l_possible))
+  grid_index <- as.matrix(expand.grid(purrr::map(l_possible, seq_along)))
+  logp_joint <- rep(0, nrow(grid))
+  for(r in seq_len(nrow(grid))) {
+    for(k in seq_along(days_uncertain)) {
+      cases_earlier <- c(cases_fixed, grid[r, seq_len(k - 1)])
+      logp_joint[r] <- logp_joint[r] +
+        l_logp_observation[[k]][grid_index[r, k]] +
+        state_process_logp(grid[r, k], rev(cases_earlier),
+                           Rt_function(days_uncertain[k]), s_params)
+    }
+  }
+  p_joint <- exp(logp_joint - matrixStats::logSumExp(logp_joint))
+  mean_exact <- colSums(grid * p_joint)
+  sd_exact <- sqrt(colSums(grid^2 * p_joint) - mean_exact^2)
+
+  # Gibbs sweeps
+  nsweeps <- 1000
+  cases_current <- dplyr::tibble(time_onset=onset_times,
+                                 cases_true=max_reported + 3)
+  m_draws <- matrix(nrow=nsweeps, ncol=length(days_uncertain))
+  for(i in 1:nsweeps) {
+    df_est <- sample_cases_history(
+      df, max_cases, Rt_function, s_params, r_params,
+      p_gamma_cutoff=p_gamma_cutoff,
+      cases_true_current=cases_current,
+      revision_parameters=revision_parameters,
+      max_erroneous=max_erroneous)
+    cases_current <- df_est %>%
+      dplyr::select(time_onset, cases_true=cases_estimated) %>%
+      unique()
+    m_draws[i, ] <- cases_current$cases_true[
+      match(days_uncertain, cases_current$time_onset)]
+  }
+
+  z_scores <- (colMeans(m_draws) - mean_exact) / (sd_exact / sqrt(nsweeps / 3))
+  expect_true(all(abs(z_scores) < 3))
+})
+
+test_that("propose_revision_parameters proposes values within bounds", {
+  current <- list(eta=0.01, rho=0.2)
+  steps <- list(eta_step=2, rho_step=2)
+  l_proposed <- purrr::map(1:200, ~propose_revision_parameters(current, steps))
+  etas <- purrr::map_dbl(l_proposed, "eta")
+  rhos <- purrr::map_dbl(l_proposed, "rho")
+  expect_true(all(etas > 0))
+  expect_true(all(rhos > 0 & rhos < 1))
+  expect_true(length(unique(etas)) > 1)
+  expect_true(length(unique(rhos)) > 1)
+
+  # zero step size holds parameter fixed
+  proposed <- propose_revision_parameters(current, list(eta_step=1, rho_step=0))
+  expect_true(proposed$eta != current$eta)
+  expect_equal(proposed$rho, current$rho)
+})
+
+test_that("prior_revision_parameters and log_jacobian_revision_parameters
+return correct values", {
+  revision_parameters <- list(eta=0.02, rho=0.3)
+  prior <- list(eta_mu=0.01, eta_sigma=0.01, rho_alpha=2, rho_beta=5)
+  expect_equal(prior_revision_parameters(revision_parameters, prior),
+               dexp(0.02, 100, log=TRUE) + dbeta(0.3, 2, 5, log=TRUE))
+  expect_equal(log_jacobian_revision_parameters(revision_parameters),
+               log(0.02 * 0.3 * 0.7))
+})
+
+test_that("metropolis_step_revisions returns parameters and their log-probability", {
+  set.seed(4)
+  days_total <- 30
+  r_list <- list(mean=3, sd=2)
+  revision_parameters <- list(eta=0.2, rho=0.3)
+  Rt_function <- stats::approxfun(1:days_total, rep(1.2, days_total))
+  df <- generate_snapshots(days_total, Rt_function, list(mean=5, sd=3), r_list,
+                           thinned=TRUE,
+                           revision_parameters=revision_parameters) %>%
+    dplyr::mutate(reporting_piece_index=1)
+  r_params <- dplyr::tibble(reporting_piece_index=1, mean=3, sd=2)
+  prior <- list(eta_mu=0.1, eta_sigma=0.1, rho_alpha=1, rho_beta=1)
+  steps <- list(eta_step=0.2, rho_step=0.2)
+  max_erroneous <- max_downward_revision(df) + 1
+  f_logp <- function(parameters)
+    observation_process_all_times_logp(df, r_params, parameters, max_erroneous) +
+    prior_revision_parameters(parameters, prior) +
+    log_jacobian_revision_parameters(parameters)
+
+  # always accepts
+  current <- list(eta=0.1, rho=0.5)
+  res <- metropolis_step_revisions(df, r_params, current, -Inf, prior, steps,
+                                   max_erroneous)
+  expect_true(res$revision_parameters$eta != current$eta)
+  expect_true(is.finite(res$logp))
+  expect_equal(res$logp, f_logp(res$revision_parameters))
+
+  # never accepts
+  res <- metropolis_step_revisions(df, r_params, current, Inf, prior, steps,
+                                   max_erroneous)
+  expect_equal(res$revision_parameters, current)
+  expect_equal(res$logp, Inf)
+
+  # moves towards values with higher probability more often than not
+  current <- list(eta=0.001, rho=0.5)
+  logp_current <- f_logp(current)
+  steps <- list(eta_step=0.2, rho_step=0)
+  etas <- purrr::map_dbl(1:40, ~metropolis_step_revisions(
+    df, r_params, current, logp_current, prior, steps,
+    max_erroneous)$revision_parameters$eta)
+  expect_true(sum(etas > current$eta) > sum(etas < current$eta))
+})
+
+test_that("mcmc works when downward revisions are allowed", {
+  set.seed(5)
+  niter <- 3
+  days_total <- 40
+  r_params <- list(mean=4, sd=2)
+  s_params <- list(mean=5, sd=3)
+  revision_parameters <- list(eta=0.1, rho=0.3)
+  Rt_function <- stats::approxfun(1:days_total, rep(1.3, days_total))
+  df <- generate_snapshots(days_total, Rt_function, s_params, r_params,
+                           thinned=TRUE,
+                           revision_parameters=revision_parameters)
+  initial_cases_true <- df %>%
+    dplyr::select(time_onset, cases_true) %>%
+    unique()
+  snapshot_with_Rt_index_df <- df %>%
+    dplyr::select(-cases_true) %>%
+    dplyr::mutate(Rt_index=ifelse(time_onset <= 20, 1, 2))
+  initial_Rt <- dplyr::tibble(Rt_index=c(1, 2), Rt=c(1.3, 1.3))
+  priors <- list(Rt=list(shape=1, rate=1),
+                 reporting=list(mean_mu=5,
+                                mean_sigma=10,
+                                sd_mu=3,
+                                sd_sigma=5),
+                 revisions=list(eta_mu=0.1, eta_sigma=0.1,
+                                rho_alpha=1, rho_beta=1),
+                 max_erroneous=max_downward_revision(df) + 1,
+                 max_cases=5000)
+  f_mcmc <- function(priors, initial_revision_parameters, ...) {
+    mcmc(niterations=niter,
+         snapshot_with_Rt_index_df,
+         priors,
+         s_params,
+         initial_cases_true,
+         r_params,
+         initial_Rt,
+         print_to_screen=FALSE,
+         initial_revision_parameters=initial_revision_parameters,
+         ...)
+  }
+
+  # data with downward revisions need revision parameters
+  expect_error(f_mcmc(priors, NULL))
+
+  res <- f_mcmc(priors, revision_parameters)
+  expect_equal(nrow(res$cases), days_total * niter)
+  expect_equal(sum(is.na(res$cases$cases_true)), 0)
+  expect_equal(nrow(res$revisions), niter)
+  expect_true(all(c("eta", "rho", "iteration", "chain") %in% colnames(res$revisions)))
+  expect_true(all(res$revisions$eta > 0))
+  expect_true(all(res$revisions$rho > 0 & res$revisions$rho < 1))
+
+  # fixing rho
+  res <- f_mcmc(priors, revision_parameters,
+                revision_metropolis_parameters=list(eta_step=0.5, rho_step=0))
+  expect_equal(res$revisions$rho, rep(revision_parameters$rho, niter))
+
+  # multiple chains
+  res <- f_mcmc(priors, revision_parameters, nchains=2)
+  expect_equal(nrow(res$revisions), niter * 2)
+  expect_equal(sort(unique(res$revisions$chain)), c(1, 2))
+
+  # errors
+  priors_wrong <- priors
+  priors_wrong$revisions <- NULL
+  expect_error(f_mcmc(priors_wrong, revision_parameters))
+  expect_error(f_mcmc(priors, revision_parameters, maximise=TRUE))
+  expect_error(f_mcmc(priors, list(eta=0, rho=0.3)))
+  expect_error(f_mcmc(priors, list(eta=0.1, rho=1)))
+  priors_wrong <- priors
+  priors_wrong$max_erroneous <- max_downward_revision(df) - 1
+  expect_error(f_mcmc(priors_wrong, revision_parameters), "max_erroneous")
+})

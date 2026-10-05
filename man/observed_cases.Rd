@@ -4,7 +4,12 @@
 \alias{observed_cases}
 \title{Generate reported case trajectories for each day when cases appear}
 \usage{
-observed_cases(cases_true, reporting_parameters, days_max_follow_up = 30)
+observed_cases(
+  cases_true,
+  reporting_parameters,
+  days_max_follow_up = 30,
+  revision_parameters = NULL
+)
 }
 \arguments{
 \item{cases_true}{a vector of true cases originating each day}
@@ -16,6 +21,11 @@ delay distribution for each time period}
 
 \item{days_max_follow_up}{max days at which to simulate reporting case
 trajectory}
+
+\item{revision_parameters}{named list of 'eta' (>= 0), the expected number of
+erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),
+the daily probability an erroneous record is withdrawn. If NULL (the default
+where this is optional), reported cases cannot be revised downwards.}
 }
 \value{
 a tibble with observed case trajectories for each time of onset

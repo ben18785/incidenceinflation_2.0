@@ -9,7 +9,9 @@ metropolis_step(
   current_reporting_parameters,
   logp_current,
   prior_parameters,
-  metropolis_parameters
+  metropolis_parameters,
+  revision_parameters = NULL,
+  max_erroneous = 3
 )
 }
 \arguments{
@@ -27,6 +29,14 @@ distribution)}
 
 \item{metropolis_parameters}{named list of 'mean_step', 'sd_step' containing
 step sizes for Metropolis step}
+
+\item{revision_parameters}{named list of 'eta' (>= 0), the expected number of
+erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),
+the daily probability an erroneous record is withdrawn. If NULL (the default
+where this is optional), reported cases cannot be revised downwards.}
+
+\item{max_erroneous}{maximum number of erroneous records that can be held
+for a single onset day at any one time}
 }
 \value{
 a named list with two elements: 'parameter', a parameter value (which

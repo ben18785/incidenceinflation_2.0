@@ -449,3 +449,260 @@ probability of observations and all case counts", {
   differences <- logps_past_only - logp_joint
   expect_true(diff(range(differences)) > 0.1)
 })
+
+test_that("erroneous_transitions enumerates valid changes in erroneous records", {
+  df <- erroneous_transitions(0)
+  expect_equal(nrow(df), 1)
+  expect_equal(unlist(df[1, ], use.names=FALSE), rep(0, 4))
+
+  max_erroneous <- 3
+  df <- erroneous_transitions(max_erroneous)
+  expect_equal(nrow(df), 30)
+  expect_equal(nrow(unique(df)), 30)
+  expect_true(all(df$withdrawn <= df$erroneous_previous))
+  expect_true(all(df$entered >= 0))
+  expect_true(all(df$erroneous_current >= 0 & df$erroneous_current <= max_erroneous))
+  expect_equal(df$erroneous_current,
+               df$erroneous_previous - df$withdrawn + df$entered)
+
+  expect_error(erroneous_transitions(-1))
+})
+
+test_that("dbinom_log_safe returns -Inf outside of support", {
+  x <- c(2, -1, 3, 0, 1)
+  size <- c(4, 4, 2, -1, 1)
+  logp <- dbinom_log_safe(x, size, 0.3)
+  expect_equal(logp[1], dbinom(2, 4, 0.3, log=TRUE))
+  expect_equal(logp[5], dbinom(1, 1, 0.3, log=TRUE))
+  expect_equal(logp[2:4], rep(-Inf, 3))
+})
+
+test_that("observation_process_revisions_logp matches observation_process_logp
+when no erroneous records are entered", {
+  observation_matrix <- dplyr::tibble(time_reported=c(1, 3, 4, 6, 9),
+                                      cases_reported=c(0, 2, 3, 3, 5))
+  reporting_parameters <- list(mean=4, sd=2)
+  cases_true <- 5:30
+  logp <- observation_process_logp(observation_matrix, cases_true, 1,
+                                   reporting_parameters)
+  for(rho in c(0.01, 0.3, 0.9)) {
+    for(max_erroneous in c(0, 1, 3)) {
+      logp_revisions <- observation_process_logp(
+        observation_matrix, cases_true, 1, reporting_parameters,
+        revision_parameters=list(eta=0, rho=rho),
+        max_erroneous=max_erroneous)
+      expect_equal(logp_revisions, logp)
+    }
+  }
+
+  # also when called directly
+  logp_revisions <- observation_process_revisions_logp(
+    observation_matrix, cases_true, 1, reporting_parameters,
+    revision_parameters=list(eta=0, rho=0.5))
+  expect_equal(logp_revisions, logp)
+
+  # true cases below those reported are impossible without erroneous records
+  logp_revisions <- observation_process_logp(
+    observation_matrix, 4, 1, reporting_parameters,
+    revision_parameters=list(eta=0, rho=0.5))
+  expect_equal(logp_revisions, -Inf)
+})
+
+test_that("observation_process_revisions_logp matches enumeration over all
+paths of genuine reports, erroneous entries and withdrawals", {
+  observation_matrix <- dplyr::tibble(time_reported=c(2, 3, 5, 6),
+                                      cases_reported=c(1, 3, 2, 4))
+  reporting_parameters <- list(mean=4, sd=3)
+  revision_parameters <- list(eta=0.3, rho=0.4)
+  day_onset <- 1
+  max_erroneous <- 2
+
+  days <- observation_matrix$time_reported
+  cases <- observation_matrix$cases_reported
+  f_path_prob <- function(case_true, period, genuine, erroneous) {
+    if(period > length(days) - 1)
+      return(1)
+    p_detect <- detected_after_unobserved_prob(days[period + 1], days[period],
+                                               day_onset, reporting_parameters)
+    p_newly_detected <-
+      undetected_prob(days[period] + 0.5, day_onset, reporting_parameters) -
+      undetected_prob(days[period + 1] + 0.5, day_onset, reporting_parameters)
+    p_withdrawn <- 1 - (1 - revision_parameters$rho)^(days[period + 1] - days[period])
+    change <- cases[period + 1] - cases[period]
+    prob <- 0
+    for(withdrawn in 0:erroneous) {
+      for(entered in 0:(max_erroneous - erroneous + withdrawn)) {
+        newly_reported <- change - entered + withdrawn
+        if(newly_reported < 0 | newly_reported > case_true - genuine)
+          next
+        prob_step <- dbinom(withdrawn, erroneous, p_withdrawn) *
+          dpois(entered, revision_parameters$eta * case_true * p_newly_detected) *
+          dbinom(newly_reported, case_true - genuine, p_detect)
+        prob <- prob + prob_step * f_path_prob(
+          case_true, period + 1,
+          genuine + newly_reported,
+          erroneous + entered - withdrawn)
+      }
+    }
+    prob
+  }
+
+  cases_true <- 1:12
+  prob_enumerated <- purrr::map_dbl(cases_true, ~f_path_prob(., 1, cases[1], 0))
+  logp <- observation_process_revisions_logp(
+    observation_matrix, cases_true, day_onset, reporting_parameters,
+    revision_parameters, max_erroneous)
+  expect_equal(exp(logp), prob_enumerated)
+
+  # true cases can be fewer than max reported but not by more than max erroneous
+  expect_true(all(prob_enumerated[cases_true >= 2] > 0))
+  expect_equal(prob_enumerated[1], 0)
+})
+
+test_that("observation_process_revisions_logp gives probabilities which sum to
+one across all possible reported cases", {
+  reporting_parameters <- list(mean=3, sd=2)
+  revision_parameters <- list(eta=0.3, rho=0.4)
+  case_true <- 3
+  max_erroneous <- 7
+  max_reported <- case_true + max_erroneous
+  total <- 0
+  for(cases_1 in 0:max_reported) {
+    for(cases_2 in 0:max_reported) {
+      observation_matrix <- dplyr::tibble(time_reported=c(1, 2, 4),
+                                          cases_reported=c(0, cases_1, cases_2))
+      total <- total + exp(observation_process_revisions_logp(
+        observation_matrix, case_true, 1, reporting_parameters,
+        revision_parameters, max_erroneous))
+    }
+  }
+  expect_true(total <= 1 + 1e-10)
+  expect_true(abs(total - 1) < 1e-5)
+})
+
+test_that("observation_process_revisions_logp matches frequencies of
+simulated reported cases", {
+  set.seed(42)
+  reporting_parameters <- list(mean=3, sd=2)
+  revision_parameters <- list(eta=0.25, rho=0.5)
+  case_true <- 4
+  day_onset <- 5
+  days_reporting <- c(5, 6, 7, 9)
+  nreplicates <- 20000
+  trajectories <- replicate(
+    nreplicates,
+    paste0(observed_cases_trajectory(case_true, days_reporting, day_onset,
+                                     reporting_parameters, revision_parameters),
+           collapse="_"))
+  frequencies <- sort(table(trajectories), decreasing=TRUE) / nreplicates
+
+  # some reported cases were revised downwards and some exceeded true cases
+  l_trajectories <- purrr::map(strsplit(names(frequencies), "_"), as.numeric)
+  expect_true(any(purrr::map_lgl(l_trajectories, ~any(diff(.) < 0))))
+  expect_true(any(purrr::map_lgl(l_trajectories, ~max(.) > case_true)))
+
+  for(i in 1:10) {
+    observation_matrix <- dplyr::tibble(time_reported=days_reporting,
+                                        cases_reported=l_trajectories[[i]])
+    prob <- exp(observation_process_revisions_logp(
+      observation_matrix, case_true, day_onset, reporting_parameters,
+      revision_parameters, max_erroneous=7))
+    std_error <- sqrt(prob * (1 - prob) / nreplicates)
+    expect_true(abs(frequencies[[i]] - prob) < 4 * std_error)
+  }
+})
+
+test_that("observation_process_logp only allows downward revisions if
+revision parameters supplied", {
+  observation_matrix <- dplyr::tibble(time_reported=c(1, 2, 5, 7),
+                                      cases_reported=c(3, 4, 3, 7))
+  reporting_parameters <- list(mean=3, sd=2)
+  expect_error(observation_process_logp(observation_matrix, 10, 1,
+                                        reporting_parameters))
+  logp <- observation_process_logp(observation_matrix, 10, 1,
+                                   reporting_parameters,
+                                   revision_parameters=list(eta=0.1, rho=0.2))
+  expect_true(is.finite(logp))
+  expect_true(logp < 0)
+
+  # days must still be increasing
+  observation_matrix$time_reported <- c(1, 2, 2, 7)
+  expect_error(observation_process_logp(observation_matrix, 10, 1,
+                                        reporting_parameters,
+                                        revision_parameters=list(eta=0.1, rho=0.2)))
+})
+
+test_that("observation_process_revisions_logp returns -Inf for invalid
+revision parameters", {
+  observation_matrix <- dplyr::tibble(time_reported=c(1, 2, 5),
+                                      cases_reported=c(3, 4, 3))
+  reporting_parameters <- list(mean=3, sd=2)
+  f <- function(eta, rho)
+    observation_process_revisions_logp(observation_matrix, 5:7, 1,
+                                       reporting_parameters,
+                                       list(eta=eta, rho=rho))
+  expect_equal(f(-0.1, 0.5), rep(-Inf, 3))
+  expect_equal(f(0.1, 0), rep(-Inf, 3))
+  expect_equal(f(0.1, 1), rep(-Inf, 3))
+  expect_true(all(is.finite(f(0.1, 0.5))))
+})
+
+test_that("conditional_cases_revisions_logp matches conditional_cases_logp
+for all non-negligible case counts", {
+  observation_matrix <- dplyr::tibble(time_reported=c(6, 7, 9, 10),
+                                      cases_reported=c(10, 22, 20, 25))
+  reporting_parameters <- list(mean=3, sd=2)
+  revision_parameters <- list(eta=0.05, rho=0.3)
+  s_params <- list(mean=3, sd=2)
+  cases_history <- c(40, 30, 50, 20, 60)
+  cases_future <- c(50, 30, 70)
+  cases_true <- 22:2000
+
+  logps_full <- conditional_cases_logp(
+    cases_true, observation_matrix, cases_history,
+    Rt=1.1, day_onset=6, s_params, reporting_parameters,
+    cases_future=cases_future, Rt_future=c(1.2, 0.7, 0.7),
+    revision_parameters=revision_parameters)
+  logps <- conditional_cases_revisions_logp(
+    cases_true, observation_matrix, cases_history,
+    Rt=1.1, day_onset=6, s_params, reporting_parameters,
+    revision_parameters,
+    cases_future=cases_future, Rt_future=c(1.2, 0.7, 0.7))
+
+  is_evaluated <- is.finite(logps)
+  expect_true(sum(is_evaluated) < 0.5 * length(cases_true))
+  expect_equal(logps[is_evaluated], logps_full[is_evaluated])
+  probs_full <- exp(logps_full - matrixStats::logSumExp(logps_full))
+  expect_true(sum(probs_full[!is_evaluated]) < 1e-15)
+
+  # single observation contributes nothing
+  logps_single <- conditional_cases_revisions_logp(
+    cases_true, observation_matrix[1, ], cases_history,
+    Rt=1.1, day_onset=6, s_params, reporting_parameters,
+    revision_parameters)
+  expect_equal(logps_single,
+               state_process_logp(cases_true, cases_history, 1.1, s_params))
+})
+
+test_that("observation_process_all_times_logp sums over onset times when
+revisions are allowed", {
+  reporting_parameters <- dplyr::tibble(reporting_piece_index=1, mean=3, sd=2)
+  revision_parameters <- list(eta=0.1, rho=0.3)
+  df <- dplyr::tibble(
+    time_onset=c(1, 1, 1, 2, 2, 2, 3),
+    time_reported=c(1, 2, 3, 2, 3, 4, 3),
+    cases_reported=c(0, 3, 2, 1, 4, 4, 0),
+    cases_true=c(4, 4, 4, 6, 6, 6, 2),
+    reporting_piece_index=1)
+  logp <- observation_process_all_times_logp(df, reporting_parameters,
+                                             revision_parameters)
+  r_list <- list(mean=3, sd=2)
+  logp_long_way <- observation_process_revisions_logp(
+    df[1:3, ], 4, 1, r_list, revision_parameters) +
+    observation_process_revisions_logp(
+      df[4:6, ], 6, 2, r_list, revision_parameters)
+  expect_equal(logp, logp_long_way)
+
+  # without revision parameters downwards revisions throw error
+  expect_error(observation_process_all_times_logp(df, reporting_parameters))
+})

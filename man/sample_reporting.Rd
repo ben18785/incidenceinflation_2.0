@@ -12,7 +12,9 @@ sample_reporting(
   prior_parameters,
   metropolis_parameters,
   maximise = FALSE,
-  ndraws = 1
+  ndraws = 1,
+  revision_parameters = NULL,
+  max_erroneous = 3
 )
 }
 \arguments{
@@ -36,6 +38,14 @@ log-probability; else (default) use Metropolis MCMC
 to draw parameters}
 
 \item{ndraws}{number of iterates of the Markov chain to simulate}
+
+\item{revision_parameters}{named list of 'eta' (>= 0), the expected number of
+erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),
+the daily probability an erroneous record is withdrawn. If NULL (the default
+where this is optional), reported cases cannot be revised downwards.}
+
+\item{max_erroneous}{maximum number of erroneous records that can be held
+for a single onset day at any one time}
 }
 \value{
 a named list with two elements: 'reporting_parameters', a tibble with

@@ -16,7 +16,9 @@ conditional_cases_logp(
   kappa = NULL,
   is_negative_binomial = FALSE,
   cases_future = NULL,
-  Rt_future = NULL
+  Rt_future = NULL,
+  revision_parameters = NULL,
+  max_erroneous = 3
 )
 }
 \arguments{
@@ -45,6 +47,14 @@ characterising the reporting delay distribution}
 immediately following day_onset, arranged from the earliest to the latest}
 
 \item{Rt_future}{a vector of Rt values for the onset days corresponding to cases_future}
+
+\item{revision_parameters}{named list of 'eta' (>= 0), the expected number of
+erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),
+the daily probability an erroneous record is withdrawn. If NULL (the default
+where this is optional), reported cases cannot be revised downwards.}
+
+\item{max_erroneous}{maximum number of erroneous records that can be held
+for a single onset day at any one time}
 }
 \value{
 an (unnormalised) log-probability or vector of such log-probabilities

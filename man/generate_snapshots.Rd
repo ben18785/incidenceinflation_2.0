@@ -13,7 +13,8 @@ generate_snapshots(
   kappa = 1000,
   days_max_follow_up = 30,
   initial_parameters = list(mean = 30, length = 20),
-  serial_max = 40
+  serial_max = 40,
+  revision_parameters = NULL
 )
 }
 \arguments{
@@ -42,6 +43,11 @@ which is used to generate seed cases by sampling from a negative binomial
 distribution}
 
 \item{serial_max}{maximum point at which to truncate sum in renewal process}
+
+\item{revision_parameters}{named list of 'eta' (>= 0), the expected number of
+erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),
+the daily probability an erroneous record is withdrawn. If NULL (the default
+where this is optional), reported cases cannot be revised downwards.}
 }
 \value{
 a tibble with observed case trajectories for each time of onset

@@ -8,7 +8,9 @@ observation_process_logp(
   observation_df,
   cases_true,
   day_onset,
-  reporting_parameters
+  reporting_parameters,
+  revision_parameters = NULL,
+  max_erroneous = 3
 )
 }
 \arguments{
@@ -20,6 +22,14 @@ observation_process_logp(
 
 \item{reporting_parameters}{named list of 'mean' and 'sd' of gamma distribution
 characterising the reporting delay distribution}
+
+\item{revision_parameters}{named list of 'eta' (>= 0), the expected number of
+erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),
+the daily probability an erroneous record is withdrawn. If NULL (the default
+where this is optional), reported cases cannot be revised downwards.}
+
+\item{max_erroneous}{maximum number of erroneous records that can be held
+for a single onset day at any one time}
 }
 \value{
 a log-probability or vector of log-probabilities
@@ -36,4 +46,9 @@ where p_detect is the probability a thus undetected case is detected between
 day_1 and day_2.
 This function calculates the combined probability of all observed cases pertaining
 to a particular onset date.
+}
+\details{
+If revision_parameters is supplied, reported case counts are allowed to be
+revised downwards and the probability is instead calculated using
+\code{observation_process_revisions_logp}.
 }

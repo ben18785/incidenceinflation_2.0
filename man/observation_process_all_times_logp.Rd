@@ -6,7 +6,9 @@
 \usage{
 observation_process_all_times_logp(
   snapshot_with_true_cases_df,
-  reporting_parameters
+  reporting_parameters,
+  revision_parameters = NULL,
+  max_erroneous = 3
 )
 }
 \arguments{
@@ -14,6 +16,14 @@ observation_process_all_times_logp(
 time_onset, time_reported, cases_reported, cases_true}
 
 \item{reporting_parameters}{a tibble with columns: 'reporting_piece_index', 'mean', 'sd'}
+
+\item{revision_parameters}{named list of 'eta' (>= 0), the expected number of
+erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),
+the daily probability an erroneous record is withdrawn. If NULL (the default
+where this is optional), reported cases cannot be revised downwards.}
+
+\item{max_erroneous}{maximum number of erroneous records that can be held
+for a single onset day at any one time}
 }
 \value{
 a log probability

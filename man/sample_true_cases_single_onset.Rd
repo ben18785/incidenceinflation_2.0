@@ -17,7 +17,9 @@ sample_true_cases_single_onset(
   kappa = NULL,
   is_negative_binomial = FALSE,
   cases_future = NULL,
-  Rt_future = NULL
+  Rt_future = NULL,
+  revision_parameters = NULL,
+  max_erroneous = 3
 )
 }
 \arguments{
@@ -51,6 +53,14 @@ maximum probability (by default is FALSE)}
 immediately following day_onset, arranged from the earliest to the latest}
 
 \item{Rt_future}{a vector of Rt values for the onset days corresponding to cases_future}
+
+\item{revision_parameters}{named list of 'eta' (>= 0), the expected number of
+erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),
+the daily probability an erroneous record is withdrawn. If NULL (the default
+where this is optional), reported cases cannot be revised downwards.}
+
+\item{max_erroneous}{maximum number of erroneous records that can be held
+for a single onset day at any one time}
 }
 \value{
 a sampled case count arising on a given onset day
@@ -63,4 +73,8 @@ The distribution being drawn from is given by:
 \details{
 If cases_future is supplied, the distribution additionally conditions on the
 case counts arising on later onset days (see \code{conditional_cases_logp}).
+
+If revision_parameters is supplied, reported case counts can be revised
+downwards, which means the true case count can be fewer than the maximum
+reported (by up to max_erroneous).
 }

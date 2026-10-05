@@ -75,3 +75,33 @@ test_that("check_parameter_names works as desired", {
   expect_equal(check_parameter_names(r_params, s_params), NULL)
 })
 
+
+test_that("max_downward_revision finds largest fall in reported cases", {
+  df <- dplyr::tibble(
+    time_onset=c(1, 1, 1, 1, 2, 2, 2, 3),
+    time_reported=c(1, 2, 3, 4, 2, 3, 4, 3),
+    cases_reported=c(0, 5, 3, 4, 1, 2, 2, 0))
+  expect_equal(max_downward_revision(df), 2)
+
+  # order of rows does not matter
+  expect_equal(max_downward_revision(df[c(8, 3, 1, 6, 2, 5, 4, 7), ]), 2)
+
+  # no downwards revisions
+  df$cases_reported[3] <- 5
+  df$cases_reported[4] <- 6
+  expect_equal(max_downward_revision(df), 0)
+})
+
+test_that("check_revisions_possible throws errors for impossible reported cases", {
+  df <- dplyr::tibble(
+    time_onset=c(1, 1, 1, 1, 2, 2, 2, 3),
+    time_reported=c(1, 2, 3, 4, 2, 3, 4, 3),
+    cases_reported=c(0, 5, 3, 4, 1, 2, 2, 0))
+  expect_true(check_revisions_possible(df, 2))
+  expect_true(check_revisions_possible(df, 3))
+  expect_error(check_revisions_possible(df, 1), "max_erroneous")
+
+  # falls below first reported
+  df$cases_reported[7] <- 0
+  expect_error(check_revisions_possible(df, 3), "first reported")
+})

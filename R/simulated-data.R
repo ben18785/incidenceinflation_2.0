@@ -77,28 +77,46 @@ observed_cases_single <- function(cases_observed, cases_true, day_2, day_1, day_
 #' Generate trajectory of reported cases for a given count originating on a
 #' particular day
 #'
+#' If revision_parameters is supplied, the reported case counts also include
+#' erroneous records, which are entered and later withdrawn, so that counts can
+#' be revised downwards (see \code{observation_process_revisions_logp}). No
+#' erroneous records are entered before the first day on which cases are counted.
+#'
 #' @inheritParams observed_cases_single
+#' @inheritParams observation_process_revisions_logp
 #' @param days_reporting a vector of days on which cases were counted
 #'
 #' @return a vector of reported case counts of same length as days_reporting
 observed_cases_trajectory <- function(cases_true, days_reporting, day_onset,
-                                      reporting_parameters){
+                                      reporting_parameters,
+                                      revision_parameters=NULL){
 
   I_observed <- vector(length = length(days_reporting))
+  # genuine cases reported and erroneous records not yet withdrawn
+  I_genuine <- 0
+  I_erroneous <- 0
   for(i in 1:length(days_reporting)){
     if(i == 1) {
-      I_previous_obs <- 0
       day_previous_report <- day_onset
     } else {
-      I_previous_obs <- I_observed[i - 1]
       day_previous_report <- days_reporting[i - 1]
     }
-    new_cases <- observed_cases_single(I_previous_obs, cases_true,
+    new_cases <- observed_cases_single(I_genuine, cases_true,
                                        days_reporting[i],
                                        day_previous_report,
                                        day_onset,
                                        reporting_parameters)
-    I_observed[i] <- I_previous_obs + new_cases
+    if(!is.null(revision_parameters) & i > 1) {
+      p_newly_detected <-
+        undetected_prob(day_previous_report + 0.5, day_onset, reporting_parameters) -
+        undetected_prob(days_reporting[i] + 0.5, day_onset, reporting_parameters)
+      p_withdrawn <- 1 - (1 - revision_parameters$rho)^(days_reporting[i] - day_previous_report)
+      withdrawn <- stats::rbinom(1, I_erroneous, p_withdrawn)
+      entered <- stats::rpois(1, revision_parameters$eta * cases_true * p_newly_detected)
+      I_erroneous <- I_erroneous + entered - withdrawn
+    }
+    I_genuine <- I_genuine + new_cases
+    I_observed[i] <- I_genuine + I_erroneous
   }
   I_observed
 }
@@ -217,6 +235,7 @@ create_reporting_from_single_parameters_df <- function(time_onsets,
 #' delay distribution for each time period
 #' @param days_max_follow_up max days at which to simulate reporting case
 #' trajectory
+#' @inheritParams observed_cases_trajectory
 #'
 #' @return a tibble with observed case trajectories for each time of onset
 #' @export
@@ -225,7 +244,8 @@ create_reporting_from_single_parameters_df <- function(time_onsets,
 #' library(incidenceinflation)
 #' observed_cases(stats::rpois(5, 5), list(mean=5, sd=1))
 observed_cases <- function(cases_true, reporting_parameters,
-                           days_max_follow_up=30){
+                           days_max_follow_up=30,
+                           revision_parameters=NULL){
 
   if(methods::is(reporting_parameters, "list"))
     reporting_parameters <- create_reporting_from_single_parameters_df(
@@ -246,7 +266,8 @@ observed_cases <- function(cases_true, reporting_parameters,
       cases_true=cases_true[t],
       days_reporting=obs_time,
       day_onset=t,
-      reporting_parameters_current)
+      reporting_parameters_current,
+      revision_parameters=revision_parameters)
 
     # stack into data frame containing identifying info
     I_obs_single_onset <- dplyr::tibble(
@@ -275,7 +296,7 @@ observed_cases <- function(cases_true, reporting_parameters,
 thin_single_series <- function(case_obs_single) {
   if(dplyr::n_distinct(case_obs_single$time_onset) > 1)
     stop("Only single onset time allowed.")
-  changepoints <- which(diff(case_obs_single$cases_reported) > 0)
+  changepoints <- which(diff(case_obs_single$cases_reported) != 0)
   postchangepoints <- changepoints + 1
   num_points <- nrow(case_obs_single)
   interesting_points <- sort(unique(c(1, postchangepoints, changepoints,
@@ -342,7 +363,8 @@ generate_snapshots <- function(days_total, Rt_function, serial_parameters,
                                kappa=1000,
                                days_max_follow_up=30,
                                initial_parameters=list(mean=30, length=20),
-                               serial_max=40) {
+                               serial_max=40,
+                               revision_parameters=NULL) {
 
   check_parameter_names(reporting_parameters,
                         serial_parameters)
@@ -357,7 +379,8 @@ generate_snapshots <- function(days_total, Rt_function, serial_parameters,
   reported_cases <- observed_cases(
     cases_true=real_cases,
     reporting_parameters=reporting_parameters,
-    days_max_follow_up=days_max_follow_up)
+    days_max_follow_up=days_max_follow_up,
+    revision_parameters=revision_parameters)
 
   if(thinned)
     reported_cases <- thin_series(reported_cases)

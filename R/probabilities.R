@@ -26,6 +26,134 @@ observation_process_single_logp <- function(cases_true, cases_day_2, cases_day_1
   stats::dbinom(cases_observed, cases_remaining, p_detect, log = T)
 }
 
+#' Enumerates possible changes in the count of erroneous records between two
+#' reporting days
+#'
+#' Between two reporting days, erroneous records present on the first day can
+#' be withdrawn and new erroneous records can be entered. This enumerates all
+#' combinations of these which keep the count of erroneous records between zero
+#' and max_erroneous.
+#'
+#' @param max_erroneous maximum number of erroneous records that can be held
+#' for a single onset day at any one time
+#'
+#' @return a data frame with columns: 'erroneous_previous', the count on the
+#' first day; 'withdrawn', the number of these withdrawn; 'entered', the number
+#' of new erroneous records; and 'erroneous_current', the count on the second day
+erroneous_transitions <- function(max_erroneous) {
+  if(max_erroneous < 0)
+    stop("max_erroneous must be non-negative.")
+  df <- expand.grid(erroneous_current=0:max_erroneous,
+                    withdrawn=0:max_erroneous,
+                    erroneous_previous=0:max_erroneous)
+  df$entered <- df$erroneous_current - df$erroneous_previous + df$withdrawn
+  df <- df[df$withdrawn <= df$erroneous_previous & df$entered >= 0, ]
+  rownames(df) <- NULL
+  df[, c("erroneous_previous", "withdrawn", "entered", "erroneous_current")]
+}
+
+#' Binomial log-probability which is -Inf (rather than NaN) outside of support
+#'
+#' @param x vector of counts
+#' @param size vector of numbers of trials, which can be negative
+#' @param prob probability of success
+#'
+#' @return a vector of log-probabilities
+dbinom_log_safe <- function(x, size, prob) {
+  logp <- rep(-Inf, length(x))
+  is_valid <- size >= 0 & x >= 0 & x <= size
+  logp[is_valid] <- stats::dbinom(x[is_valid], size[is_valid], prob, log=TRUE)
+  logp
+}
+
+#' Calculates observation process log probability allowing reported case counts
+#' to be revised downwards
+#'
+#' The reported count for an onset day is assumed to be the sum of genuine
+#' cases reported so far and erroneous records not yet withdrawn:
+#' \deqn{C = D + E}
+#' Between a pair of reporting days, day_1 < day_2, there are three independent changes:
+#' \deqn{d \sim binomial(I_true - D_day_1, p_detect)}
+#' genuine cases are newly reported, exactly as in \code{observation_process_single_logp};
+#' \deqn{n \sim Poisson(eta * I_true * (S(day_1) - S(day_2)))}
+#' erroneous records are entered, where S is the probability a case remains undetected; and
+#' \deqn{m \sim binomial(E_day_1, 1 - (1 - rho)^(day_2 - day_1))}
+#' erroneous records are withdrawn. The change in reported cases is then:
+#' \deqn{C_day_2 - C_day_1 = d + n - m}
+#' E is unobserved (and assumed zero on the first reporting day) so is summed
+#' over using a forward recursion, with E truncated at max_erroneous.
+#'
+#' @param observation_df a two-column data frame with columns 'time_reported' and 'cases_reported'
+#' @param cases_true true case count(s) originating on day_onset: can be a single value or vector
+#' @inheritParams detected_after_unobserved_prob
+#' @param revision_parameters named list of 'eta' (>= 0), the expected number of
+#' erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),
+#' the daily probability an erroneous record is withdrawn. If NULL (the default
+#' where this is optional), reported cases cannot be revised downwards.
+#' @inheritParams erroneous_transitions
+#'
+#' @return a log-probability or vector of log-probabilities
+observation_process_revisions_logp <- function(observation_df, cases_true,
+                                               day_onset, reporting_parameters,
+                                               revision_parameters,
+                                               max_erroneous=3) {
+  observation_days <- observation_df$time_reported
+  observation_cases <- observation_df$cases_reported
+  if(any(diff(observation_days) <= 0))
+    stop("days in observation matrix must be increasing.")
+
+  eta <- revision_parameters$eta
+  rho <- revision_parameters$rho
+  n_cases <- length(cases_true)
+  if(eta < 0 | rho <= 0 | rho >= 1)
+    return(rep(-Inf, n_cases))
+
+  transitions <- erroneous_transitions(max_erroneous)
+  n_transitions <- nrow(transitions)
+  erroneous_previous <- rep(transitions$erroneous_previous, each=n_cases)
+  entered <- rep(transitions$entered, each=n_cases)
+  change_erroneous <- rep(transitions$erroneous_current - transitions$erroneous_previous,
+                          each=n_cases)
+  cases_true_long <- rep(cases_true, n_transitions)
+
+  # log-probability of observations so far and each count of erroneous records
+  log_alpha <- matrix(-Inf, nrow=n_cases, ncol=max_erroneous + 1)
+  log_alpha[, 1] <- 0
+
+  num_periods <- nrow(observation_df) - 1
+  for(i in seq_len(num_periods)) {
+    day_1 <- observation_days[i]
+    day_2 <- observation_days[i + 1]
+    p_detect <- detected_after_unobserved_prob(day_2, day_1, day_onset,
+                                               reporting_parameters)
+    p_newly_detected <- undetected_prob(day_1 + 0.5, day_onset, reporting_parameters) -
+      undetected_prob(day_2 + 0.5, day_onset, reporting_parameters)
+    p_withdrawn <- 1 - (1 - rho)^(day_2 - day_1)
+    change_cases <- observation_cases[i + 1] - observation_cases[i]
+
+    logp_withdrawn <- stats::dbinom(transitions$withdrawn,
+                                    transitions$erroneous_previous,
+                                    p_withdrawn, log=TRUE)
+    logp_entered <- stats::dpois(entered,
+                                 eta * cases_true_long * p_newly_detected,
+                                 log=TRUE)
+    # genuine cases remaining are those not among the non-erroneous records
+    logp_genuine <- dbinom_log_safe(
+      change_cases - change_erroneous,
+      cases_true_long - observation_cases[i] + erroneous_previous,
+      p_detect)
+
+    log_terms <- log_alpha[, transitions$erroneous_previous + 1, drop=FALSE] +
+      matrix(logp_entered + logp_genuine, nrow=n_cases) +
+      matrix(logp_withdrawn, nrow=n_cases, ncol=n_transitions, byrow=TRUE)
+
+    for(e in 0:max_erroneous)
+      log_alpha[, e + 1] <- matrixStats::rowLogSumExps(
+        log_terms[, transitions$erroneous_current == e, drop=FALSE])
+  }
+  matrixStats::rowLogSumExps(log_alpha)
+}
+
 #' Calculates observation process log probability density
 #'
 #' The probability of observations is a function of the number of cases remaining
@@ -40,12 +168,28 @@ observation_process_single_logp <- function(cases_true, cases_day_2, cases_day_1
 #' This function calculates the combined probability of all observed cases pertaining
 #' to a particular onset date.
 #'
+#' If revision_parameters is supplied, reported case counts are allowed to be
+#' revised downwards and the probability is instead calculated using
+#' \code{observation_process_revisions_logp}.
+#'
 #' @param observation_df a two-column data frame with columns 'time_reported' and 'cases_reported'
 #' @inheritParams observation_process_single_logp
+#' @inheritParams observation_process_revisions_logp
 #'
 #' @return a log-probability or vector of log-probabilities
 observation_process_logp <- function(observation_df, cases_true,
-                                     day_onset, reporting_parameters){
+                                     day_onset, reporting_parameters,
+                                     revision_parameters=NULL,
+                                     max_erroneous=3){
+  if(!is.null(revision_parameters))
+    return(observation_process_revisions_logp(
+      observation_df=observation_df,
+      cases_true=cases_true,
+      day_onset=day_onset,
+      reporting_parameters=reporting_parameters,
+      revision_parameters=revision_parameters,
+      max_erroneous=max_erroneous))
+
   observation_days <- observation_df$time_reported
   observation_cases <- observation_df$cases_reported
   change_days <- diff(observation_days)
@@ -163,14 +307,17 @@ future_cases_logp <- function(cases_true, cases_history, cases_future, Rt_future
 conditional_cases_logp <- function(cases_true, observation_df, cases_history,
                                    Rt, day_onset, serial_parameters, reporting_parameters,
                                    kappa=NULL, is_negative_binomial=FALSE,
-                                   cases_future=NULL, Rt_future=NULL) {
+                                   cases_future=NULL, Rt_future=NULL,
+                                   revision_parameters=NULL, max_erroneous=3) {
 
   logp_observation <- 0
   if(nrow(observation_df) > 1) # handling cases arising today which were reported today
     logp_observation <- observation_process_logp(observation_df=observation_df,
                                                  cases_true=cases_true,
                                                  day_onset=day_onset,
-                                                 reporting_parameters=reporting_parameters)
+                                                 reporting_parameters=reporting_parameters,
+                                                 revision_parameters=revision_parameters,
+                                                 max_erroneous=max_erroneous)
   logp_state <- state_process_logp(cases_true=cases_true,
                                    cases_history=cases_history,
                                    Rt=Rt,
@@ -189,17 +336,75 @@ conditional_cases_logp <- function(cases_true, observation_df, cases_history,
   logp_observation + logp_state + logp_future
 }
 
+#' Calculates (unnormalised) log-probability of true case counts pertaining to
+#' cases arising on a particular onset day when reported case counts can be
+#' revised downwards
+#'
+#' This is the same quantity as calculated by \code{conditional_cases_logp} but,
+#' since the observation process is more costly to evaluate when revisions are
+#' allowed, this is only evaluated for case counts whose probability is
+#' non-negligible. Since the observation process log-probability cannot exceed
+#' zero, the remaining components bound the log-probability from above; any case
+#' count whose bound is more than log_negligible below the log-probability of
+#' a pilot case count is assigned a log-probability of -Inf.
+#'
+#' @inheritParams conditional_cases_logp
+#' @param log_negligible difference in log-probability from a pilot case count
+#' beyond which case counts are assigned zero probability
+#'
+#' @return a vector of (unnormalised) log-probabilities
+conditional_cases_revisions_logp <- function(cases_true, observation_df, cases_history,
+                                             Rt, day_onset, serial_parameters, reporting_parameters,
+                                             revision_parameters,
+                                             kappa=NULL, is_negative_binomial=FALSE,
+                                             cases_future=NULL, Rt_future=NULL,
+                                             max_erroneous=3,
+                                             log_negligible=50) {
+
+  # a single observation contributes nothing to the log-probability, so this
+  # gives the components due to the renewal process only
+  logps_upper <- conditional_cases_logp(cases_true, observation_df[1, ], cases_history,
+                                        Rt, day_onset, serial_parameters, reporting_parameters,
+                                        kappa, is_negative_binomial,
+                                        cases_future, Rt_future)
+  if(nrow(observation_df) <= 1)
+    return(logps_upper)
+
+  f_observation <- function(cases) {
+    observation_process_logp(observation_df=observation_df,
+                             cases_true=cases,
+                             day_onset=day_onset,
+                             reporting_parameters=reporting_parameters,
+                             revision_parameters=revision_parameters,
+                             max_erroneous=max_erroneous)
+  }
+
+  cases_last_reported <- dplyr::last(observation_df$cases_reported)
+  index_pilot <- unique(c(which.max(logps_upper),
+                          which.min(abs(cases_true - cases_last_reported))))
+  logps_pilot <- logps_upper[index_pilot] + f_observation(cases_true[index_pilot])
+
+  is_evaluated <- logps_upper >= max(logps_pilot) - log_negligible
+  logps <- rep(-Inf, length(cases_true))
+  logps[is_evaluated] <- logps_upper[is_evaluated] +
+    f_observation(cases_true[is_evaluated])
+  logps
+}
+
 #' Observation probability across all onset times
 #'
 #' @param snapshot_with_true_cases_df a tibble with four columns:
 #' time_onset, time_reported, cases_reported, cases_true
 #' @param reporting_parameters a tibble with columns: 'reporting_piece_index', 'mean', 'sd'
+#' @inheritParams observation_process_revisions_logp
 #'
 #' @return a log probability
 #' @importFrom rlang .data
 observation_process_all_times_logp <- function(
   snapshot_with_true_cases_df,
-  reporting_parameters){
+  reporting_parameters,
+  revision_parameters=NULL,
+  max_erroneous=3){
 
   if(methods::is(reporting_parameters, "list"))
     stop("Reporting parameters should be a tibble not a list.")
@@ -240,7 +445,9 @@ observation_process_all_times_logp <- function(
         short_df,
         cases_true=cases_true,
         day_onset=onset_time,
-        reporting_parameters=reporting_parameters_current)
+        reporting_parameters=reporting_parameters_current,
+        revision_parameters=revision_parameters,
+        max_erroneous=max_erroneous)
       logp <- logp + logp_new
     }
   }

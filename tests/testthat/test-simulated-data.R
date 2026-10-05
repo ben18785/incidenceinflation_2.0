@@ -319,3 +319,55 @@ test_that("generate_snapshots with temporal variation in reporting works", {
 
   expect_true(ratio_early > ratio_late)
 })
+
+test_that("observed_cases_trajectory allows downward revisions only if revision
+parameters supplied", {
+  set.seed(1)
+  reporting_parameters <- list(mean=3, sd=2)
+  days_reporting <- 5:25
+  f_trajectories <- function(revision_parameters)
+    purrr::map(1:200, ~observed_cases_trajectory(
+      20, days_reporting, 5, reporting_parameters, revision_parameters))
+
+  # no revisions
+  trajectories <- f_trajectories(NULL)
+  expect_true(all(purrr::map_lgl(trajectories, ~all(diff(.) >= 0))))
+  expect_true(all(purrr::map_dbl(trajectories, max) <= 20))
+
+  # no erroneous records entered
+  trajectories <- f_trajectories(list(eta=0, rho=0.5))
+  expect_true(all(purrr::map_lgl(trajectories, ~all(diff(.) >= 0))))
+
+  # revisions
+  trajectories <- f_trajectories(list(eta=0.2, rho=0.3))
+  expect_true(any(purrr::map_lgl(trajectories, ~any(diff(.) < 0))))
+  expect_true(any(purrr::map_dbl(trajectories, max) > 20))
+  expect_true(all(purrr::map_dbl(trajectories, min) >= 0))
+  expect_true(all(purrr::map_dbl(trajectories, ~.[1]) == 0))
+  # erroneous records nearly all withdrawn long after onset
+  expect_true(mean(purrr::map_dbl(trajectories, dplyr::last) == 20) > 0.9)
+})
+
+test_that("generate_snapshots and thinning work with downward revisions", {
+  set.seed(2)
+  days_total <- 30
+  Rt_function <- stats::approxfun(1:days_total, rep(1.2, days_total))
+  df <- generate_snapshots(days_total, Rt_function,
+                           list(mean=5, sd=3), list(mean=4, sd=2),
+                           revision_parameters=list(eta=0.1, rho=0.3))
+  changes <- df %>%
+    dplyr::group_by(time_onset) %>%
+    dplyr::mutate(change=c(0, diff(cases_reported))) %>%
+    dplyr::ungroup()
+  expect_true(any(changes$change < 0))
+
+  df_thin <- thin_series(df)
+  expect_true(nrow(df_thin) < nrow(df))
+  changes_thin <- df_thin %>%
+    dplyr::group_by(time_onset) %>%
+    dplyr::mutate(change=c(0, diff(cases_reported))) %>%
+    dplyr::ungroup()
+  # thinning retains all changes in reported cases
+  expect_equal(sum(changes_thin$change < 0), sum(changes$change < 0))
+  expect_equal(sum(changes_thin$change > 0), sum(changes$change > 0))
+})

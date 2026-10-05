@@ -84,3 +84,50 @@ check_parameter_names <- function(reporting_parameters, serial_parameters) {
   if(!all(correct_names %in% names(serial_parameters)))
     stop("serial_parameters must contain 'mean' and 'sd'.")
 }
+
+#' Calculates the largest downward revision in reported cases
+#'
+#' For each onset time, this is the largest fall in reported cases from any
+#' earlier count. When downward revisions are allowed, the maximum number of
+#' erroneous records (max_erroneous) must be at least as large as this, and
+#' should exceed it.
+#'
+#' @param snapshot_df a tibble with columns: 'time_onset', 'time_reported',
+#' 'cases_reported'
+#'
+#' @return the largest downward revision across all onset times
+#' @export
+#' @importFrom rlang .data
+max_downward_revision <- function(snapshot_df) {
+  df <- snapshot_df %>%
+    dplyr::group_by(.data$time_onset) %>%
+    dplyr::arrange(.data$time_reported, .by_group=TRUE) %>%
+    dplyr::summarise(
+      revision=max(cummax(.data$cases_reported) - .data$cases_reported))
+  max(df$revision)
+}
+
+#' Checks reported cases are possible when downward revisions are allowed
+#'
+#' Reported cases for an onset time cannot fall by more than max_erroneous from
+#' any earlier count, nor (since all records are assumed genuine when an onset
+#' time is first observed) below the count first reported.
+#'
+#' @inheritParams max_downward_revision
+#' @inheritParams erroneous_transitions
+#'
+#' @return TRUE (invisibly) if reported cases are possible, otherwise throws an error
+#' @importFrom rlang .data
+check_revisions_possible <- function(snapshot_df, max_erroneous) {
+  if(max_downward_revision(snapshot_df) > max_erroneous)
+    stop("Reported cases are revised downwards by more than max_erroneous: increase max_erroneous.")
+
+  df <- snapshot_df %>%
+    dplyr::group_by(.data$time_onset) %>%
+    dplyr::arrange(.data$time_reported, .by_group=TRUE) %>%
+    dplyr::summarise(
+      is_below_first=any(.data$cases_reported < .data$cases_reported[1]))
+  if(any(df$is_below_first))
+    stop("Reported cases fall below the count first reported for an onset time, which is not allowed.")
+  invisible(TRUE)
+}

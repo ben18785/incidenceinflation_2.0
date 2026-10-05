@@ -15,7 +15,9 @@ sample_cases_history(
   kappa = NULL,
   is_negative_binomial = FALSE,
   cases_true_current = NULL,
-  future_max = 40
+  future_max = 40,
+  revision_parameters = NULL,
+  max_erroneous = 3
 )
 }
 \arguments{
@@ -48,6 +50,14 @@ conditional only on case counts with earlier onset times.}
 
 \item{future_max}{maximum number of later onset days conditioned on when
 cases_true_current is supplied. Defaults to 40.}
+
+\item{revision_parameters}{named list of 'eta' (>= 0), the expected number of
+erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),
+the daily probability an erroneous record is withdrawn. If NULL (the default
+where this is optional), reported cases cannot be revised downwards.}
+
+\item{max_erroneous}{maximum number of erroneous records that can be held
+for a single onset day at any one time}
 }
 \value{
 a tibble with an extra cases_estimated column

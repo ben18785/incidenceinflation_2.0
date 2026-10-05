@@ -22,7 +22,9 @@ mcmc(
   initial_overdispersion = 5,
   is_negative_binomial = FALSE,
   overdispersion_metropolis_sd = 0.25,
-  condition_on_future_cases = TRUE
+  condition_on_future_cases = TRUE,
+  initial_revision_parameters = NULL,
+  revision_metropolis_parameters = list(eta_step = 0.5, rho_step = 0.5)
 )
 }
 \arguments{
@@ -83,6 +85,18 @@ is drawn conditional on the current case counts at all other onset times,
 including later ones which depend on it through the renewal equation. If
 FALSE each case count is drawn conditional only on case counts with earlier
 onset times, which was the behaviour in versions before 2.0.}
+
+\item{initial_revision_parameters}{named list of 'eta' and 'rho' providing
+initial guesses of the parameters governing downward revisions of reported
+case counts (see \code{observation_process_revisions_logp}). If NULL (the
+default), reported case counts are assumed never to be revised downwards. If
+supplied, priors must contain an element 'revisions' (see
+\code{prior_revision_parameters}) and can optionally contain 'max_erroneous'
+(which defaults to 3).}
+
+\item{revision_metropolis_parameters}{named list of 'eta_step' and 'rho_step'
+containing step sizes for Metropolis step for revision parameters (see
+\code{propose_revision_parameters})}
 }
 \value{
 a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters

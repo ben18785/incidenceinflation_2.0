@@ -7,6 +7,10 @@
 #' If cases_future is supplied, the distribution additionally conditions on the
 #' case counts arising on later onset days (see \code{conditional_cases_logp}).
 #'
+#' If revision_parameters is supplied, reported case counts can be revised
+#' downwards, which means the true case count can be fewer than the maximum
+#' reported (by up to max_erroneous).
+#'
 #' @param max_cases maximum possible cases thought to arise on a given day
 #' @inheritParams conditional_cases_logp
 #' @param ndraws number of draws of cases
@@ -18,16 +22,28 @@ sample_true_cases_single_onset <- function(
   observation_df, cases_history, max_cases,
   Rt, day_onset, serial_parameters, reporting_parameters,
   ndraws=1, maximise=FALSE, kappa=NULL, is_negative_binomial=FALSE,
-  cases_future=NULL, Rt_future=NULL) {
+  cases_future=NULL, Rt_future=NULL,
+  revision_parameters=NULL, max_erroneous=3) {
 
   max_observed_cases <- max(observation_df$cases_reported)
   if(max_observed_cases > max_cases)
     stop("Max possible cases should be (much) greater than max observed cases.")
-  possible_cases <- max_observed_cases:max_cases
-  logps <- conditional_cases_logp(possible_cases, observation_df, cases_history,
-                                  Rt, day_onset, serial_parameters, reporting_parameters,
-                                  kappa, is_negative_binomial,
-                                  cases_future, Rt_future)
+  if(is.null(revision_parameters)) {
+    possible_cases <- max_observed_cases:max_cases
+    logps <- conditional_cases_logp(possible_cases, observation_df, cases_history,
+                                    Rt, day_onset, serial_parameters, reporting_parameters,
+                                    kappa, is_negative_binomial,
+                                    cases_future, Rt_future)
+  } else {
+    possible_cases <- max(0, max_observed_cases - max_erroneous):max_cases
+    logps <- conditional_cases_revisions_logp(
+      possible_cases, observation_df, cases_history,
+      Rt, day_onset, serial_parameters, reporting_parameters,
+      revision_parameters,
+      kappa, is_negative_binomial,
+      cases_future, Rt_future,
+      max_erroneous)
+  }
   probs <- exp(logps - matrixStats::logSumExp(logps))
   if(dplyr::last(probs) > 0.01)
     warning(paste0("Cases too few for onset day: ", day_onset,
@@ -89,7 +105,9 @@ sample_cases_history <- function(
   kappa=NULL,
   is_negative_binomial=FALSE,
   cases_true_current=NULL,
-  future_max=40) {
+  future_max=40,
+  revision_parameters=NULL,
+  max_erroneous=3) {
 
   if(!"reporting_piece_index" %in% colnames(observation_onset_df))
     stop("observation_onset_df must contain a column: 'reporting_piece_index'.")
@@ -109,8 +127,10 @@ sample_cases_history <- function(
 
   observation_history_df <- observation_onset_df %>%
     dplyr::group_by(.data$time_onset) %>%
-    dplyr::mutate(cases_estimated=ifelse(.data$time_onset < start_uncertain_period,
-                                    max(.data$cases_reported), NA)) %>%
+    dplyr::mutate(cases_estimated=ifelse(
+      .data$time_onset < start_uncertain_period,
+      # latest count, since counts can be revised downwards
+      .data$cases_reported[which.max(.data$time_reported)], NA)) %>%
     dplyr::ungroup()
   onset_times <- unique(observation_history_df$time_onset)
   onset_times_uncertain_period <- onset_times[onset_times >= start_uncertain_period]
@@ -177,7 +197,9 @@ sample_cases_history <- function(
       kappa=kappa,
       is_negative_binomial=is_negative_binomial,
       cases_future=cases_future,
-      Rt_future=Rt_future)
+      Rt_future=Rt_future,
+      revision_parameters=revision_parameters,
+      max_erroneous=max_erroneous)
     index_onset_time <- which(observation_history_df$time_onset==onset_time)
     observation_history_df$cases_estimated[index_onset_time] <- case
   }
@@ -545,14 +567,18 @@ metropolis_step <- function(snapshot_with_true_cases_df,
                             current_reporting_parameters,
                             logp_current,
                             prior_parameters,
-                            metropolis_parameters) {
+                            metropolis_parameters,
+                            revision_parameters=NULL,
+                            max_erroneous=3) {
 
   proposed_reporting_parameters <- propose_reporting_parameters(
     current_reporting_parameters,
     metropolis_parameters)
   logp_proposed <- observation_process_all_times_logp(
     snapshot_with_true_cases_df=snapshot_with_true_cases_df,
-    reporting_parameters=proposed_reporting_parameters
+    reporting_parameters=proposed_reporting_parameters,
+    revision_parameters=revision_parameters,
+    max_erroneous=max_erroneous
   ) + prior_reporting_parameters(proposed_reporting_parameters,
                                  prior_parameters)
 
@@ -579,7 +605,9 @@ metropolis_steps <- function(
   logp_current,
   prior_parameters,
   metropolis_parameters,
-  ndraws) {
+  ndraws,
+  revision_parameters=NULL,
+  max_erroneous=3) {
 
   reporting_parameters <- current_reporting_parameters
   num_reporting_parameters <- max(reporting_parameters$reporting_piece_index)
@@ -591,7 +619,9 @@ metropolis_steps <- function(
       reporting_parameters,
       logp_current,
       prior_parameters,
-      metropolis_parameters
+      metropolis_parameters,
+      revision_parameters,
+      max_erroneous
     )
     reporting_parameters <- list_parameters_logp$parameter
     logp_current <- list_parameters_logp$logp
@@ -758,7 +788,9 @@ sample_reporting <- function(
   prior_parameters,
   metropolis_parameters,
   maximise=FALSE,
-  ndraws=1) {
+  ndraws=1,
+  revision_parameters=NULL,
+  max_erroneous=3) {
 
   if(maximise) {
     reporting_parameters <- maximise_reporting_logp(
@@ -775,10 +807,119 @@ sample_reporting <- function(
       logp_current,
       prior_parameters,
       metropolis_parameters,
-      ndraws=ndraws)
+      ndraws=ndraws,
+      revision_parameters=revision_parameters,
+      max_erroneous=max_erroneous)
   }
 
   list_parameter_logp
+}
+
+#' Propose new revision parameters
+#'
+#' Proposals are made using normal kernels centered at the current values of
+#' log(eta) and logit(rho), so that proposed values always lie within bounds.
+#'
+#' @param current_revision_parameters named list of 'eta' and 'rho'
+#' @param metropolis_parameters named list of 'eta_step' and 'rho_step'
+#' containing step sizes (on the log and logit scales respectively). A step
+#' size of zero holds a parameter fixed at its current value.
+#'
+#' @return a named list of 'eta' and 'rho'
+propose_revision_parameters <- function(
+    current_revision_parameters,
+    metropolis_parameters) {
+
+  log_eta <- stats::rnorm(1, log(current_revision_parameters$eta),
+                          metropolis_parameters$eta_step)
+  logit_rho <- stats::rnorm(1, stats::qlogis(current_revision_parameters$rho),
+                            metropolis_parameters$rho_step)
+  list(eta=exp(log_eta),
+       rho=stats::plogis(logit_rho))
+}
+
+#' Prior for revision parameters
+#'
+#' A gamma prior is assumed for eta and a beta prior for rho.
+#'
+#' @inheritParams propose_revision_parameters
+#' @param prior_parameters named list with elements 'eta_mu', 'eta_sigma',
+#' representing the mean and sd of the gamma prior for eta; and 'rho_alpha',
+#' 'rho_beta' representing the shape parameters of the beta prior for rho
+#'
+#' @return a log-probability density
+prior_revision_parameters <- function(
+    current_revision_parameters,
+    prior_parameters) {
+
+  dgamma_mean_sd(current_revision_parameters$eta,
+                 prior_parameters$eta_mu,
+                 prior_parameters$eta_sigma,
+                 log=TRUE) +
+    stats::dbeta(current_revision_parameters$rho,
+                 prior_parameters$rho_alpha,
+                 prior_parameters$rho_beta,
+                 log=TRUE)
+}
+
+#' Log-determinant of Jacobian of transformation from (log(eta), logit(rho))
+#' to (eta, rho)
+#'
+#' Revision parameters are proposed on the transformed scale, so this is added
+#' to the log-probability density of (eta, rho) in a Metropolis step.
+#'
+#' @inheritParams propose_revision_parameters
+#'
+#' @return a log-determinant
+log_jacobian_revision_parameters <- function(current_revision_parameters) {
+  eta <- current_revision_parameters$eta
+  rho <- current_revision_parameters$rho
+  log(eta) + log(rho) + log(1 - rho)
+}
+
+#' Sample revision parameters using a single Metropolis step
+#'
+#' @inheritParams observation_process_all_times_logp
+#' @inheritParams propose_revision_parameters
+#' @inheritParams prior_revision_parameters
+#' @param logp_current the value of the log-probability at current parameter
+#' values: this is the sum of \code{observation_process_all_times_logp},
+#' \code{prior_revision_parameters} and \code{log_jacobian_revision_parameters}
+#'
+#' @return a named list with two elements: 'revision_parameters', a named list
+#' of 'eta' and 'rho'; and 'logp', the log-probability corresponding to the
+#' parameter values returned
+metropolis_step_revisions <- function(
+    snapshot_with_true_cases_df,
+    reporting_parameters,
+    current_revision_parameters,
+    logp_current,
+    prior_parameters,
+    metropolis_parameters,
+    max_erroneous=3) {
+
+  proposed_revision_parameters <- propose_revision_parameters(
+    current_revision_parameters,
+    metropolis_parameters)
+
+  logp_proposed <- observation_process_all_times_logp(
+    snapshot_with_true_cases_df=snapshot_with_true_cases_df,
+    reporting_parameters=reporting_parameters,
+    revision_parameters=proposed_revision_parameters,
+    max_erroneous=max_erroneous
+  ) + prior_revision_parameters(proposed_revision_parameters,
+                                prior_parameters) +
+    log_jacobian_revision_parameters(proposed_revision_parameters)
+
+  list_parameters_logp <- accept_reject(
+    logp_current, logp_proposed,
+    current_revision_parameters,
+    proposed_revision_parameters)
+
+  list(
+    revision_parameters=list_parameters_logp$parameter,
+    logp=list_parameters_logp$logp
+  )
 }
 
 #' Runs MCMC or optimisation to estimate Rt, cases and reporting parameters
@@ -821,7 +962,18 @@ sample_reporting <- function(
 #' including later ones which depend on it through the renewal equation. If
 #' FALSE each case count is drawn conditional only on case counts with earlier
 #' onset times, which was the behaviour in versions before 2.0.
-#' @return a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters
+#' @param initial_revision_parameters named list of 'eta' and 'rho' providing
+#' initial guesses of the parameters governing downward revisions of reported
+#' case counts (see \code{observation_process_revisions_logp}). If NULL (the
+#' default), reported case counts are assumed never to be revised downwards. If
+#' supplied, priors must contain an element 'revisions' (see
+#' \code{prior_revision_parameters}) and can optionally contain 'max_erroneous'
+#' (which defaults to 3).
+#' @param revision_metropolis_parameters named list of 'eta_step' and 'rho_step'
+#' containing step sizes for Metropolis step for revision parameters (see
+#' \code{propose_revision_parameters})
+#' @return a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters;
+#' and "revisions" if initial_revision_parameters is supplied
 #' @importFrom rlang .data
 #' @importFrom methods is
 #' @export
@@ -838,7 +990,9 @@ mcmc_single <- function(
   initial_overdispersion=5,
   is_negative_binomial=FALSE,
   overdispersion_metropolis_sd=0.5,
-  condition_on_future_cases=TRUE) {
+  condition_on_future_cases=TRUE,
+  initial_revision_parameters=NULL,
+  revision_metropolis_parameters=list(eta_step=0.5, rho_step=0.5)) {
 
   cnames <- colnames(snapshot_with_Rt_index_df)
   expected_names <- c("time_onset", "time_reported",
@@ -868,6 +1022,21 @@ mcmc_single <- function(
   if(is_negative_binomial)
     if(maximise)
       stop("Maximisation with a negative binomial renewal model is not yet allowed.")
+
+  is_revisions <- !is.null(initial_revision_parameters)
+  revision_current <- initial_revision_parameters
+  max_erroneous <- 3
+  if(is_revisions) {
+    if(!"revisions" %in% names(priors))
+      stop("If revisions to reported cases are allowed a prior must be provided for the revision parameters.")
+    if(maximise)
+      stop("Maximisation when revisions to reported cases are allowed is not yet allowed.")
+    if(revision_current$eta <= 0 | revision_current$rho <= 0 | revision_current$rho >= 1)
+      stop("Initial revision parameters must satisfy: eta > 0 and 0 < rho < 1.")
+    if("max_erroneous" %in% names(priors))
+      max_erroneous <- priors$max_erroneous
+    check_revisions_possible(snapshot_with_Rt_index_df, max_erroneous)
+  }
 
   reporting_current <- initial_reporting_parameters
   if(methods::is(reporting_current, "list")) # if only a single list provided
@@ -930,7 +1099,9 @@ mcmc_single <- function(
       kappa=overdispersion_current,
       is_negative_binomial=is_negative_binomial,
       cases_true_current=cases_true_current,
-      future_max=serial_max)
+      future_max=serial_max,
+      revision_parameters=revision_current,
+      max_erroneous=max_erroneous)
 
 
     # sample Rt
@@ -969,7 +1140,9 @@ mcmc_single <- function(
     if(!maximise) {
       logp_current_reporting <- observation_process_all_times_logp(
         snapshot_with_true_cases_df=df_temp,
-        reporting_parameters=reporting_current
+        reporting_parameters=reporting_current,
+        revision_parameters=revision_current,
+        max_erroneous=max_erroneous
       ) + prior_reporting_parameters(reporting_current,
                                      priors$reporting)
     }
@@ -980,10 +1153,41 @@ mcmc_single <- function(
       prior_parameters=priors$reporting,
       metropolis_parameters=reporting_metropolis_parameters,
       maximise=maximise,
-      ndraws=1)
+      ndraws=1,
+      revision_parameters=revision_current,
+      max_erroneous=max_erroneous)
     reporting_temp <- list_reporting_logp$reporting_parameters
     reporting_temp$draw_index <- NULL
     reporting_current <- reporting_temp
+
+    # sample revision parameters
+    if(is_revisions) {
+      # log-probability of observations at reporting parameters just sampled
+      logp_observation <- list_reporting_logp$logp -
+        prior_reporting_parameters(reporting_current, priors$reporting)
+      logp_current_revisions <- logp_observation +
+        prior_revision_parameters(revision_current, priors$revisions) +
+        log_jacobian_revision_parameters(revision_current)
+      list_revision_logp <- metropolis_step_revisions(
+        snapshot_with_true_cases_df=df_temp,
+        reporting_parameters=reporting_current,
+        current_revision_parameters=revision_current,
+        logp_current=logp_current_revisions,
+        prior_parameters=priors$revisions,
+        metropolis_parameters=revision_metropolis_parameters,
+        max_erroneous=max_erroneous)
+      revision_current <- list_revision_logp$revision_parameters
+
+      revision_tmp <- dplyr::tibble(
+        eta=revision_current$eta,
+        rho=revision_current$rho,
+        iteration=i)
+      if(i == 1)
+        revision_samples <- revision_tmp
+      else
+        revision_samples <- revision_samples %>%
+          dplyr::bind_rows(revision_tmp)
+    }
     reporting_current$iteration <- i
     if(i == 1)
       reporting_samples <- reporting_current
@@ -1077,6 +1281,9 @@ mcmc_single <- function(
   if(is_negative_binomial)
     list_results$overdispersion <- overdispersion_samples
 
+  if(is_revisions)
+    list_results$revisions <- revision_samples
+
   list_results
 }
 
@@ -1102,6 +1309,15 @@ combine_chains <- function(list_of_results, is_negative_binomial=FALSE) {
       overdispersion_df <- res$overdispersion
       overdispersion_df$chain <- i
     }
+    is_revisions <- "revisions" %in% names(res)
+    if(is_revisions) {
+      revisions_df <- res$revisions
+      revisions_df$chain <- i
+      if(i == 1)
+        revisions_overall <- revisions_df
+      else
+        revisions_overall <- revisions_overall %>% dplyr::bind_rows(revisions_df)
+    }
     if(i == 1) {
       cases_overall <- cases_df
       Rt_overall <- Rt_df
@@ -1126,6 +1342,9 @@ combine_chains <- function(list_of_results, is_negative_binomial=FALSE) {
 
   if(is_negative_binomial)
     list_combined$overdispersion <- overdispersion_overall
+
+  if(is_revisions)
+    list_combined$revisions <- revisions_overall
 
   list_combined
 }
@@ -1165,7 +1384,9 @@ mcmc <- function(
     initial_overdispersion=5,
     is_negative_binomial=FALSE,
     overdispersion_metropolis_sd=0.25,
-    condition_on_future_cases=TRUE) {
+    condition_on_future_cases=TRUE,
+    initial_revision_parameters=NULL,
+    revision_metropolis_parameters=list(eta_step=0.5, rho_step=0.5)) {
 
   if(nchains==1) {
     res <- mcmc_single(niterations,
@@ -1183,12 +1404,16 @@ mcmc <- function(
                        initial_overdispersion,
                        is_negative_binomial,
                        overdispersion_metropolis_sd,
-                       condition_on_future_cases)
+                       condition_on_future_cases,
+                       initial_revision_parameters,
+                       revision_metropolis_parameters)
     res$cases$chain <- 1
     res$Rt$chain <- 1
     res$reporting$chain <- 1
     if(is_negative_binomial)
       res$overdispersion$chain <- 1
+    if(!is.null(initial_revision_parameters))
+      res$revisions$chain <- 1
   } else {
 
     list_of_results <- vector(mode = "list", length = nchains)
@@ -1212,7 +1437,9 @@ mcmc <- function(
                       initial_overdispersion,
                       is_negative_binomial,
                       overdispersion_metropolis_sd,
-                      condition_on_future_cases)
+                      condition_on_future_cases,
+                      initial_revision_parameters,
+                      revision_metropolis_parameters)
         }
 
         list_of_results <- foreach::foreach(i=1:nchains, .export = "mcmc_single") %dopar% {
@@ -1244,7 +1471,9 @@ mcmc <- function(
                            initial_overdispersion,
                            is_negative_binomial,
                            overdispersion_metropolis_sd,
-                           condition_on_future_cases)
+                           condition_on_future_cases,
+                           initial_revision_parameters,
+                           revision_metropolis_parameters)
         list_of_results[[i]] <- res
       }
     }

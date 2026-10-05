@@ -47,6 +47,7 @@ erroneous records are entered, where S is the probability a case remains undetec
 \deqn{m \sim binomial(E_day_1, 1 - (1 - rho)^(day_2 - day_1))}
 erroneous records are withdrawn. The change in reported cases is then:
 \deqn{C_day_2 - C_day_1 = d + n - m}
-E is unobserved (and assumed zero on the first reporting day) so is summed
-over using a forward recursion, with E truncated at max_erroneous.
+E is unobserved so is summed over using a forward recursion, with E
+truncated at max_erroneous. Its distribution on the first reporting day is
+given by \code{erroneous_initial_logp}.
 }

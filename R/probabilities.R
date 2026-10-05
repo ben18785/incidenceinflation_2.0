@@ -66,6 +66,64 @@ dbinom_log_safe <- function(x, size, prob) {
   logp
 }
 
+#' Calculates log-probability of count of erroneous records on the first
+#' reporting day
+#'
+#' If cases are first reported on the onset day, no erroneous records have yet
+#' been entered. Otherwise, erroneous records are assumed to have been entered
+#' and withdrawn on each day between the onset day and the first reporting day
+#' in the same way as between later reporting days. The count of erroneous
+#' records on the first reporting day then has prior distribution:
+#' \deqn{E \sim Poisson(eta * I_true * \sum_k (S(k - 1) - S(k)) * (1 - rho)^(day_first - k))}
+#' where the sum is over days after the onset day up to the first reporting day.
+#' Independently, the genuine cases reported by then are:
+#' \deqn{D \sim binomial(I_true, p_detect)}
+#' This calculates the distribution of E conditional on the cases first
+#' reported, C = D + E, with E truncated at max_erroneous.
+#'
+#' @param day_first first day on which cases were reported
+#' @param cases_first count of cases reported on day_first
+#' @inheritParams observation_process_revisions_logp
+#'
+#' @return a matrix of log-probabilities with a row for each element of
+#' cases_true and a column for each count of erroneous records from zero to
+#' max_erroneous. If cases_first is impossible for an element of cases_true,
+#' its row is -Inf.
+erroneous_initial_logp <- function(day_first, cases_first, cases_true, day_onset,
+                                   reporting_parameters, revision_parameters,
+                                   max_erroneous=3) {
+  n_cases <- length(cases_true)
+  log_alpha <- matrix(-Inf, nrow=n_cases, ncol=max_erroneous + 1)
+
+  n_days <- floor(day_first - day_onset)
+  if(n_days < 1 | revision_parameters$eta == 0) {
+    log_alpha[, 1] <- 0
+    return(log_alpha)
+  }
+
+  # expected erroneous records entered each day which remain on day_first
+  days <- day_onset + seq_len(n_days)
+  p_undetected <- 1 - pgamma_mean_sd(c(day_onset, days) + 0.5 - day_onset,
+                                     reporting_parameters$mean,
+                                     reporting_parameters$sd)
+  p_newly_detected <- -diff(p_undetected)
+  p_remaining <- (1 - revision_parameters$rho)^(day_first - days)
+  mean_erroneous <- revision_parameters$eta * cases_true *
+    sum(p_newly_detected * p_remaining)
+
+  p_detect <- detected_after_unobserved_prob(day_first, day_onset, day_onset,
+                                             reporting_parameters)
+  for(e in 0:max_erroneous)
+    log_alpha[, e + 1] <- stats::dpois(e, mean_erroneous, log=TRUE) +
+      dbinom_log_safe(rep(cases_first - e, n_cases), cases_true, p_detect)
+
+  # condition on cases first reported
+  log_normaliser <- matrixStats::rowLogSumExps(log_alpha)
+  log_alpha <- log_alpha - log_normaliser
+  log_alpha[!is.finite(log_normaliser), ] <- -Inf
+  log_alpha
+}
+
 #' Calculates observation process log probability allowing reported case counts
 #' to be revised downwards
 #'
@@ -80,8 +138,9 @@ dbinom_log_safe <- function(x, size, prob) {
 #' \deqn{m \sim binomial(E_day_1, 1 - (1 - rho)^(day_2 - day_1))}
 #' erroneous records are withdrawn. The change in reported cases is then:
 #' \deqn{C_day_2 - C_day_1 = d + n - m}
-#' E is unobserved (and assumed zero on the first reporting day) so is summed
-#' over using a forward recursion, with E truncated at max_erroneous.
+#' E is unobserved so is summed over using a forward recursion, with E
+#' truncated at max_erroneous. Its distribution on the first reporting day is
+#' given by \code{erroneous_initial_logp}.
 #'
 #' @param observation_df a two-column data frame with columns 'time_reported' and 'cases_reported'
 #' @param cases_true true case count(s) originating on day_onset: can be a single value or vector
@@ -117,8 +176,10 @@ observation_process_revisions_logp <- function(observation_df, cases_true,
   cases_true_long <- rep(cases_true, n_transitions)
 
   # log-probability of observations so far and each count of erroneous records
-  log_alpha <- matrix(-Inf, nrow=n_cases, ncol=max_erroneous + 1)
-  log_alpha[, 1] <- 0
+  log_alpha <- erroneous_initial_logp(observation_days[1], observation_cases[1],
+                                      cases_true, day_onset,
+                                      reporting_parameters, revision_parameters,
+                                      max_erroneous)
 
   num_periods <- nrow(observation_df) - 1
   for(i in seq_len(num_periods)) {

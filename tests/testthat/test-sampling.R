@@ -1589,3 +1589,54 @@ test_that("mcmc works when downward revisions are allowed", {
   priors_wrong$max_erroneous <- max_downward_revision(df) - 1
   expect_error(f_mcmc(priors_wrong, revision_parameters), "max_erroneous")
 })
+
+test_that("mcmc works when cases fall below those first reported long after
+onset", {
+  set.seed(6)
+  niter <- 3
+  days_total <- 40
+  day_first_report <- 25
+  r_params <- list(mean=4, sd=2)
+  s_params <- list(mean=5, sd=3)
+  revision_parameters <- list(eta=0.1, rho=0.05)
+  Rt_function <- stats::approxfun(1:days_total, rep(1.3, days_total))
+  # reports only available from some time after earliest onset days
+  df <- generate_snapshots(days_total, Rt_function, s_params, r_params,
+                           revision_parameters=revision_parameters) %>%
+    dplyr::filter(time_reported >= day_first_report)
+  df_first <- df %>%
+    dplyr::group_by(time_onset) %>%
+    dplyr::summarise(is_below_first=any(cases_reported < cases_reported[1]),
+                     day_first=min(time_reported))
+  expect_true(any(df_first$is_below_first &
+                    df_first$day_first > df_first$time_onset))
+
+  initial_cases_true <- df %>%
+    dplyr::select(time_onset, cases_true) %>%
+    unique()
+  snapshot_with_Rt_index_df <- df %>%
+    dplyr::select(-cases_true) %>%
+    dplyr::mutate(Rt_index=ifelse(time_onset <= 20, 1, 2))
+  priors <- list(Rt=list(shape=1, rate=1),
+                 reporting=list(mean_mu=5,
+                                mean_sigma=10,
+                                sd_mu=3,
+                                sd_sigma=5),
+                 revisions=list(eta_mu=0.1, eta_sigma=0.1,
+                                rho_alpha=1, rho_beta=1),
+                 max_erroneous=max_downward_revision(df) + 1,
+                 max_cases=5000)
+  res <- mcmc(niterations=niter,
+              snapshot_with_Rt_index_df,
+              priors,
+              s_params,
+              initial_cases_true,
+              r_params,
+              dplyr::tibble(Rt_index=c(1, 2), Rt=c(1.3, 1.3)),
+              print_to_screen=FALSE,
+              initial_revision_parameters=revision_parameters)
+  expect_equal(nrow(res$cases), days_total * niter)
+  expect_equal(sum(is.na(res$cases$cases_true)), 0)
+  expect_true(all(is.finite(res$reporting$mean)))
+  expect_equal(nrow(res$revisions), niter)
+})

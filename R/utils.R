@@ -110,8 +110,9 @@ max_downward_revision <- function(snapshot_df) {
 #' Checks reported cases are possible when downward revisions are allowed
 #'
 #' Reported cases for an onset time cannot fall by more than max_erroneous from
-#' any earlier count, nor (since all records are assumed genuine when an onset
-#' time is first observed) below the count first reported.
+#' any earlier count. Also, if cases are first reported on the onset day itself
+#' (when all records are assumed genuine) they cannot subsequently fall below
+#' the count first reported.
 #'
 #' @inheritParams max_downward_revision
 #' @inheritParams erroneous_transitions
@@ -126,8 +127,9 @@ check_revisions_possible <- function(snapshot_df, max_erroneous) {
     dplyr::group_by(.data$time_onset) %>%
     dplyr::arrange(.data$time_reported, .by_group=TRUE) %>%
     dplyr::summarise(
-      is_below_first=any(.data$cases_reported < .data$cases_reported[1]))
+      is_below_first=.data$time_reported[1] - .data$time_onset[1] < 1 &
+        any(.data$cases_reported < .data$cases_reported[1]))
   if(any(df$is_below_first))
-    stop("Reported cases fall below the count first reported for an onset time, which is not allowed.")
+    stop("Reported cases fall below the count first reported on the onset day, which is not allowed.")
   invisible(TRUE)
 }

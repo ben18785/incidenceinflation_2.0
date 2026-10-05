@@ -547,8 +547,32 @@ paths of genuine reports, erroneous entries and withdrawals", {
     prob
   }
 
+  # distribution of erroneous records on first reporting day, given that one
+  # day has passed since onset
+  f_initial_prob <- function(case_true) {
+    p_newly_detected <-
+      undetected_prob(day_onset + 0.5, day_onset, reporting_parameters) -
+      undetected_prob(days[1] + 0.5, day_onset, reporting_parameters)
+    p_detect <- detected_after_unobserved_prob(days[1], day_onset, day_onset,
+                                               reporting_parameters)
+    erroneous <- 0:max_erroneous
+    probs <- dpois(erroneous, revision_parameters$eta * case_true * p_newly_detected) *
+      ifelse(cases[1] - erroneous >= 0,
+             dbinom(cases[1] - erroneous, case_true, p_detect), 0)
+    probs / sum(probs)
+  }
+  f_prob <- function(case_true) {
+    probs_initial <- f_initial_prob(case_true)
+    prob <- 0
+    for(erroneous in 0:max_erroneous)
+      if(probs_initial[erroneous + 1] > 0)
+        prob <- prob + probs_initial[erroneous + 1] *
+          f_path_prob(case_true, 1, cases[1] - erroneous, erroneous)
+    prob
+  }
+
   cases_true <- 1:12
-  prob_enumerated <- purrr::map_dbl(cases_true, ~f_path_prob(., 1, cases[1], 0))
+  prob_enumerated <- purrr::map_dbl(cases_true, f_prob)
   logp <- observation_process_revisions_logp(
     observation_matrix, cases_true, day_onset, reporting_parameters,
     revision_parameters, max_erroneous)
@@ -705,4 +729,106 @@ revisions are allowed", {
 
   # without revision parameters downwards revisions throw error
   expect_error(observation_process_all_times_logp(df, reporting_parameters))
+})
+
+test_that("erroneous_initial_logp gives distribution of erroneous records on
+first reporting day", {
+  reporting_parameters <- list(mean=4, sd=3)
+  revision_parameters <- list(eta=0.3, rho=0.2)
+  cases_true <- c(2, 4, 5, 8, 20)
+  max_erroneous <- 3
+
+  # no erroneous records if first reported on onset day or none are entered
+  log_alpha <- erroneous_initial_logp(1, 2, cases_true, 1, reporting_parameters,
+                                      revision_parameters, max_erroneous)
+  expect_equal(dim(log_alpha), c(5, 4))
+  expect_equal(exp(log_alpha[, 1]), rep(1, 5))
+  expect_equal(exp(log_alpha[, -1]), matrix(0, nrow=5, ncol=3))
+  log_alpha <- erroneous_initial_logp(4, 5, cases_true, 1, reporting_parameters,
+                                      list(eta=0, rho=0.2), max_erroneous)
+  expect_equal(exp(log_alpha[, 1]), rep(1, 5))
+
+  # otherwise a distribution conditional on cases first reported
+  log_alpha <- erroneous_initial_logp(4, 5, cases_true, 1, reporting_parameters,
+                                      revision_parameters, max_erroneous)
+  expect_equal(rowSums(exp(log_alpha)), rep(1, 5))
+  # five reported cases with two true cases requires three erroneous records
+  expect_equal(exp(log_alpha[1, ]), c(0, 0, 0, 1))
+  # more true cases make erroneous records less likely to explain those reported
+  expect_true(all(diff(exp(log_alpha[3:5, 1])) > 0))
+
+  # matches direct calculation
+  f_undetected <- function(day) undetected_prob(day + 0.5, 1, reporting_parameters)
+  mean_erroneous <- 0.3 * 8 * (
+    (f_undetected(1) - f_undetected(2)) * 0.8^2 +
+      (f_undetected(2) - f_undetected(3)) * 0.8 +
+      (f_undetected(3) - f_undetected(4)))
+  p_detect <- 1 - f_undetected(4) / f_undetected(1)
+  probs <- dpois(0:3, mean_erroneous) * dbinom(5 - 0:3, 8, p_detect)
+  expect_equal(exp(log_alpha[4, ]), probs / sum(probs))
+
+  # impossible if reported cases exceed true cases by more than max erroneous
+  log_alpha <- erroneous_initial_logp(4, 6, cases_true, 1, reporting_parameters,
+                                      revision_parameters, max_erroneous)
+  expect_equal(log_alpha[1, ], rep(-Inf, 4))
+  expect_true(all(is.finite(rowSums(exp(log_alpha[-1, ])))))
+})
+
+test_that("observation_process_revisions_logp is unaffected by whether early
+reporting days are observed", {
+  reporting_parameters <- list(mean=3, sd=2)
+  revision_parameters <- list(eta=0.3, rho=0.4)
+  case_true <- 3
+  day_onset <- 1
+  max_erroneous <- 8
+  max_reported <- case_true + max_erroneous
+  f_prob <- function(days, cases) {
+    exp(observation_process_revisions_logp(
+      dplyr::tibble(time_reported=days, cases_reported=cases),
+      case_true, day_onset, reporting_parameters,
+      revision_parameters, max_erroneous))
+  }
+
+  # probability of cases reported on days 4 to 6 given those on day 3, found
+  # by summing over the cases which would have been reported on day 2
+  f_prob_long_way <- function(cases) {
+    numerator <- 0
+    denominator <- 0
+    for(cases_hidden in 0:max_reported) {
+      numerator <- numerator + f_prob(1:6, c(0, cases_hidden, cases))
+      denominator <- denominator + f_prob(1:3, c(0, cases_hidden, cases[1]))
+    }
+    numerator / denominator
+  }
+
+  l_cases <- list(c(2, 3, 3, 3), c(3, 2, 3, 3), c(4, 3, 3, 3), c(1, 0, 2, 1),
+                  c(0, 1, 3, 4), c(5, 5, 4, 3))
+  for(cases in l_cases) {
+    prob <- f_prob(3:6, cases)
+    expect_true(prob > 0)
+    expect_equal(prob, f_prob_long_way(cases), tolerance=1e-5)
+  }
+})
+
+test_that("observation_process_revisions_logp allows reported cases to fall
+below those first reported long after onset", {
+  observation_matrix <- dplyr::tibble(time_reported=c(60, 70, 80),
+                                      cases_reported=c(40, 40, 37))
+  reporting_parameters <- list(mean=4, sd=3)
+  cases_true <- 34:42
+  logp <- observation_process_revisions_logp(
+    observation_matrix, cases_true, 1, reporting_parameters,
+    list(eta=0.05, rho=0.02), max_erroneous=5)
+  # true cases must be within max_erroneous of those reported
+  expect_equal(logp[1], -Inf)
+  expect_true(all(is.finite(logp[-1])))
+  # true cases unlikely to exceed those latest reported so long after onset
+  expect_true(all(logp[cases_true > 37] < logp[cases_true == 37] - 10))
+
+  # but not if first reported on onset day
+  observation_matrix$time_reported <- c(1, 70, 80)
+  logp <- observation_process_revisions_logp(
+    observation_matrix, cases_true, 1, reporting_parameters,
+    list(eta=0.05, rho=0.02), max_erroneous=5)
+  expect_equal(logp, rep(-Inf, length(cases_true)))
 })

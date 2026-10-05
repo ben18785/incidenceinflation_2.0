@@ -18,6 +18,7 @@ TRUE (invisibly) if reported cases are possible, otherwise throws an error
 }
 \description{
 Reported cases for an onset time cannot fall by more than max_erroneous from
-any earlier count, nor (since all records are assumed genuine when an onset
-time is first observed) below the count first reported.
+any earlier count. Also, if cases are first reported on the onset day itself
+(when all records are assumed genuine) they cannot subsequently fall below
+the count first reported.
 }

@@ -101,7 +101,11 @@ test_that("check_revisions_possible throws errors for impossible reported cases"
   expect_true(check_revisions_possible(df, 3))
   expect_error(check_revisions_possible(df, 1), "max_erroneous")
 
-  # falls below first reported
+  # falls below first reported on onset day
   df$cases_reported[7] <- 0
   expect_error(check_revisions_possible(df, 3), "first reported")
+
+  # which is fine if first reported after onset day
+  df$time_onset[5:7] <- 0
+  expect_true(check_revisions_possible(df, 3))
 })

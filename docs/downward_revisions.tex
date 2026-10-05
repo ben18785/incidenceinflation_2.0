@@ -485,13 +485,25 @@ entered per genuine case reported, for each onset day in its footprint.
 \item Its \emph{detection time}, $\tau_b$: the day on which its mark is
 detected.
 \end{itemize}
-We assume that footprints do not overlap, so that each onset day $t$ belongs to
-the footprint of at most one batch, which we write $b(t)$ when it exists.
+Footprints do not overlap, so that each onset day $t$ belongs to the footprint
+of at most one batch, which we write $b(t)$ when it exists.
 
-\paragraph{Priors.} Batches are rare. The number of batches whose footprint
-starts on any given onset day is $\pois(\beta)$, independently across onset
-days, with $\beta\ll 1$. Widths and intensities are independent across batches,
-with $w_b-1\sim\pois(\omega)$ and $\phi_b$ having a gamma prior. Each batch is
+\paragraph{Priors.} Batches are rare, and the prior for their footprints is
+constructed so that they cannot overlap. Consider the onset days in order,
+$t=1,\dots,T$. If onset day $t$ lies in the footprint of a batch which started
+on an earlier day, no batch starts on it. Otherwise, a batch starts on it with
+probability $\beta\ll 1$, in which case its width is drawn as
+$w_b-1\sim\pois(\zeta)$. At most one batch can therefore start on any onset
+day, and no batch can start inside the footprint of another. Writing $F$ for
+the number of onset days which lie in no footprint, the prior probability of
+the footprints is
+\begin{equation}\label{eq:footprintprior}
+p\bigl(\{(a_b,w_b)\}_{b=1}^{K}\bigr)
+= \beta^{K}\,(1-\beta)^{F}\prod_{b=1}^{K}\pois\bigl(w_b-1\given\zeta\bigr).
+\end{equation}
+A footprint may extend beyond the last onset day $T$, and we ignore batches
+which started before the first onset day. Intensities are independent across
+batches, with $\phi_b$ having a gamma prior. Each batch is
 detected with the same probability $\rho_B$ on each day after its footprint
 starts, whatever its size:
 \begin{equation}\label{eq:detection}
@@ -614,12 +626,12 @@ p\bigl(\mathcal{B}\,\big|\,\{I(t)\},\{C(t\given t_j)\},\theta,\eta,\rho\bigr)
 \propto p(\mathcal{B})\prod_{t=1}^{T}L_t\bigl(I(t);\theta,\eta,\rho,\mathcal{B}\bigr),
 \end{equation}
 where $p(\mathcal{B})$ is given by the priors above, including
-\eqref{eq:detection}. Since $K$ is unknown this requires moves which add and
+\eqref{eq:footprintprior} and \eqref{eq:detection}. Since $K$ is unknown this requires moves which add and
 remove a batch, as well as moves which change the footprint, intensity or
 detection time of an existing batch. Each such move changes $L_t$ only for
 onset days in the footprints concerned. Candidate batches can be proposed from
 the data, at reporting times where the reported counts for several adjacent
-onset days fall together. The hyperparameters $\beta$, $\omega$ and $\rho_B$
+onset days fall together. The hyperparameters $\beta$, $\zeta$ and $\rho_B$
 are updated conditional on $\mathcal{B}$.
 
 Batches which have not yet been detected form part of $\mathcal{B}$. There is
@@ -630,7 +642,7 @@ prior, conditional on having survived undetected.
 
 \begin{itemize}[itemsep=2pt]
 \item \emph{What the data can identify.} A batch is indistinguishable from
-genuine cases until it is detected. The parameters $\beta$, $\omega$, $\rho_B$
+genuine cases until it is detected. The parameters $\beta$, $\zeta$, $\rho_B$
 and the prior for $\phi_b$ are therefore informed only by the batches removed
 within the period observed, of which there may be very few, and will depend
 strongly on their priors.
@@ -650,8 +662,8 @@ is evidence for \eqref{eq:detection} instead.
 \item \emph{Reinstated cases.} If the cases in a suspect batch are re-examined
 and some are reinstated, the removal is partly temporary. Treating the whole
 batch as erroneous would then understate $I(t)$.
-\item \emph{Overlapping footprints.} Allowing more than one batch to cover an
-onset day requires one hidden count per batch, and the cost grows accordingly.
+\item \emph{Overlapping footprints.} These are excluded because the data could
+rarely distinguish two batches covering the same onset days from one.
 \item \emph{Marks which are observed.} If the data record the place or
 laboratory for each case, as in a line list, the mark is observed directly and
 the batches need not be inferred from falls in the counts.

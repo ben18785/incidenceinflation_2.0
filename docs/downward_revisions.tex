@@ -287,6 +287,22 @@ value; the remaining values are assigned zero probability.
 standard deviation, and the beta prior for $\rho$ by its two shape parameters.
 \item \emph{Optimisation.} The iterative maximisation mode of the package is
 not available when downward revisions are allowed.
+\item \emph{Extensions.} The extensions of \S\ref{sec:misdating} and
+\S\ref{sec:batches} are both implemented and can be used separately or
+together. Misdating is switched on by supplying an initial value of $\pi$ with
+the shift distribution $h$, and batches by supplying the parameters of their
+priors.
+\item \emph{Compiled recursion.} The recursions \eqref{eq:forward} and
+\eqref{eq:forwardbatch} are carried out in compiled code. A slower version of
+\eqref{eq:forward} written in R is retained and used to check it.
+\item \emph{Reporting parameters of neighbours.} Under misdating, the rate at
+which records from a neighbouring onset day are entered is calculated using
+the reporting parameters of the onset day they are entered under, which
+matters only if $\theta$ differs between adjacent onset days.
+\item \emph{Simulation.} Data can be simulated day by day with all three
+mechanisms. Misdated cases are moved exactly in simulation, so that cases are
+conserved, although the model fitted treats the two ends of a move
+independently.
 \end{itemize}
 
 \paragraph{Checks.} The likelihood \eqref{eq:lik} has been verified against
@@ -296,11 +312,16 @@ possible reported counts; with $\eta=0$ it reproduces the likelihood of the
 original model. The starting distribution \eqref{eq:alpha0} has been verified
 by checking that discarding early observations gives the same probability as
 summing over them. The update of $I(t)$ has been verified against a joint
-posterior obtained by exhaustive enumeration in a small example.
+posterior obtained by exhaustive enumeration in a small example, with and
+without misdating. The quantities \eqref{eq:Stilde} and \eqref{eq:lambdatilde}
+have been verified against simulation. The likelihood with a batch,
+\eqref{eq:likbatch}, has been verified against enumeration of all paths,
+against the frequencies of simulated trajectories and by discarding early
+observations. The moves which add, remove and alter batches have been verified
+to reproduce the prior for $\mathcal{B}$ when the data carry no information,
+and to find a simulated batch when started without one.
 
-\section{Proposed extension: misdated onset days}\label{sec:misdating}
-
-This section describes an extension which has not yet been implemented.
+\section{Extension: misdated onset days}\label{sec:misdating}
 
 \subsection{Motivation}
 
@@ -330,6 +351,17 @@ onset day $t+\delta$ and recorded under onset day $t$. The new parameter is
 $\pi\in[0,1)$, the probability that a case is misdated; $\pi=0$ recovers the
 model of \S3. The shift distribution $h$ and its range $H$ are chosen in
 advance: for example, $h$ uniform with $H=2$.
+
+One restriction applies. A record cannot be given an onset day on or after the
+day on which it is entered. A case with onset day $t$ which is detected on day
+$k$ can therefore be misdated only by shifts $\delta\le k-t-1$, and is otherwise
+recorded under onset day $t$. We write
+\begin{equation}\label{eq:gshift}
+g_t(k) := \sum_{\delta\,\le\, k-t-1} h(\delta)
+\end{equation}
+for the probability that a shift drawn from $h$ is possible, so that the case
+is misdated with probability $\pi\,g_t(k)$. For $k\ge t+H+1$ every shift is
+possible and $g_t(k)=1$.
 
 \subsection{Consequences for a single onset day}
 
@@ -367,11 +399,12 @@ $v=1,2,\dots$ The probability that a case with onset day $t$ has not yet been
 recorded under $t$ by day $t'$ is then
 \begin{equation}\label{eq:Stilde}
 \tilde S_\theta(t\given t') := S_\theta(t\given t')
-+ \pi\sum_{k=t+1}^{t'}\bigl[S_\theta(t\given k-1)-S_\theta(t\given k)\bigr](1-\rho)^{\,t'-k}.
++ \pi\sum_{k=t+1}^{t'}g_t(k)\,\bigl[S_\theta(t\given k-1)-S_\theta(t\given k)\bigr](1-\rho)^{\,t'-k}.
 \end{equation}
 The first term is the probability that the case is undetected. In the second,
-each summand is the probability that the case was detected on day $k$ and, if
-misdated, has not been corrected by day $t'$. Genuine cases are newly recorded
+each summand is the probability that the case was detected on day $k$, that a
+shift was possible and, if misdated, that it has not been corrected by day
+$t'$. Genuine cases are newly recorded
 under onset day $t$ according to \eqref{eq:d} with $p_j(t)$ replaced by
 \begin{equation}\label{eq:ptilde}
 \tilde p_j(t) := \frac{\tilde S_\theta(t\given t_{j-1})-\tilde S_\theta(t\given t_j)}
@@ -451,9 +484,7 @@ form: it uses $\tilde\lambda_j(t)$ and $\tilde p_j(t)$ in place of
 $\lambda_j(t)$ and $p_j(t)$.
 \end{itemize}
 
-\section{Proposed extension: corrections made in batches}\label{sec:batches}
-
-This section describes an extension which has not yet been implemented.
+\section{Extension: corrections made in batches}\label{sec:batches}
 
 \subsection{Motivation}
 
@@ -629,10 +660,52 @@ where $p(\mathcal{B})$ is given by the priors above, including
 \eqref{eq:footprintprior} and \eqref{eq:detection}. Since $K$ is unknown this requires moves which add and
 remove a batch, as well as moves which change the footprint, intensity or
 detection time of an existing batch. Each such move changes $L_t$ only for
-onset days in the footprints concerned. Candidate batches can be proposed from
-the data, at reporting times where the reported counts for several adjacent
-onset days fall together. The hyperparameters $\beta$, $\zeta$ and $\rho_B$
-are updated conditional on $\mathcal{B}$.
+onset days in the footprints concerned.
+
+\paragraph{Adding and removing a batch.} In each iteration one move is
+attempted which, with equal probability, adds a batch or removes one chosen
+uniformly at random. A batch to be added has its intensity drawn from the
+prior for $\phi_b$ and its footprint and detection time drawn from a
+distribution $q$. With probability one half, $q$ draws from the prior: the
+start $a_b$ uniformly from the $T$ onset days, $w_b-1\sim\pois(\zeta)$ and
+$\tau_b$ from \eqref{eq:detection}. Otherwise, $q$ draws uniformly from a list
+of \emph{candidates} found from the data in advance: reporting times at which
+the reported counts for a run of adjacent onset days fall together, by a total
+of at least some threshold. A proposal whose footprint overlaps that of an
+existing batch is rejected. Otherwise, with $K$ batches at present and $n$
+onset days in the proposed footprint, it is accepted with probability
+$\min(1,r)$, where
+\begin{equation}\label{eq:birth}
+r = \frac{\prod_{t}L_t(\,\cdot\,;\mathcal{B}')}{\prod_{t}L_t(\,\cdot\,;\mathcal{B})}
+\times
+\frac{\beta\,(1-\beta)^{-n}\,\pois(w_b-1\given\zeta)\,P(\tau_b)}
+     {(K+1)\,q(a_b,w_b,\tau_b)} ,
+\end{equation}
+the products being over the onset days in the proposed footprint. Removing a
+batch is accepted with the reciprocal of this ratio, evaluated with $K$ the
+number of batches remaining.
+
+\paragraph{Altering a batch.} For each batch in turn, three proposals are made
+and accepted or rejected in the usual way: to multiply $\phi_b$ by a
+log-normal factor; to move $\tau_b$ by up to three days in either direction;
+and to extend or shorten the footprint by one onset day at either end.
+
+\paragraph{Hyperparameters.} With priors $\beta\sim\operatorname{beta}(a_\beta,b_\beta)$,
+$\zeta\sim\operatorname{gamma}(a_\zeta,b_\zeta)$ and
+$\rho_B\sim\operatorname{beta}(a_\rho,b_\rho)$, the conditional posteriors are
+\begin{equation}
+\begin{aligned}
+\beta &\sim\operatorname{beta}(a_\beta+K,\;b_\beta+F),\\
+\zeta &\sim\operatorname{gamma}\Bigl(a_\zeta+\sum_b (w_b-1),\;b_\zeta+K\Bigr),\\
+\rho_B &\sim\operatorname{beta}\Bigl(a_\rho+K,\;b_\rho+\sum_b(\tau_b-a_b-1)\Bigr),
+\end{aligned}
+\end{equation}
+from which each is drawn directly. Any of them can alternatively be held
+fixed.
+
+\paragraph{Starting values.} Sampling starts with only those candidates
+without which the reported counts would be impossible: those containing a
+single fall larger than $\Emax$.
 
 Batches which have not yet been detected form part of $\mathcal{B}$. There is
 no direct evidence for these, so they are sampled almost entirely from the

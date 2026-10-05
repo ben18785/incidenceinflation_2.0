@@ -1,0 +1,210 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\given}{\,|\,}
+\newcommand{\bin}{\operatorname{binomial}}
+\newcommand{\pois}{\operatorname{Poisson}}
+\newcommand{\Emax}{E_{\max}}
+\newcommand{\Imax}{I_{\max}}
+
+\title{Allowing sporadic downward revisions of reported case counts\\
+\large An extension of the renewal-equation reporting-delay model}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Motivation}
+
+The model of Bajaj, Thompson and Lambert \cite{bajaj2025} assumes that the
+reported count of cases with symptom onset on day $t$, when viewed from a later
+day $t'$, satisfies $C(t\given t')\le I(t)$ and can only increase as $t'$
+increases. Both properties follow from equation (2.2) of that paper,
+\begin{equation}\label{eq:original}
+C(t\given t'') - C(t\given t') \sim
+\bin\bigl(I(t) - C(t\given t'),\; p_\theta(t, t''-t'\given t')\bigr),
+\qquad t''>t'.
+\end{equation}
+In practice, counts are occasionally revised downwards, for example when a
+false positive or a duplicate is removed or when a case is reassigned to a
+different onset day. Here we extend the model so that such revisions have
+non-zero probability, while recovering the original model as a special case.
+Notation follows \cite{bajaj2025}; new symbols are introduced explicitly.
+
+\section{Notation}
+
+\begin{itemize}[itemsep=2pt]
+\item $t=1,\dots,T$ indexes onset days.
+\item $t_0<t_1<\dots<t_J$ are the times at which the count for onset day $t$
+is observed. All satisfy $t_j\ge t$, and they may differ between onset days.
+\item $C(t\given t_j)$ is the reported count for onset day $t$ as seen at time
+$t_j$ (data).
+\item $I(t)$ is the true count of cases with onset on day $t$ (latent).
+\item $S_\theta(t\given t')$ is the survival function of the reporting delay
+distribution with parameters $\theta$, and
+$p_\theta(t,t''-t'\given t')=\bigl[S_\theta(t\given t')-S_\theta(t\given t'')\bigr]/S_\theta(t\given t')$.
+\end{itemize}
+As in \cite{bajaj2025}, the first observation $C(t\given t_0)$ is conditioned
+on, and the likelihood is built from changes between successive observations.
+
+\section{Model}
+
+\subsection{Latent decomposition}
+
+For each onset day $t$ and observation time $t_j$ we write
+\begin{equation}\label{eq:decomp}
+C(t\given t_j) = D(t\given t_j) + E(t\given t_j),
+\end{equation}
+where $D(t\given t_j)$ is the number of records held at $t_j$ for onset day $t$
+that are genuine cases with onset on day $t$, and $E(t\given t_j)$ is the number
+of records held at $t_j$ for onset day $t$ that are erroneous and have not yet
+been withdrawn. Neither is observed.
+
+\subsection{Increments}
+
+Two new parameters are introduced: $\eta\ge 0$, the expected number of
+erroneous records entering per genuine report, and $\rho\in(0,1)$, the daily
+probability that an erroneous record is withdrawn. For onset day $t$ and the
+interval $(t_{j-1},t_j]$, $j=1,\dots,J$, define
+\begin{align}
+\Delta C_j(t) &:= C(t\given t_j) - C(t\given t_{j-1}), \\
+p_j(t) &:= p_\theta(t,\, t_j-t_{j-1}\given t_{j-1}), \\
+\lambda_j(t) &:= \eta\, I(t)\,\bigl[S_\theta(t\given t_{j-1}) - S_\theta(t\given t_j)\bigr], \\
+r_j &:= 1-(1-\rho)^{\,t_j-t_{j-1}}.
+\end{align}
+Note that $\Delta C_j(t)$ may now be negative. Within the interval, three
+independent increments occur, all pertaining to onset day $t$:
+\begin{align}
+d_j(t) &\sim \bin\bigl(I(t) - D(t\given t_{j-1}),\; p_j(t)\bigr)
+  && \text{genuine cases newly reported,} \label{eq:d}\\
+n_j(t) &\sim \pois\bigl(\lambda_j(t)\bigr)
+  && \text{erroneous records newly entered,} \label{eq:n}\\
+m_j(t) &\sim \bin\bigl(E(t\given t_{j-1}),\; r_j\bigr)
+  && \text{erroneous records withdrawn,} \label{eq:m}
+\end{align}
+so that
+\begin{align}
+D(t\given t_j) &= D(t\given t_{j-1}) + d_j(t), \\
+E(t\given t_j) &= E(t\given t_{j-1}) + n_j(t) - m_j(t), \\
+\Delta C_j(t) &= d_j(t) + n_j(t) - m_j(t). \label{eq:deltaC}
+\end{align}
+
+\paragraph{Conventions.}
+\begin{enumerate}[label=(\roman*),itemsep=2pt]
+\item Only erroneous records already present at $t_{j-1}$ can be withdrawn in
+$(t_{j-1},t_j]$; a record cannot enter and be withdrawn within the same
+interval.
+\item Conditional on $\{I(t)\}_{t=1}^T$, $\theta$, $\eta$ and $\rho$,
+increments are independent across onset days.
+\item $E(t\given t_0)=0$, so that $D(t\given t_0)=C(t\given t_0)$. This is an
+approximation: it assumes that no erroneous records are present at the first
+observation.
+\end{enumerate}
+
+\paragraph{Properties.}
+Equation \eqref{eq:d} is equation \eqref{eq:original} applied to $D$ rather
+than $C$, so $D(t\given t_j)\le I(t)$ and $D$ is non-decreasing in $t_j$,
+whereas $C(t\given t_j)$ may exceed $I(t)$ and may decrease. Setting $\eta=0$
+gives $E\equiv 0$ and $C\equiv D$, which recovers the original model. Because
+erroneous records are eventually withdrawn, $E(t\given t')\to 0$ as
+$t'\to\infty$, and the identity $I(t)=C(t\given\infty)$ is retained. The mean
+$\lambda_j(t)$ is $\eta$ times the expected number of genuine cases with onset
+on day $t$ that are reported in $(t_{j-1},t_j]$, so erroneous records
+concentrate shortly after onset and tail off as the delay distribution does.
+
+\section{Likelihood}
+
+Since $E(t\given t_j)$ is unobserved, we sum over it. Downward revisions are
+assumed sporadic, so $E$ is truncated at a small value $\Emax$. For
+$e=0,\dots,\Emax$ define the forward probabilities
+\begin{equation}
+\alpha_j(e;t) := P\bigl(C(t\given t_1),\dots,C(t\given t_j),\; E(t\given t_j)=e
+\;\big|\; I(t),\, C(t\given t_0),\, \theta,\eta,\rho\bigr).
+\end{equation}
+These satisfy $\alpha_0(e;t)=\mathbf{1}\{e=0\}$ and, for $j=1,\dots,J$,
+\begin{equation}\label{eq:forward}
+\begin{aligned}
+\alpha_j(e;t) = \sum_{e'=0}^{\Emax} \alpha_{j-1}(e';t) \sum_{m=0}^{e'}
+\;&\bin\bigl(m \given e',\, r_j\bigr) \\
+\times\;&\pois\bigl(e-e'+m \given \lambda_j(t)\bigr) \\
+\times\;&\bin\bigl(\Delta C_j(t)-(e-e') \given I(t)-C(t\given t_{j-1})+e',\; p_j(t)\bigr),
+\end{aligned}
+\end{equation}
+where $\operatorname{dist}(x\given\phi)$ denotes the probability mass function
+of $\operatorname{dist}$ evaluated at $x$. In the summand, with
+$E(t\given t_{j-1})=e'$ and $E(t\given t_j)=e$: $m$ is $m_j(t)$; $e-e'+m$ is
+$n_j(t)$; $\Delta C_j(t)-(e-e')$ is $d_j(t)$, by \eqref{eq:deltaC}; and
+$I(t)-C(t\given t_{j-1})+e'$ is $I(t)-D(t\given t_{j-1})$, by \eqref{eq:decomp}.
+Any term involving a negative count, or a binomial count exceeding its size,
+has probability zero. The likelihood contribution of onset day $t$ is
+\begin{equation}\label{eq:lik}
+L_t\bigl(I(t);\theta,\eta,\rho\bigr) := \sum_{e=0}^{\Emax}\alpha_J(e;t),
+\end{equation}
+at a cost of $O(J\,\Emax^3)$ per value of $I(t)$.
+
+\section{Changes to the sampling algorithm}
+
+We describe the changes to the Poisson model of \cite{bajaj2025}; the
+unrestricted model is modified analogously.
+
+\paragraph{Sampling $R_t$.} Equation (2.4) of \cite{bajaj2025} is unchanged,
+since it depends on the data only through $\{I(t)\}$.
+
+\paragraph{Sampling the true case counts.} The product of binomial terms in
+equation (2.6) of \cite{bajaj2025} is replaced by \eqref{eq:lik}. For
+$I(t)\in\{0,1,\dots,\Imax\}$,
+\begin{equation}
+\begin{aligned}
+q\bigl(I(t)\bigr) ={}& L_t\bigl(I(t);\theta,\eta,\rho\bigr)
+\times \pois\Bigl(I(t)\,\Big|\, R_{i[t]}\sum_{s=1}^{t-1}\omega_s I(t-s)\Bigr) \\
+&\times \prod_{\tau=t+1}^{T}\pois\Bigl(I(\tau)\,\Big|\, R_{i[\tau]}\sum_{s=1}^{\tau-1}\omega_s I(\tau-s)\Bigr).
+\end{aligned}
+\end{equation}
+The lower bound $I(t)\ge C(t\given t_J)$ in equation (2.5) of \cite{bajaj2025}
+is removed; values of $I(t)$ that are too small to be consistent with the data
+receive zero probability through \eqref{eq:forward}. The update remains a draw
+from a one-dimensional discrete distribution.
+
+\paragraph{Sampling the reporting parameters.} Equation (2.7) of
+\cite{bajaj2025} becomes
+\begin{equation}
+p\bigl(\theta,\eta,\rho \,\big|\, \{I(t)\}_{t=1}^{T},\{C(t\given t_j)\}\bigr)
+\propto p(\theta)\,p(\eta)\,p(\rho)\prod_{t=1}^{T}L_t\bigl(I(t);\theta,\eta,\rho\bigr),
+\end{equation}
+which is sampled by random-walk Metropolis as before, with $\eta$ and $\rho$
+added to the block.
+
+\section{Remarks}
+
+\begin{itemize}[itemsep=2pt]
+\item \emph{Identifiability.} The parameters $\eta$ and $\rho$ are informed
+only by the rare intervals in which $\Delta C_j(t)<0$. An erroneous record not
+withdrawn by $t_J$ is indistinguishable from a genuine case. Informative priors
+concentrated near zero are therefore advisable (for example
+$\eta\sim\operatorname{beta}(1,500)$), and it may be preferable to fix $\rho$.
+\item \emph{Nowcasts.} For recent onset days some of $C(t\given t_J)$ may be
+erroneous, so the posterior for $I(t)$ is shifted slightly downwards and
+widened relative to the original model.
+\item \emph{Reassigned onset days.} A case moved from onset day $t$ to onset
+day $t^*$ is represented marginally, as an erroneous record on day $t$ and a
+late genuine report on day $t^*$. Modelling the two jointly would couple onset
+days and require block updates of $\bigl(I(t),I(t^*)\bigr)$.
+\item \emph{Truncation.} $\Emax$ should be chosen so that the posterior
+probability of $E(t\given t_j)=\Emax$ is negligible; this can be checked from
+the forward probabilities.
+\end{itemize}
+
+\begin{thebibliography}{1}
+\bibitem{bajaj2025}
+Bajaj S, Thompson R, Lambert B. 2025
+A renewal-equation approach to estimating $R_t$ and infectious disease case
+counts in the presence of reporting delays.
+\emph{Phil. Trans. R. Soc. A} \textbf{383}, 20240357.
+\href{https://doi.org/10.1098/rsta.2024.0357}{doi:10.1098/rsta.2024.0357}
+\end{thebibliography}
+
+\end{document}

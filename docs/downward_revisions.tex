@@ -9,6 +9,8 @@
 \newcommand{\pois}{\operatorname{Poisson}}
 \newcommand{\Emax}{E_{\max}}
 \newcommand{\Imax}{I_{\max}}
+\newcommand{\Xmax}{X_{\max}}
+\newcommand{\Tb}{\mathcal{T}_b}
 
 \title{Allowing sporadic downward revisions of reported case counts\\
 \large An extension of the renewal-equation reporting-delay model}
@@ -295,6 +297,212 @@ original model. The starting distribution \eqref{eq:alpha0} has been verified
 by checking that discarding early observations gives the same probability as
 summing over them. The update of $I(t)$ has been verified against a joint
 posterior obtained by exhaustive enumeration in a small example.
+
+\section{Proposed extension: corrections made in batches}\label{sec:batches}
+
+This section describes an extension which has not yet been implemented.
+
+\subsection{Motivation}
+
+The model above withdraws each erroneous record independently, with a constant
+daily probability $\rho$. It is therefore suited to small revisions scattered
+across onset days and reporting times. In practice, records are also corrected
+in batches: for example, all cases from a particular place, or all cases
+confirmed in a particular run of laboratory tests, come to be regarded as
+suspect and are removed together. Such a correction has three features which
+the model above cannot reproduce: the fall in reported cases is large; it
+happens at a single reporting time, possibly long after onset; and it affects
+several adjacent onset days at once.
+
+We therefore suppose that erroneous records can share a \emph{mark}, which
+identifies the batch they belong to, and that it is the mark which is detected:
+when it is, every record carrying it is withdrawn. The erroneous records of
+\S3 are the special case in which every batch consists of a single record.
+
+\subsection{Batches}
+
+There are $K$ batches, indexed by $b=1,\dots,K$, where $K$ is unknown. Batch
+$b$ is described by four quantities.
+\begin{itemize}[itemsep=2pt]
+\item Its \emph{footprint}, $\Tb=\{a_b,a_b+1,\dots,a_b+w_b-1\}$: a set of $w_b$
+consecutive onset days, starting at onset day $a_b$, to which its records are
+attributed.
+\item Its \emph{intensity}, $\phi_b>0$: the expected number of its records
+entered per genuine case reported, for each onset day in its footprint.
+\item Its \emph{detection time}, $\tau_b$: the day on which its mark is
+detected.
+\end{itemize}
+We assume that footprints do not overlap, so that each onset day $t$ belongs to
+the footprint of at most one batch, which we write $b(t)$ when it exists.
+
+\paragraph{Priors.} Batches are rare. The number of batches whose footprint
+starts on any given onset day is $\pois(\beta)$, independently across onset
+days, with $\beta\ll 1$. Widths and intensities are independent across batches,
+with $w_b-1\sim\pois(\omega)$ and $\phi_b$ having a gamma prior. Each batch is
+detected with the same probability $\rho_B$ on each day after its footprint
+starts, whatever its size:
+\begin{equation}\label{eq:detection}
+P(\tau_b=s) = \rho_B\,(1-\rho_B)^{\,s-a_b-1},\qquad s=a_b+1,a_b+2,\dots
+\end{equation}
+Since a batch is eventually detected with probability one, the identity
+$I(t)=C(t\given\infty)$ is retained.
+
+\subsection{Reported counts}
+
+Let $X(t\given t_j)$ be the number of records of batch $b(t)$ held at $t_j$ for
+onset day $t$, with $X(t\given t_j)\equiv 0$ if $t$ is in no footprint. The
+decomposition \eqref{eq:decomp} becomes
+\begin{equation}\label{eq:decompbatch}
+C(t\given t_j) = D(t\given t_j) + E(t\given t_j) + X(t\given t_j),
+\end{equation}
+where $D$ and $E$ evolve exactly as in \S3. For an onset day $t\in\Tb$, let
+\begin{equation}
+j_b(t) := \min\{\,j : t_j\ge\tau_b\,\}
+\end{equation}
+index the first observation of onset day $t$ made at or after the detection
+time; if there is none, the batch is still undetected at $t_J$ and we set
+$j_b(t)=\infty$. Then, for $j=1,\dots,J$,
+\begin{align}
+u_j(t) &\sim \pois\bigl(\phi_b\, I(t)\,[S_\theta(t\given t_{j-1})-S_\theta(t\given t_j)]\bigr)
+ && \text{batch records newly entered, if } j<j_b(t), \label{eq:u}\\
+X(t\given t_j) &=
+\begin{cases}
+X(t\given t_{j-1}) + u_j(t), & j<j_b(t),\\
+0, & j\ge j_b(t),
+\end{cases} \label{eq:X}
+\end{align}
+and $u_j(t)=0$ for $j\ge j_b(t)$. That is, the records of a batch enter in
+proportion to genuine reports, as in \eqref{eq:n}; none of them is withdrawn
+before detection; all of them are withdrawn at the first observation at or
+after detection; and none enters thereafter. The change in the reported count
+is
+\begin{equation}\label{eq:deltaCbatch}
+\Delta C_j(t) = d_j(t) + n_j(t) - m_j(t) + X(t\given t_j) - X(t\given t_{j-1}).
+\end{equation}
+At the detection time the last term equals $-X(t\given t_{j-1})$ for every
+onset day in the footprint simultaneously, which produces the large,
+coincident falls described above.
+
+\paragraph{First observation.} If $t_0=t$ then $X(t\given t_0)=0$. If
+$t<t_0<\tau_b$, the records of the batch have accumulated over the unobserved
+days without withdrawal, so that, independently of $D(t\given t_0)$ and
+$E(t\given t_0)$,
+\begin{equation}\label{eq:initialX}
+X(t\given t_0)\sim\pois\bigl(\xi_0(t)\bigr),\qquad
+\xi_0(t) := \phi_b\,I(t)\,\bigl[S_\theta(t\given t)-S_\theta(t\given t_0)\bigr].
+\end{equation}
+If $t_0\ge\tau_b$, the batch was removed before onset day $t$ was first
+observed and $X(t\given t_j)=0$ for all $j$.
+
+\subsection{Likelihood}
+
+Conditional on the batches, that is on
+$\mathcal{B}:=\{(a_b,w_b,\phi_b,\tau_b)\}_{b=1}^{K}$, onset days remain
+independent. For an onset day in no footprint, the likelihood is $L_t$ of
+\eqref{eq:lik}, unchanged. For $t\in\Tb$ we sum over both hidden counts,
+truncating $X$ at $\Xmax$. Define, for $e=0,\dots,\Emax$ and
+$x=0,\dots,\Xmax$,
+\begin{equation}
+\alpha_j(e,x;t) := P\bigl(C(t\given t_1),\dots,C(t\given t_j),\;
+E(t\given t_j)=e,\;X(t\given t_j)=x
+\;\big|\; I(t),\, C(t\given t_0),\, \theta,\eta,\rho,\mathcal{B}\bigr).
+\end{equation}
+Let
+\begin{equation}\label{eq:g}
+\begin{aligned}
+g_j(k\given e',e,x';t) := {}&
+\bin\bigl(k\given I(t)-C(t\given t_{j-1})+e'+x',\;p_j(t)\bigr)\\
+&\times\sum_{m=0}^{e'}\bin\bigl(m\given e',\,r_j\bigr)\,
+\pois\bigl(e-e'+m\given\lambda_j(t)\bigr)
+\end{aligned}
+\end{equation}
+be the probability that $k$ genuine cases are newly reported and that the
+erroneous count moves from $e'$ to $e$ in the interval $(t_{j-1},t_j]$, given
+that $E(t\given t_{j-1})=e'$ and $X(t\given t_{j-1})=x'$. Here
+$I(t)-C(t\given t_{j-1})+e'+x'$ is $I(t)-D(t\given t_{j-1})$, by
+\eqref{eq:decompbatch}. The recursion is as follows.
+\begin{itemize}[itemsep=2pt]
+\item Before detection, $j<j_b(t)$:
+\begin{equation}\label{eq:forwardbatch}
+\begin{aligned}
+\alpha_j(e,x;t)=\sum_{e'=0}^{\Emax}\sum_{x'=0}^{x}\;&\alpha_{j-1}(e',x';t)\\
+\times\;&\pois\bigl(x-x'\given\phi_b\, I(t)\,[S_\theta(t\given t_{j-1})-S_\theta(t\given t_j)]\bigr)\\
+\times\;&g_j\bigl(\Delta C_j(t)-(e-e')-(x-x')\given e',e,x';t\bigr).
+\end{aligned}
+\end{equation}
+\item At detection, $j=j_b(t)$: $\alpha_j(e,x;t)=0$ for $x>0$, and
+\begin{equation}\label{eq:forwarddetect}
+\alpha_j(e,0;t)=\sum_{e'=0}^{\Emax}\sum_{x'=0}^{\Xmax}\alpha_{j-1}(e',x';t)\,
+g_j\bigl(\Delta C_j(t)-(e-e')+x'\given e',e,x';t\bigr).
+\end{equation}
+\item After detection, $j>j_b(t)$: $x=0$ and the recursion is
+\eqref{eq:forward}.
+\end{itemize}
+The recursion starts from
+$\alpha_0(e,x;t)\propto\pois(e\given\nu_0(t))\,\pois(x\given\xi_0(t))\,
+\bin\bigl(C(t\given t_0)-e-x\given I(t),\,p_\theta(t,t_0-t\given t)\bigr)$,
+normalised to sum to one, with the modifications for $t_0=t$ and
+$t_0\ge\tau_b$ given above. The likelihood contribution of onset day $t$ is
+\begin{equation}\label{eq:likbatch}
+L_t\bigl(I(t);\theta,\eta,\rho,\mathcal{B}\bigr)
+:=\sum_{e=0}^{\Emax}\sum_{x=0}^{\Xmax}\alpha_J(e,x;t).
+\end{equation}
+Terms of this sum with $x>0$ correspond to a batch which has not yet been
+detected at $t_J$. The additional cost, a factor of order $\Xmax^2$, is
+incurred only for onset days inside a footprint.
+
+\subsection{Sampling}
+
+The updates of $R_t$, $I(t)$, $\theta$ and $(\eta,\rho)$ are as before, with
+\eqref{eq:likbatch} in place of \eqref{eq:lik}. There is one additional step,
+which updates the batches:
+\begin{equation}
+p\bigl(\mathcal{B}\,\big|\,\{I(t)\},\{C(t\given t_j)\},\theta,\eta,\rho\bigr)
+\propto p(\mathcal{B})\prod_{t=1}^{T}L_t\bigl(I(t);\theta,\eta,\rho,\mathcal{B}\bigr),
+\end{equation}
+where $p(\mathcal{B})$ is given by the priors above, including
+\eqref{eq:detection}. Since $K$ is unknown this requires moves which add and
+remove a batch, as well as moves which change the footprint, intensity or
+detection time of an existing batch. Each such move changes $L_t$ only for
+onset days in the footprints concerned. Candidate batches can be proposed from
+the data, at reporting times where the reported counts for several adjacent
+onset days fall together. The hyperparameters $\beta$, $\omega$ and $\rho_B$
+are updated conditional on $\mathcal{B}$.
+
+Batches which have not yet been detected form part of $\mathcal{B}$. There is
+no direct evidence for these, so they are sampled almost entirely from the
+prior, conditional on having survived undetected.
+
+\subsection{Remarks}
+
+\begin{itemize}[itemsep=2pt]
+\item \emph{What the data can identify.} A batch is indistinguishable from
+genuine cases until it is detected. The parameters $\beta$, $\omega$, $\rho_B$
+and the prior for $\phi_b$ are therefore informed only by the batches removed
+within the period observed, of which there may be very few, and will depend
+strongly on their priors.
+\item \emph{Nowcasts.} For recent onset days the model contributes a risk
+rather than a correction: with some probability, part of the reported count
+belongs to a batch not yet detected. This widens the posterior for $I(t)$ and
+lowers it slightly, but cannot indicate which onset days are affected. By
+contrast, explaining a large fall with the model of \S3 would require a large
+$\eta$, which would lower the estimates for every recent onset day.
+\item \emph{Detection per batch or per record.} An alternative to
+\eqref{eq:detection} is that each record is flagged with daily probability
+$\rho$ and that flagging any record exposes its batch, so that a batch holding
+$N$ records is detected on a given day with probability $1-(1-\rho)^N$ and
+large batches are found sooner. With one record per batch this is exactly the
+model of \S3. A large batch which persists for a long time before being removed
+is evidence for \eqref{eq:detection} instead.
+\item \emph{Reinstated cases.} If the cases in a suspect batch are re-examined
+and some are reinstated, the removal is partly temporary. Treating the whole
+batch as erroneous would then understate $I(t)$.
+\item \emph{Overlapping footprints.} Allowing more than one batch to cover an
+onset day requires one hidden count per batch, and the cost grows accordingly.
+\item \emph{Marks which are observed.} If the data record the place or
+laboratory for each case, as in a line list, the mark is observed directly and
+the batches need not be inferred from falls in the counts.
+\end{itemize}
 
 \begin{thebibliography}{1}
 \bibitem{bajaj2025}

@@ -298,6 +298,159 @@ by checking that discarding early observations gives the same probability as
 summing over them. The update of $I(t)$ has been verified against a joint
 posterior obtained by exhaustive enumeration in a small example.
 
+\section{Proposed extension: misdated onset days}\label{sec:misdating}
+
+This section describes an extension which has not yet been implemented.
+
+\subsection{Motivation}
+
+In the model above, every erroneous record is eventually deleted. A second
+possibility is that a record is genuine but has been attributed to the wrong
+onset day, and that the correction moves it to the right one. The reported
+count for the wrong day then falls and, at the same reporting time, the count
+for a nearby day rises. Both kinds of correction are likely to occur, and the
+model here allows for both. It does so approximately: each onset day is still
+treated separately, so that the fall and the rise produced by one correction
+are modelled as two independent events. Cases are therefore conserved on
+average but not correction by correction.
+
+\subsection{Model for a single case}
+
+Consider a genuine case with onset day $t$. As before, it is detected after a
+delay with survival function $S_\theta$. On detection:
+\begin{itemize}[itemsep=2pt]
+\item with probability $1-\pi$ it is recorded under onset day $t$;
+\item with probability $\pi\,h(\delta)$ it is recorded under onset day
+$t+\delta$, where $h$ is a fixed probability distribution on the shifts
+$\delta\in\{-H,\dots,-1,1,\dots,H\}$.
+\end{itemize}
+A misdated record is corrected with probability $\rho$ on each day after it is
+entered, independently of all other records; on correction it is withdrawn from
+onset day $t+\delta$ and recorded under onset day $t$. The new parameter is
+$\pi\in[0,1)$, the probability that a case is misdated; $\pi=0$ recovers the
+model of \S3. The shift distribution $h$ and its range $H$ are chosen in
+advance: for example, $h$ uniform with $H=2$.
+
+\subsection{Consequences for a single onset day}
+
+We now describe what this implies for the records held for onset day $t$,
+treating it separately from the other onset days. Three things change.
+
+\paragraph{Erroneous records have two sources.} The erroneous records for onset
+day $t$ are now of two kinds: spurious records, which will be deleted, as in
+\S3; and misdated records, which belong to cases with onset on a nearby day.
+A case with onset day $t-\delta$ which is detected in $(t_{j-1},t_j]$ is
+recorded under $t$ with probability $\pi\,h(\delta)$. We take the number of
+erroneous records newly entered for onset day $t$ to be
+$n_j(t)\sim\pois\bigl(\tilde\lambda_j(t)\bigr)$, replacing \eqref{eq:n}, where
+\begin{equation}\label{eq:lambdatilde}
+\tilde\lambda_j(t) := \lambda_j(t)
++ \pi\sum_{\substack{\delta=-H\\ \delta\neq 0}}^{H} h(\delta)\,I(t-\delta)\,
+\bigl[S_\theta(t-\delta\given t_{j-1})-S_\theta(t-\delta\given t_j)\bigr],
+\end{equation}
+with $I(s):=0$ for onset days $s$ outside the period studied and
+$S_\theta(s\given t'):=1$ for $t'<s$, since a case cannot be detected before
+its onset. The first term is the rate of spurious records and the second the
+rate of misdated ones.
+
+\paragraph{Both kinds are withdrawn in the same way.} A spurious record is
+deleted, and a misdated record is corrected, with the same daily probability
+$\rho$. While they are held under onset day $t$ the two kinds therefore behave
+identically, and a single count $E(t\given t_j)$ of erroneous records still
+suffices; \eqref{eq:m} is unchanged. Reported counts alone could not in any case
+distinguish a rate of deletion from a rate of correction.
+
+\paragraph{Genuine reports can arrive late.} A case with onset day $t$ which is
+misdated is recorded under $t$ only when it is corrected. Let $V$ be the number
+of days from entry to correction, with $P(V=v)=\rho(1-\rho)^{v-1}$ for
+$v=1,2,\dots$ The probability that a case with onset day $t$ has not yet been
+recorded under $t$ by day $t'$ is then
+\begin{equation}\label{eq:Stilde}
+\tilde S_\theta(t\given t') := S_\theta(t\given t')
++ \pi\sum_{k=t+1}^{t'}\bigl[S_\theta(t\given k-1)-S_\theta(t\given k)\bigr](1-\rho)^{\,t'-k}.
+\end{equation}
+The first term is the probability that the case is undetected. In the second,
+each summand is the probability that the case was detected on day $k$ and, if
+misdated, has not been corrected by day $t'$. Genuine cases are newly recorded
+under onset day $t$ according to \eqref{eq:d} with $p_j(t)$ replaced by
+\begin{equation}\label{eq:ptilde}
+\tilde p_j(t) := \frac{\tilde S_\theta(t\given t_{j-1})-\tilde S_\theta(t\given t_j)}
+{\tilde S_\theta(t\given t_{j-1})}.
+\end{equation}
+Here $D(t\given t_j)$ is the number of genuine cases recorded under onset day
+$t$, so that a case with onset day $t$ which is currently misdated counts among
+the $I(t)-D(t\given t_j)$ yet to be recorded. Since every misdated record is
+eventually corrected, the identity $I(t)=C(t\given\infty)$ is retained.
+
+\paragraph{First observation.} The starting distribution \eqref{eq:alpha0} is
+obtained as before, with $\lambda$ replaced by $\tilde\lambda$ in
+$\nu_0(t)$ and $S_\theta$ replaced by $\tilde S_\theta$ in
+$p_\theta(t,t_0-t\given t)$.
+
+\subsection{Likelihood and sampling}
+
+The recursion \eqref{eq:forward} is unchanged in form, with $\tilde\lambda_j(t)$
+and $\tilde p_j(t)$ in place of $\lambda_j(t)$ and $p_j(t)$. Through
+\eqref{eq:lambdatilde}, the likelihood contribution of onset day $t$ now
+depends on the true counts of its neighbours as well as its own:
+\begin{equation}
+L_t = L_t\bigl(I(t-H),\dots,I(t+H);\,\theta,\eta,\pi,\rho\bigr).
+\end{equation}
+The sampling steps change as follows.
+\begin{itemize}[itemsep=2pt]
+\item \emph{True case counts.} $I(t)$ appears in the likelihood contributions
+of onset days $t-H,\dots,t+H$, so that
+\begin{equation}
+\begin{aligned}
+q\bigl(I(t)\bigr) ={}& \Biggl[\,\prod_{s=t-H}^{t+H}L_s\Biggr]
+\times \pois\Bigl(I(t)\,\Big|\, R_{i[t]}\sum_{s=1}^{t-1}\omega_s I(t-s)\Bigr) \\
+&\times \prod_{\tau=t+1}^{T}\pois\Bigl(I(\tau)\,\Big|\, R_{i[\tau]}\sum_{s=1}^{\tau-1}\omega_s I(\tau-s)\Bigr),
+\end{aligned}
+\end{equation}
+where the first product is over those onset days which lie within the period
+studied. The update remains a draw from a one-dimensional discrete
+distribution, at about $2H+1$ times the cost.
+\item \emph{Reporting parameters.} As in \eqref{eq:theta}, with the new $L_t$.
+\item \emph{Revision parameters.} $\pi$ joins $\eta$ and $\rho$ in
+\eqref{eq:revision}, with a beta prior and proposals made for
+$\operatorname{logit}\pi$.
+\item \emph{$R_t$.} Unchanged.
+\end{itemize}
+
+\subsection{Remarks}
+
+\begin{itemize}[itemsep=2pt]
+\item \emph{What is approximate.} A correction is one event: a record leaves
+one onset day and joins another at the same reporting time. Here the departure
+is a withdrawal on one onset day and the arrival is a late genuine report on
+another, and the two are treated as independent. The expected numbers agree,
+so cases are conserved on average, but the information in a fall and a rise
+occurring together on nearby onset days is not used. Taking $n_j(t)$ to be
+Poisson and independent of the genuine reports is part of the same
+approximation.
+\item \emph{Late upward revisions.} Without misdating, a rise in the reported
+count long after onset must be explained by the tail of the reporting delay
+distribution, which distorts the estimate of $\theta$. Under
+\eqref{eq:Stilde} such rises are instead attributed to corrections, whose
+timing is governed by $\rho$.
+\item \emph{Deletion and misdating are hard to separate.} Both $\eta$ and $\pi$
+produce falls in the reported count. They differ only in that misdating also
+produces late rises on nearby onset days, and in the dependence of
+\eqref{eq:lambdatilde} on neighbouring counts. The total rate at which
+erroneous records are entered should be better determined than its division
+between the two, which will depend on the priors.
+\item \emph{A simplification.} If the true counts vary slowly from one onset
+day to the next, the second term of \eqref{eq:lambdatilde} is approximately
+$\pi\,I(t)\,[S_\theta(t\given t_{j-1})-S_\theta(t\given t_j)]$. Then
+$\tilde\lambda_j(t)$ has the form of $\lambda_j(t)$ with $\eta+\pi$ in place of
+$\eta$, each $L_t$ depends only on $I(t)$, and the only change to the model of
+\S3 is \eqref{eq:Stilde}. This is not appropriate when counts differ sharply
+between adjacent onset days.
+\item \emph{Batches.} The extension of \S\ref{sec:batches} is unaffected in
+form: it uses $\tilde\lambda_j(t)$ and $\tilde p_j(t)$ in place of
+$\lambda_j(t)$ and $p_j(t)$.
+\end{itemize}
+
 \section{Proposed extension: corrections made in batches}\label{sec:batches}
 
 This section describes an extension which has not yet been implemented.

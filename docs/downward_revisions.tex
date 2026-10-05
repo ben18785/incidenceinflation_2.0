@@ -100,11 +100,21 @@ $(t_{j-1},t_j]$; a record cannot enter and be withdrawn within the same
 interval.
 \item Conditional on $\{I(t)\}_{t=1}^T$, $\theta$, $\eta$ and $\rho$,
 increments are independent across onset days.
-\item $E(t\given t_0)=0$, so that $D(t\given t_0)=C(t\given t_0)$. This is an
-approximation: it assumes that no erroneous records are present at the first
-observation. Since $D$ cannot decrease, it implies that
-$C(t\given t_j)\ge C(t\given t_0)$ for all $j$: the reported count for an onset
-day can never fall below the count first reported.
+\item If the first observation is made on the onset day itself, $t_0=t$, then
+$E(t\given t_0)=0$ and $D(t\given t_0)=C(t\given t_0)$. Otherwise, erroneous
+records are assumed to have been entered and withdrawn on each of the
+unobserved days $t+1,\dots,t_0$ according to \eqref{eq:n} and \eqref{eq:m}.
+Since entries are Poisson and each record is withdrawn independently, it
+follows that
+\begin{equation}\label{eq:initialE}
+E(t\given t_0)\sim\pois\bigl(\nu_0(t)\bigr),\qquad
+\nu_0(t) := \eta\,I(t)\sum_{k=t+1}^{t_0}
+\bigl[S_\theta(t\given k-1)-S_\theta(t\given k)\bigr](1-\rho)^{\,t_0-k},
+\end{equation}
+and, independently, that
+\begin{equation}\label{eq:initialD}
+D(t\given t_0)\sim\bin\bigl(I(t),\;p_\theta(t,\,t_0-t\given t)\bigr).
+\end{equation}
 \end{enumerate}
 
 \paragraph{Properties.}
@@ -127,7 +137,14 @@ $e=0,\dots,\Emax$ define the forward probabilities
 \alpha_j(e;t) := P\bigl(C(t\given t_1),\dots,C(t\given t_j),\; E(t\given t_j)=e
 \;\big|\; I(t),\, C(t\given t_0),\, \theta,\eta,\rho\bigr).
 \end{equation}
-These satisfy $\alpha_0(e;t)=\mathbf{1}\{e=0\}$ and, for $j=1,\dots,J$,
+For $j=0$ this is the distribution of $E(t\given t_0)$ given the first
+observation. If $t_0=t$ then $\alpha_0(e;t)=\mathbf{1}\{e=0\}$; otherwise, from
+\eqref{eq:initialE} and \eqref{eq:initialD},
+\begin{equation}\label{eq:alpha0}
+\alpha_0(e;t)\propto\pois\bigl(e\given\nu_0(t)\bigr)\,
+\bin\bigl(C(t\given t_0)-e \given I(t),\;p_\theta(t,\,t_0-t\given t)\bigr),
+\end{equation}
+normalised so that $\sum_{e=0}^{\Emax}\alpha_0(e;t)=1$. For $j=1,\dots,J$,
 \begin{equation}\label{eq:forward}
 \begin{aligned}
 \alpha_j(e;t) = \sum_{e'=0}^{\Emax} \alpha_{j-1}(e';t) \sum_{m=0}^{e'}
@@ -152,7 +169,9 @@ from any earlier count, that is unless
 \begin{equation}\label{eq:feasible}
 \max_{j<k}\bigl[C(t\given t_j)-C(t\given t_k)\bigr]\le\Emax ,
 \end{equation}
-and unless convention (iii) is respected.
+and, when $t_0=t$, unless $C(t\given t_j)\ge C(t\given t_0)$ for all $j$. When
+$t_0>t$ the reported count may fall below the count first reported, since some
+of the records present at $t_0$ may be erroneous.
 
 \section{Changes to the sampling algorithm}
 
@@ -251,10 +270,13 @@ $S_\theta(t\given t')=1-\operatorname{CDF}_\theta(t'+\tfrac12-t)$.
 \item \emph{Onset days with complete reporting.} Onset days old enough that
 reporting is deemed complete are not sampled. Their true counts are fixed at
 the latest reported count, $I(t)=C(t\given t_J)$; without downward revisions
-this equals the largest reported count, which earlier versions used.
+this equals the largest reported count, which earlier versions used. If $\rho$
+is small, some of the records counted in $C(t\given t_J)$ may still be
+erroneous, which this ignores.
 \item \emph{Checks on the data.} Before sampling, the package checks
-\eqref{eq:feasible} and convention (iii), and stops with an error if either is
-violated for any onset day.
+\eqref{eq:feasible} and, for onset days first observed on the onset day itself,
+that the reported count never falls below the count first reported. It stops
+with an error if either is violated for any onset day.
 \item \emph{Negligible case counts.} Since $L_t\le 1$, the renewal terms in
 $q(I(t))$ bound it from above. To reduce cost, $L_t$ is evaluated only for
 values of $I(t)$ whose bound is within a factor $e^{-50}$ of $q$ at a pilot
@@ -269,7 +291,9 @@ not available when downward revisions are allowed.
 direct enumeration of all paths of $\bigl(d_j(t),n_j(t),m_j(t)\bigr)$, against
 the frequencies of simulated trajectories, and for summing to one over all
 possible reported counts; with $\eta=0$ it reproduces the likelihood of the
-original model. The update of $I(t)$ has been verified against a joint
+original model. The starting distribution \eqref{eq:alpha0} has been verified
+by checking that discarding early observations gives the same probability as
+summing over them. The update of $I(t)$ has been verified against a joint
 posterior obtained by exhaustive enumeration in a small example.
 
 \begin{thebibliography}{1}

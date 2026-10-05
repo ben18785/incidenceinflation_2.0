@@ -15,7 +15,9 @@ sample_true_cases_single_onset(
   ndraws = 1,
   maximise = FALSE,
   kappa = NULL,
-  is_negative_binomial = FALSE
+  is_negative_binomial = FALSE,
+  cases_future = NULL,
+  Rt_future = NULL
 )
 }
 \arguments{
@@ -44,6 +46,11 @@ maximum probability (by default is FALSE)}
 \item{kappa}{overdispersion parameter}
 
 \item{is_negative_binomial}{if negative-binomial renewal model specified (defaults to FALSE)}
+
+\item{cases_future}{a vector of true case counts arising on the onset days
+immediately following day_onset, arranged from the earliest to the latest}
+
+\item{Rt_future}{a vector of Rt values for the onset days corresponding to cases_future}
 }
 \value{
 a sampled case count arising on a given onset day
@@ -52,4 +59,8 @@ a sampled case count arising on a given onset day
 The distribution being drawn from is given by:
 \deqn{p(cases_true_t|data, Rt, reporting_params, serial_params) \propto p(data|cases_true, reporting_params)
  p(cases_true_t|cases_true_t_1, cases_true_t_2, ..., Rt, serial_params)}
+}
+\details{
+If cases_future is supplied, the distribution additionally conditions on the
+case counts arising on later onset days (see \code{conditional_cases_logp}).
 }

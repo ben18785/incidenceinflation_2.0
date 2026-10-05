@@ -1097,3 +1097,169 @@ test_that("sample_nb_Rt_piece works as expected", {
     nresamples)
   expect_true(sd(Rt_nb) > sd(Rt_poisson))
 })
+
+test_that("sample_true_cases_single_onset uses later cases if supplied", {
+  observation_matrix <- dplyr::tibble(time_reported=c(6, 7),
+                                      cases_reported=c(1, 2))
+  reporting_parameters <- list(mean=10, sd=3)
+  s_params <- list(mean=2, sd=1)
+  cases_history <- rep(5, 5)
+  max_cases <- 200
+  f_map <- function(cases_future) {
+    sample_true_cases_single_onset(
+      observation_df=observation_matrix,
+      cases_history=cases_history,
+      max_cases=max_cases,
+      Rt=1,
+      day_onset=6,
+      serial_parameters=s_params,
+      reporting_parameters=reporting_parameters,
+      maximise=TRUE,
+      cases_future=cases_future,
+      Rt_future=rep(1, length(cases_future)))
+  }
+  # many later cases imply more cases on onset day than few later cases
+  expect_true(f_map(c(60, 60)) > f_map(c(5, 5)))
+  expect_true(f_map(c(5, 5)) > f_map(c(0, 0)))
+})
+
+test_that("sample_cases_history conditioning on later cases targets joint
+posterior of case counts", {
+  set.seed(11)
+  days_total <- 8
+  s_params <- list(mean=2, sd=1)
+  r_list <- list(mean=3, sd=2)
+  Rt_function <- function(t) rep(1.4, length(t))
+  df <- generate_snapshots(days_total, Rt_function, s_params, r_list,
+                           initial_parameters=list(mean=6, length=5)) %>%
+    dplyr::filter(time_reported <= days_total) %>%
+    dplyr::select(-cases_true) %>%
+    dplyr::mutate(reporting_piece_index=1)
+  r_params <- dplyr::tibble(reporting_piece_index=1, mean=3, sd=2)
+  max_cases <- 18
+  p_gamma_cutoff <- 0.55
+
+  onset_times <- sort(unique(df$time_onset))
+  max_reported <- purrr::map_dbl(
+    onset_times, ~max(df$cases_reported[df$time_onset==.]))
+  days_uncertain <- onset_times[
+    onset_times >= days_total - max_uncertain_days(p_gamma_cutoff, r_list)]
+  expect_equal(days_uncertain, c(6, 7, 8))
+
+  # exact joint posterior of uncertain case counts by enumeration
+  observations <- purrr::map(
+    days_uncertain,
+    ~df[df$time_onset==., c("time_reported", "cases_reported")])
+  cases_fixed <- max_reported[onset_times < min(days_uncertain)]
+  grid <- as.matrix(expand.grid(
+    purrr::map(days_uncertain, ~max_reported[onset_times==.]:max_cases)))
+  logp_joint <- rep(0, nrow(grid))
+  for(r in seq_len(nrow(grid))) {
+    for(k in seq_along(days_uncertain)) {
+      day <- days_uncertain[k]
+      cases_earlier <- c(cases_fixed, grid[r, seq_len(k - 1)])
+      if(nrow(observations[[k]]) > 1)
+        logp_joint[r] <- logp_joint[r] + observation_process_logp(
+          observations[[k]], grid[r, k], day, r_list)
+      logp_joint[r] <- logp_joint[r] + state_process_logp(
+        grid[r, k], rev(cases_earlier), Rt_function(day), s_params)
+    }
+  }
+  p_joint <- exp(logp_joint - matrixStats::logSumExp(logp_joint))
+  mean_exact <- colSums(grid * p_joint)
+  sd_exact <- sqrt(colSums(grid^2 * p_joint) - mean_exact^2)
+
+  # Gibbs sweeps
+  nsweeps <- 1000
+  cases_current <- dplyr::tibble(time_onset=onset_times,
+                                 cases_true=max_reported + 3)
+  m_draws <- matrix(nrow=nsweeps, ncol=length(days_uncertain))
+  for(i in 1:nsweeps) {
+    df_est <- sample_cases_history(
+      df, max_cases, Rt_function, s_params, r_params,
+      p_gamma_cutoff=p_gamma_cutoff,
+      cases_true_current=cases_current)
+    expect_equal(sum(is.na(df_est$cases_estimated)), 0)
+    cases_current <- df_est %>%
+      dplyr::select(time_onset, cases_true=cases_estimated) %>%
+      unique()
+    m_draws[i, ] <- cases_current$cases_true[
+      match(days_uncertain, cases_current$time_onset)]
+  }
+
+  # certain days are unaffected by values supplied
+  cases_certain <- cases_current$cases_true[onset_times < min(days_uncertain)]
+  expect_equal(cases_certain, cases_fixed)
+
+  # sampled means within Monte Carlo error of exact (allowing for autocorrelation)
+  z_scores <- (colMeans(m_draws) - mean_exact) / (sd_exact / sqrt(nsweeps / 3))
+  expect_true(all(abs(z_scores) < 3))
+})
+
+test_that("sample_cases_history throws errors for malformed current cases", {
+  days_total <- 30
+  r_params <- list(mean=10, sd=3)
+  Rt_function <- stats::approxfun(1:days_total, rep(1.5, days_total))
+  s_params <- list(mean=5, sd=3)
+  df <- generate_snapshots(days_total, Rt_function,
+                           s_params, r_params, thinned=T) %>%
+    dplyr::mutate(reporting_piece_index=1)
+  cases_current <- df %>%
+    dplyr::select(time_onset, cases_true) %>%
+    unique()
+  df <- df %>% dplyr::select(-cases_true)
+  r_params <- dplyr::tibble(mean=10, sd=3, reporting_piece_index=1)
+  max_cases <- 5000
+
+  # works fine
+  df_est <- sample_cases_history(df, max_cases, Rt_function, s_params, r_params,
+                                 cases_true_current=cases_current)
+  expect_equal(sum(is.na(df_est$cases_estimated)), 0)
+
+  # wrongly named columns
+  expect_error(sample_cases_history(
+    df, max_cases, Rt_function, s_params, r_params,
+    cases_true_current=dplyr::rename(cases_current, cases=cases_true)))
+
+  # missing onset times
+  expect_error(sample_cases_history(
+    df, max_cases, Rt_function, s_params, r_params,
+    cases_true_current=cases_current[1:(days_total - 2), ]))
+})
+
+test_that("mcmc_single runs both with and without conditioning on later cases", {
+  niter <- 2
+  days_total <- 40
+  r_params <- list(mean=5, sd=3)
+  s_params <- list(mean=5, sd=3)
+  Rt_function <- stats::approxfun(1:days_total, rep(1.3, days_total))
+  df <- generate_snapshots(days_total, Rt_function, s_params, r_params)
+  initial_cases_true <- df %>%
+    dplyr::select(time_onset, cases_true) %>%
+    unique()
+  snapshot_with_Rt_index_df <- df %>%
+    dplyr::select(-cases_true) %>%
+    dplyr::mutate(Rt_index=ifelse(time_onset <= 20, 1, 2))
+  initial_Rt <- dplyr::tibble(Rt_index=c(1, 2), Rt=c(1.3, 1.3))
+  priors <- list(Rt=list(shape=1, rate=1),
+                 reporting=list(mean_mu=5,
+                                mean_sigma=10,
+                                sd_mu=3,
+                                sd_sigma=5),
+                 max_cases=5000)
+
+  for(condition_on_future_cases in c(TRUE, FALSE)) {
+    res <- mcmc_single(niterations=niter,
+                       snapshot_with_Rt_index_df,
+                       priors,
+                       s_params,
+                       initial_cases_true,
+                       r_params,
+                       initial_Rt,
+                       print_to_screen=FALSE,
+                       condition_on_future_cases=condition_on_future_cases)
+    expect_equal(nrow(res$cases), days_total * niter)
+    expect_equal(sum(is.na(res$cases$cases_true)), 0)
+    expect_equal(nrow(res$Rt), 2 * niter)
+  }
+})

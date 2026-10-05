@@ -13,7 +13,9 @@ sample_cases_history(
   p_gamma_cutoff = 0.99,
   maximise = FALSE,
   kappa = NULL,
-  is_negative_binomial = FALSE
+  is_negative_binomial = FALSE,
+  cases_true_current = NULL,
+  future_max = 40
 )
 }
 \arguments{
@@ -38,6 +40,14 @@ maximum probability (by default is FALSE)}
 \item{kappa}{overdispersion parameter}
 
 \item{is_negative_binomial}{if negative-binomial renewal model specified (defaults to FALSE)}
+
+\item{cases_true_current}{a tibble with two columns: "time_onset" and
+"cases_true", which represents current estimates of the true number of cases
+with each onset time. If NULL (the default) each case count is drawn
+conditional only on case counts with earlier onset times.}
+
+\item{future_max}{maximum number of later onset days conditioned on when
+cases_true_current is supplied. Defaults to 40.}
 }
 \value{
 a tibble with an extra cases_estimated column
@@ -46,4 +56,10 @@ a tibble with an extra cases_estimated column
 The distribution being drawn from at each onset time t is given by:
 \deqn{p(cases_true_t|data, Rt, reporting_params, serial_params) \propto p(data|cases_true, reporting_params)
  p(cases_true_t|cases_true_t_1, cases_true_t_2, ..., Rt, serial_params)}
+If cases_true_current is supplied, the distribution at each onset time t
+additionally conditions on the case counts arising on later onset days,
+which depend on cases_true_t through the renewal equation:
+\deqn{\prod_tau>t p(cases_true_tau|cases_true_tau-1, cases_true_tau-2, ..., Rt_tau, serial_params)}
+Onset times are updated from the earliest to the latest, so that the case
+counts for later onset times are those given in cases_true_current.
 }

@@ -14,7 +14,9 @@ conditional_cases_logp(
   serial_parameters,
   reporting_parameters,
   kappa = NULL,
-  is_negative_binomial = FALSE
+  is_negative_binomial = FALSE,
+  cases_future = NULL,
+  Rt_future = NULL
 )
 }
 \arguments{
@@ -38,6 +40,11 @@ characterising the reporting delay distribution}
 \item{kappa}{overdispersion parameter}
 
 \item{is_negative_binomial}{if negative-binomial renewal model specified (defaults to FALSE)}
+
+\item{cases_future}{a vector of true case counts arising on the onset days
+immediately following day_onset, arranged from the earliest to the latest}
+
+\item{Rt_future}{a vector of Rt values for the onset days corresponding to cases_future}
 }
 \value{
 an (unnormalised) log-probability or vector of such log-probabilities
@@ -46,4 +53,7 @@ an (unnormalised) log-probability or vector of such log-probabilities
 There are two components to this:
 \deqn{p(cases_true_t|data, Rt, reporting_params, serial_params) \propto p(data|cases_true, reporting_params)
  p(cases_true_t|cases_true_t_1, cases_true_t_2, ..., Rt, serial_params)}
+If cases_future is supplied, a third component is included which accounts
+for the case counts arising on later onset days, since these depend on cases_true_t:
+\deqn{\prod_tau>t p(cases_true_tau|cases_true_tau-1, cases_true_tau-2, ..., Rt_tau, serial_params)}
 }

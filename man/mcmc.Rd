@@ -21,7 +21,8 @@ mcmc(
   is_parallel = FALSE,
   initial_overdispersion = 5,
   is_negative_binomial = FALSE,
-  overdispersion_metropolis_sd = 0.25
+  overdispersion_metropolis_sd = 0.25,
+  condition_on_future_cases = TRUE
 )
 }
 \arguments{
@@ -76,6 +77,12 @@ assuming a negative binomial sampling model (default to 5).}
 \item{is_negative_binomial}{if negative-binomial renewal model specified (defaults to FALSE)}
 
 \item{overdispersion_metropolis_sd}{the standard deviation of the proposal kernel}
+
+\item{condition_on_future_cases}{if TRUE (the default) each true case count
+is drawn conditional on the current case counts at all other onset times,
+including later ones which depend on it through the renewal equation. If
+FALSE each case count is drawn conditional only on case counts with earlier
+onset times, which was the behaviour in versions before 2.0.}
 }
 \value{
 a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters

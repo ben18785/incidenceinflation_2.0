@@ -4,6 +4,9 @@
 #' \deqn{p(cases_true_t|data, Rt, reporting_params, serial_params) \propto p(data|cases_true, reporting_params)
 #'  p(cases_true_t|cases_true_t_1, cases_true_t_2, ..., Rt, serial_params)}
 #'
+#' If cases_future is supplied, the distribution additionally conditions on the
+#' case counts arising on later onset days (see \code{conditional_cases_logp}).
+#'
 #' @param max_cases maximum possible cases thought to arise on a given day
 #' @inheritParams conditional_cases_logp
 #' @param ndraws number of draws of cases
@@ -14,7 +17,8 @@
 sample_true_cases_single_onset <- function(
   observation_df, cases_history, max_cases,
   Rt, day_onset, serial_parameters, reporting_parameters,
-  ndraws=1, maximise=FALSE, kappa=NULL, is_negative_binomial=FALSE) {
+  ndraws=1, maximise=FALSE, kappa=NULL, is_negative_binomial=FALSE,
+  cases_future=NULL, Rt_future=NULL) {
 
   max_observed_cases <- max(observation_df$cases_reported)
   if(max_observed_cases > max_cases)
@@ -22,7 +26,8 @@ sample_true_cases_single_onset <- function(
   possible_cases <- max_observed_cases:max_cases
   logps <- conditional_cases_logp(possible_cases, observation_df, cases_history,
                                   Rt, day_onset, serial_parameters, reporting_parameters,
-                                  kappa, is_negative_binomial)
+                                  kappa, is_negative_binomial,
+                                  cases_future, Rt_future)
   probs <- exp(logps - matrixStats::logSumExp(logps))
   if(dplyr::last(probs) > 0.01)
     warning(paste0("Cases too few for onset day: ", day_onset,
@@ -52,6 +57,12 @@ max_uncertain_days <- function(p_gamma_cutoff, reporting_parameters) {
 #' The distribution being drawn from at each onset time t is given by:
 #' \deqn{p(cases_true_t|data, Rt, reporting_params, serial_params) \propto p(data|cases_true, reporting_params)
 #'  p(cases_true_t|cases_true_t_1, cases_true_t_2, ..., Rt, serial_params)}
+#' If cases_true_current is supplied, the distribution at each onset time t
+#' additionally conditions on the case counts arising on later onset days,
+#' which depend on cases_true_t through the renewal equation:
+#' \deqn{\prod_tau>t p(cases_true_tau|cases_true_tau-1, cases_true_tau-2, ..., Rt_tau, serial_params)}
+#' Onset times are updated from the earliest to the latest, so that the case
+#' counts for later onset times are those given in cases_true_current.
 #'
 #' @param observation_onset_df a tibble with four columns: time_onset, time_reported, cases_reported, reporting_piece_index
 #' @param reporting_parameters a tibble with three columns: reporting_piece_index,
@@ -60,6 +71,12 @@ max_uncertain_days <- function(p_gamma_cutoff, reporting_parameters) {
 #' @inheritParams sample_true_cases_single_onset
 #' @inheritParams true_cases
 #' @inheritParams max_uncertain_days
+#' @param cases_true_current a tibble with two columns: "time_onset" and
+#' "cases_true", which represents current estimates of the true number of cases
+#' with each onset time. If NULL (the default) each case count is drawn
+#' conditional only on case counts with earlier onset times.
+#' @param future_max maximum number of later onset days conditioned on when
+#' cases_true_current is supplied. Defaults to 40.
 #'
 #' @return a tibble with an extra cases_estimated column
 #' @export
@@ -70,7 +87,9 @@ sample_cases_history <- function(
   p_gamma_cutoff=0.99,
   maximise=FALSE,
   kappa=NULL,
-  is_negative_binomial=FALSE) {
+  is_negative_binomial=FALSE,
+  cases_true_current=NULL,
+  future_max=40) {
 
   if(!"reporting_piece_index" %in% colnames(observation_onset_df))
     stop("observation_onset_df must contain a column: 'reporting_piece_index'.")
@@ -96,6 +115,20 @@ sample_cases_history <- function(
   onset_times <- unique(observation_history_df$time_onset)
   onset_times_uncertain_period <- onset_times[onset_times >= start_uncertain_period]
 
+  condition_on_future <- !is.null(cases_true_current)
+  if(condition_on_future) {
+    if(!all(c("time_onset", "cases_true") %in% colnames(cases_true_current)))
+      stop("cases_true_current must contain columns: 'time_onset' and 'cases_true'.")
+    if(!all(onset_times_uncertain_period %in% cases_true_current$time_onset))
+      stop("cases_true_current must contain a case count for each onset time.")
+    index_current <- match(observation_history_df$time_onset,
+                           cases_true_current$time_onset)
+    observation_history_df$cases_estimated <- ifelse(
+      is.na(observation_history_df$cases_estimated),
+      cases_true_current$cases_true[index_current],
+      observation_history_df$cases_estimated)
+  }
+
   for(i in seq_along(onset_times_uncertain_period)) {
 
     onset_time <- onset_times_uncertain_period[i]
@@ -117,6 +150,20 @@ sample_cases_history <- function(
       dplyr::arrange(dplyr::desc(.data$time_onset))
     cases_history <- pre_observation_df$cases_estimated
     Rt <- Rt_function(onset_time)
+
+    cases_future <- NULL
+    Rt_future <- NULL
+    if(condition_on_future) {
+      post_observation_df <- observation_history_df %>%
+        dplyr::filter(.data$time_onset > onset_time,
+                      .data$time_onset <= onset_time + future_max) %>%
+        dplyr::select("time_onset", "cases_estimated") %>%
+        unique() %>%
+        dplyr::arrange(.data$time_onset)
+      cases_future <- post_observation_df$cases_estimated
+      Rt_future <- Rt_function(post_observation_df$time_onset)
+    }
+
     case <- sample_true_cases_single_onset(
       observation_df=snapshots_at_onset_time_df,
       cases_history=cases_history,
@@ -128,7 +175,9 @@ sample_cases_history <- function(
       ndraws=1,
       maximise=maximise,
       kappa=kappa,
-      is_negative_binomial=is_negative_binomial)
+      is_negative_binomial=is_negative_binomial,
+      cases_future=cases_future,
+      Rt_future=Rt_future)
     index_onset_time <- which(observation_history_df$time_onset==onset_time)
     observation_history_df$cases_estimated[index_onset_time] <- case
   }
@@ -766,6 +815,11 @@ sample_reporting <- function(
 #' @param initial_overdispersion the initial value of the overdispersion parameter if
 #' assuming a negative binomial sampling model (default to 5).
 #' @inheritParams metropolis_step_overdispersion
+#' @param condition_on_future_cases if TRUE (the default) each true case count
+#' is drawn conditional on the current case counts at all other onset times,
+#' including later ones which depend on it through the renewal equation. If
+#' FALSE each case count is drawn conditional only on case counts with earlier
+#' onset times, which was the behaviour in versions before 2.0.
 #' @return a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters
 #' @importFrom rlang .data
 #' @importFrom methods is
@@ -782,7 +836,8 @@ mcmc_single <- function(
   serial_max=40, p_gamma_cutoff=0.99, maximise=FALSE, print_to_screen=TRUE,
   initial_overdispersion=5,
   is_negative_binomial=FALSE,
-  overdispersion_metropolis_sd=0.5) {
+  overdispersion_metropolis_sd=0.5,
+  condition_on_future_cases=TRUE) {
 
   cnames <- colnames(snapshot_with_Rt_index_df)
   expected_names <- c("time_onset", "time_reported",
@@ -860,13 +915,21 @@ mcmc_single <- function(
     df_current <- df_running %>%
       dplyr::select(time_onset, time_reported, cases_reported, reporting_piece_index)
 
+    cases_true_current <- NULL
+    if(condition_on_future_cases)
+      cases_true_current <- df_running %>%
+        dplyr::select(time_onset, cases_true) %>%
+        unique()
+
     df_temp <- sample_cases_history(
       df_current, max_cases,
       Rt_function, serial_parameters, reporting_current,
       p_gamma_cutoff=p_gamma_cutoff,
       maximise=maximise,
       kappa=overdispersion_current,
-      is_negative_binomial=is_negative_binomial)
+      is_negative_binomial=is_negative_binomial,
+      cases_true_current=cases_true_current,
+      future_max=serial_max)
 
 
     # sample Rt
@@ -1098,7 +1161,8 @@ mcmc <- function(
     nchains=1, is_parallel=FALSE,
     initial_overdispersion=5,
     is_negative_binomial=FALSE,
-    overdispersion_metropolis_sd=0.25) {
+    overdispersion_metropolis_sd=0.25,
+    condition_on_future_cases=TRUE) {
 
   if(nchains==1) {
     res <- mcmc_single(niterations,
@@ -1115,7 +1179,8 @@ mcmc <- function(
                        print_to_screen,
                        initial_overdispersion,
                        is_negative_binomial,
-                       overdispersion_metropolis_sd)
+                       overdispersion_metropolis_sd,
+                       condition_on_future_cases)
     res$cases$chain <- 1
     res$Rt$chain <- 1
     res$reporting$chain <- 1
@@ -1143,7 +1208,8 @@ mcmc <- function(
                       print_to_screen,
                       initial_overdispersion,
                       is_negative_binomial,
-                      overdispersion_metropolis_sd)
+                      overdispersion_metropolis_sd,
+                      condition_on_future_cases)
         }
 
         list_of_results <- foreach::foreach(i=1:nchains, .export = "mcmc_single") %dopar% {
@@ -1174,7 +1240,8 @@ mcmc <- function(
                            print_to_screen,
                            initial_overdispersion,
                            is_negative_binomial,
-                           overdispersion_metropolis_sd)
+                           overdispersion_metropolis_sd,
+                           condition_on_future_cases)
         list_of_results[[i]] <- res
       }
     }

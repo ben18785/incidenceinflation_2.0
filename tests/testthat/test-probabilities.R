@@ -345,3 +345,107 @@ test_that("state_process_nb_logp_all_onsets works ok", {
                                           serial_parameters = s_params)
   expect_equal(val, -Inf)
 })
+
+test_that("future_cases_logp returns zeros when there are no later onset days", {
+  s_params <- list(mean=5, sd=2)
+  cases_history <- c(4, 3, 5, 2)
+  logps <- future_cases_logp(cases_true=0:10,
+                             cases_history=cases_history,
+                             cases_future=numeric(0),
+                             Rt_future=numeric(0),
+                             serial_parameters=s_params)
+  expect_equal(logps, rep(0, 11))
+})
+
+test_that("future_cases_logp throws error if Rt and cases different lengths", {
+  s_params <- list(mean=5, sd=2)
+  expect_error(future_cases_logp(cases_true=0:10,
+                                 cases_history=c(4, 3, 5, 2),
+                                 cases_future=c(3, 2),
+                                 Rt_future=1.5,
+                                 serial_parameters=s_params))
+})
+
+test_that("future_cases_logp matches sum of state_process_logp over later days", {
+  s_params <- list(mean=3, sd=2)
+  cases_history <- c(4, 3, 5, 2, 6)
+  cases_future <- c(5, 0, 7, 3)
+  Rt_future <- c(1.2, 1.2, 0.7, 0.7)
+  cases_true <- 0:12
+
+  f_long_way <- function(kappa, is_negative_binomial) {
+    logps <- rep(0, length(cases_true))
+    for(i in seq_along(cases_true)) {
+      for(k in seq_along(cases_future)) {
+        history <- c(rev(cases_future[seq_len(k - 1)]),
+                     cases_true[i],
+                     cases_history)
+        logps[i] <- logps[i] + state_process_logp(
+          cases_true=cases_future[k],
+          cases_history=history,
+          Rt=Rt_future[k],
+          serial_parameters=s_params,
+          kappa=kappa,
+          is_negative_binomial=is_negative_binomial)
+      }
+    }
+    logps
+  }
+
+  # Poisson
+  logps <- future_cases_logp(cases_true, cases_history, cases_future,
+                             Rt_future, s_params)
+  expect_equal(logps, f_long_way(NULL, FALSE))
+
+  # negative binomial
+  kappa <- 3
+  logps_nb <- future_cases_logp(cases_true, cases_history, cases_future,
+                                Rt_future, s_params,
+                                kappa=kappa, is_negative_binomial=TRUE)
+  expect_equal(logps_nb, f_long_way(kappa, TRUE))
+  expect_true(max(abs(logps - logps_nb)) > 0.01)
+})
+
+test_that("conditional_cases_logp with later cases is proportional to joint
+probability of observations and all case counts", {
+  observation_matrix <- dplyr::tibble(time_reported=c(6, 7, 9),
+                                      cases_reported=c(1, 2, 3))
+  reporting_parameters <- list(mean=3, sd=2)
+  s_params <- list(mean=3, sd=2)
+  day_onset <- 6
+  cases_history <- c(4, 3, 5, 2, 6) # days 5, 4, ..., 1
+  cases_future <- c(5, 0, 7) # days 7, 8, 9
+  Rt <- 1.1
+  Rt_future <- c(1.2, 0.7, 0.7)
+  cases_true <- 3:20
+
+  # joint log-probability of observations for day_onset and of the case counts
+  # on all days after the first
+  f_joint <- function(case_true) {
+    cases_all <- c(rev(cases_history), case_true, cases_future)
+    Rt_all <- c(rep(NA, length(cases_history)), Rt, Rt_future)
+    logp <- observation_process_logp(observation_matrix, case_true,
+                                     day_onset, reporting_parameters)
+    for(day in day_onset:length(cases_all))
+      logp <- logp + state_process_logp(
+        cases_true=cases_all[day],
+        cases_history=rev(cases_all[1:(day - 1)]),
+        Rt=Rt_all[day],
+        serial_parameters=s_params)
+    logp
+  }
+  logp_joint <- purrr::map_dbl(cases_true, f_joint)
+
+  logps <- conditional_cases_logp(cases_true, observation_matrix, cases_history,
+                                  Rt, day_onset, s_params, reporting_parameters,
+                                  cases_future=cases_future,
+                                  Rt_future=Rt_future)
+  expect_equal(logps, logp_joint)
+
+  # without later cases it is not proportional to joint
+  logps_past_only <- conditional_cases_logp(
+    cases_true, observation_matrix, cases_history,
+    Rt, day_onset, s_params, reporting_parameters)
+  differences <- logps_past_only - logp_joint
+  expect_true(diff(range(differences)) > 0.1)
+})

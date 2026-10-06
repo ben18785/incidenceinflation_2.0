@@ -832,3 +832,45 @@ below those first reported long after onset", {
     list(eta=0.05, rho=0.02), max_erroneous=5)
   expect_equal(logp, rep(-Inf, length(cases_true)))
 })
+
+test_that("probability of detection remains defined long after onset", {
+  reporting_parameters <- list(mean=5, sd=3)
+  # matches direct calculation where that is possible
+  p_direct <- (undetected_prob(3.5, 1, reporting_parameters) -
+                 undetected_prob(6.5, 1, reporting_parameters)) /
+    undetected_prob(3.5, 1, reporting_parameters)
+  expect_equal(detected_after_unobserved_prob(6, 3, 1, reporting_parameters),
+               p_direct)
+  expect_equal(exp(log_undetected_prob(c(3.5, 6.5), 1, reporting_parameters)),
+               c(undetected_prob(3.5, 1, reporting_parameters),
+                 undetected_prob(6.5, 1, reporting_parameters)))
+
+  # the probability of remaining undetected underflows to zero
+  expect_equal(undetected_prob(400.5, 1, reporting_parameters), 0)
+  p_late <- detected_after_unobserved_prob(410, 400, 1, reporting_parameters)
+  expect_true(is.finite(p_late))
+  expect_true(p_late > 0 & p_late <= 1)
+
+  # so that observations long after onset have a defined probability
+  observation_matrix <- dplyr::tibble(time_reported=c(400, 410, 420),
+                                      cases_reported=c(30, 30, 30))
+  logp <- observation_process_logp(observation_matrix, 30:32, 1,
+                                   reporting_parameters)
+  expect_equal(logp[1], 0)
+  expect_true(all(is.finite(logp)))
+  expect_true(all(diff(logp) < 0))
+  logp_revisions <- observation_process_logp(
+    observation_matrix, 30:32, 1, reporting_parameters,
+    revision_parameters=list(eta=0, rho=0.2))
+  expect_equal(logp_revisions, logp)
+})
+
+test_that("state_process_logp is zero for cases with no earlier cases", {
+  logp <- state_process_logp(cases_true=0:5, cases_history=numeric(0), Rt=1.5,
+                             serial_parameters=list(mean=5, sd=3))
+  expect_equal(logp, rep(0, 6))
+  logp <- state_process_logp(cases_true=3, cases_history=numeric(0), Rt=1.5,
+                             serial_parameters=list(mean=5, sd=3),
+                             kappa=2, is_negative_binomial=TRUE)
+  expect_equal(logp, 0)
+})

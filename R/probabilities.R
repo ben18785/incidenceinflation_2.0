@@ -453,15 +453,20 @@ observation_process_revisions_compiled_logp <- function(
   p_undetected <- 1 - pgamma_mean_sd(observation_days + 0.5 - day_onset,
                                      reporting_parameters$mean,
                                      reporting_parameters$sd)
-  p_unrecorded <- p_undetected
-  if(misdating_prob(revision_parameters) > 0)
+  if(misdating_prob(revision_parameters) > 0) {
     p_unrecorded <- unrecorded_prob(observation_days, day_onset,
                                     reporting_parameters, revision_parameters)
+    p_detect <- -diff(p_unrecorded) / p_unrecorded[-(num_periods + 1)]
+  } else {
+    # from log-probabilities, which remain defined long after onset
+    p_detect <- -expm1(diff(log_undetected_prob(
+      observation_days + 0.5, day_onset, reporting_parameters)))
+  }
 
   revisions_logp_cpp(
     cases_true=as.numeric(cases_true),
     observation_cases=as.numeric(observation_cases),
-    p_detect=-diff(p_unrecorded) / p_unrecorded[-(num_periods + 1)],
+    p_detect=p_detect,
     p_newly_detected=-diff(p_undetected),
     p_withdrawn=1 - (1 - revision_parameters$rho)^diff(observation_days),
     eta=revision_parameters$eta,
@@ -550,6 +555,10 @@ observation_process_logp <- function(observation_df, cases_true,
 state_process_logp <- function(cases_true, cases_history, Rt, serial_parameters,
                                kappa=NULL, is_negative_binomial=FALSE){
   t_max <- length(cases_history)
+  # cases arising on the first onset day have no earlier cases to have
+  # generated them, so the renewal model says nothing about their number
+  if(t_max == 0)
+    return(rep(0, length(cases_true)))
   w <- weights_series(t_max, serial_parameters)
   mean_cases <- expected_cases(Rt=Rt, weights=w, cases_history=cases_history)
 

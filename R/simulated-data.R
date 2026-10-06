@@ -39,9 +39,26 @@ detected_after_unobserved_prob <- function(day_2, day_1, day_onset,
                                            reporting_parameters){
   if(day_2 < day_1)
     stop("second observation date must be at same time or after first")
-  (undetected_prob(day_1 + 0.5, day_onset, reporting_parameters) -
-      undetected_prob(day_2 + 0.5, day_onset, reporting_parameters)) /
-    undetected_prob(day_1 + 0.5, day_onset, reporting_parameters)
+  # calculated from log-probabilities so that it remains defined long after
+  # onset, when the probability of remaining undetected underflows to zero
+  log_p_undetected <- log_undetected_prob(c(day_1, day_2) + 0.5, day_onset,
+                                          reporting_parameters)
+  -expm1(log_p_undetected[2] - log_p_undetected[1])
+}
+
+#' Log-probability that a case remains undetected
+#'
+#' @param days vector of times at which to evaluate the log-probability
+#' @inheritParams undetected_prob
+#'
+#' @return a vector of log-probabilities
+log_undetected_prob <- function(days, t_onset, reporting_parameters) {
+  delay_mean <- reporting_parameters$mean
+  delay_sd <- reporting_parameters$sd
+  stats::pgamma(days - t_onset,
+                shape=delay_mean^2 / delay_sd^2,
+                rate=delay_mean / delay_sd^2,
+                lower.tail=FALSE, log.p=TRUE)
 }
 
 #' Cases arising on a given day which are reported between two subsequent days

@@ -397,7 +397,9 @@ generate_snapshots <- function(days_total, Rt_function, serial_parameters,
 
   is_misdating <- !is.null(revision_parameters) &&
     misdating_prob(revision_parameters) > 0
-  if(is_misdating | !is.null(batches))
+  is_reporting_extended <- !is.null(revision_parameters$tail) |
+    !is.null(revision_parameters$report_multipliers)
+  if(is_misdating | !is.null(batches) | is_reporting_extended)
     reported_cases <- observed_cases_revisions(
       cases_true=real_cases,
       reporting_parameters=reporting_parameters,
@@ -494,7 +496,10 @@ batch_for_onset <- function(day_onset, batches) {
 #'
 #' @inheritParams observed_cases
 #' @param revision_parameters named list of 'eta', 'rho' and optionally 'pi',
-#' 'shifts' and 'shift_probs' (see \code{unrecorded_prob}); or NULL
+#' 'shifts' and 'shift_probs' (see \code{unrecorded_prob}); or NULL. It can
+#' also contain 'tail' and 'report_multipliers', which alter the delay from
+#' onset to detection (see \code{log_undetected_days} and
+#' \code{simulate_report_multipliers}).
 #' @param batches a tibble of batches as returned by \code{sample_batches}; or NULL
 #'
 #' @return a tibble with observed case trajectories for each time of onset
@@ -516,7 +521,7 @@ observed_cases_revisions <- function(cases_true, reporting_parameters,
   p_misdated <- 0
   shifts <- c()
   shift_probs <- c()
-  if(!is.null(revision_parameters)) {
+  if(!is.null(revision_parameters$eta)) {
     eta <- revision_parameters$eta
     rho <- revision_parameters$rho
     p_misdated <- misdating_prob(revision_parameters)
@@ -538,12 +543,20 @@ observed_cases_revisions <- function(cases_true, reporting_parameters,
   m_reported <- matrix(NA, nrow=d_max, ncol=d_max)
   diag(m_reported) <- 0
 
+  # log-probability that a case arising on each onset day (rows) remains
+  # undetected at the end of each day (columns), allowing for any tail to the
+  # delay distribution and for multipliers on the rate of detection
+  m_log_undetected <- matrix(NA, nrow=d_max, ncol=d_max)
+  for(t in seq_len(d_max))
+    m_log_undetected[t, t:d_max] <- log_undetected_days(
+      t:d_max, t,
+      list(mean=reporting_parameters$mean[t], sd=reporting_parameters$sd[t]),
+      revision_parameters)
+
   for(day in seq_len(d_max)[-1]) {
     for(t in 1:(day - 1)) {
-      r_params <- list(mean=reporting_parameters$mean[t],
-                       sd=reporting_parameters$sd[t])
-      p_newly_detected <- undetected_prob(day - 1 + 0.5, t, r_params) -
-        undetected_prob(day + 0.5, t, r_params)
+      log_undetected <- m_log_undetected[t, c(day - 1, day)]
+      p_newly_detected <- exp(log_undetected[1]) - exp(log_undetected[2])
 
       # corrections of misdated records present on previous day
       if(n_shifts > 0) {
@@ -553,8 +566,10 @@ observed_cases_revisions <- function(cases_true, reporting_parameters,
       }
 
       # newly detected genuine cases, some of which are misdated
-      new_cases <- observed_cases_single(I_detected[t], cases_true[t],
-                                         day, day - 1, t, r_params)
+      new_cases <- 0
+      if(cases_true[t] > I_detected[t])
+        new_cases <- stats::rbinom(1, cases_true[t] - I_detected[t],
+                                   -expm1(log_undetected[2] - log_undetected[1]))
       I_detected[t] <- I_detected[t] + new_cases
       new_misdated <- 0
       if(n_shifts > 0 & new_cases > 0) {
@@ -606,4 +621,28 @@ observed_cases_revisions <- function(cases_true, reporting_parameters,
       cases_reported=m_reported[t, obs_time],
       cases_true=cases_true[t])
   })
+}
+
+#' Simulates multipliers on the rate of detection for each day
+#'
+#' Each report has a multiplier which is the product of the effect of its day
+#' of the week and its own random effect, whose log is normal with mean zero.
+#' The multiplier for a day is that of the first report made on or after it.
+#'
+#' @inheritParams report_multipliers
+#' @param report_sd standard deviation of the log of the random effect of each
+#' report; zero (the default) for no random effects
+#'
+#' @return a named list of 'report_log_effects', the log of the random effect
+#' of each report; and 'report_multipliers', a named list of 'day_first' and
+#' 'values' as required within the revision parameters
+#' @export
+simulate_report_multipliers <- function(report_days, weekday_log_effects=NULL,
+                                        report_sd=0, weekday_first=1) {
+  report_log_effects <- NULL
+  if(report_sd > 0)
+    report_log_effects <- stats::rnorm(length(report_days), 0, report_sd)
+  list(report_log_effects=report_log_effects,
+       report_multipliers=report_multipliers(report_days, weekday_log_effects,
+                                             report_log_effects, weekday_first))
 }

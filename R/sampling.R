@@ -132,6 +132,10 @@ sample_cases_history <- function(
   reporting_latest_onset_time <- list(mean=reporting_latest_onset_time$mean[1],
                                       sd=reporting_latest_onset_time$sd[1])
   uncertain_period <- max_uncertain_days(p_gamma_cutoff, reporting_latest_onset_time)
+  # a heavier-tailed delay extends the period for which reporting is incomplete
+  if(!is.null(revision_parameters$tail))
+    uncertain_period <- delay_quantile(p_gamma_cutoff, reporting_latest_onset_time,
+                                       revision_parameters)
 
   start_uncertain_period <- latest_onset_time - uncertain_period
 
@@ -581,6 +585,11 @@ accept_reject <- function(
 
   log_r <- logp_proposed - logp_current
   log_u <- log(stats::runif(1))
+
+  # a proposal with zero probability is rejected, including where the current
+  # value also has zero probability
+  if(is.na(log_r))
+    log_r <- -Inf
 
   # nocov start
   if(log_r > log_u) {
@@ -1049,6 +1058,15 @@ metropolis_step_revisions <- function(
 #' 'max_batch' (default 30) and 'min_total_fall' (see \code{batch_candidates}).
 #' Initial batches can be given as an element 'batches' of this list; by
 #' default they are chosen from falls in reported cases which coincide.
+#' Three extensions to the model of reporting are switched on through further
+#' elements of this list: 'tail' (a named list of initial 'weight' and 'mean'
+#' of an exponential tail to the delay distribution); 'weekday' (TRUE for an
+#' effect of the day of the week of each report, with 'weekday_first' giving
+#' the day of the week, from 1 to 7, of time 1); and 'report_effects' (TRUE for
+#' a random effect of each report). See \code{log_undetected_days}. Their
+#' priors can be set through priors$reporting_effects (see
+#' \code{metropolis_step_tail}, \code{metropolis_step_weekday} and
+#' \code{sample_report_sd}).
 #' @param revision_metropolis_parameters named list of 'eta_step' and 'rho_step'
 #' containing step sizes for Metropolis step for revision parameters (see
 #' \code{propose_revision_parameters})
@@ -1130,6 +1148,44 @@ mcmc_single <- function(
          abs(sum(revision_current$shift_probs) - 1) > 1e-8)
         stop("Shifts must be non-zero and their probabilities must sum to one.")
     }
+  }
+
+  # extensions to the model of reporting
+  is_tail <- is_revisions && !is.null(revision_current$tail)
+  is_weekday <- is_revisions && isTRUE(revision_current$weekday)
+  is_report_effects <- is_revisions && isTRUE(revision_current$report_effects)
+  is_reporting_extensions <- is_tail | is_weekday | is_report_effects
+  if(is_reporting_extensions) {
+    priors_reporting <- list(tail_weight_alpha=1, tail_weight_beta=3,
+                             tail_mean_mu=15, tail_mean_sigma=10,
+                             weekday_sd=1,
+                             report_sd_shape=3, report_sd_scale=0.2)
+    if("reporting_effects" %in% names(priors))
+      priors_reporting[names(priors$reporting_effects)] <- priors$reporting_effects
+    steps_reporting <- list(tail_weight_step=0.3, tail_mean_step=0.2,
+                            weekday_step=0.05, report_blocks=2)
+    names_steps <- intersect(names(steps_reporting),
+                             names(revision_metropolis_parameters))
+    steps_reporting[names_steps] <- revision_metropolis_parameters[names_steps]
+  }
+  if(is_weekday | is_report_effects) {
+    revision_current$report_days <- sort(unique(
+      snapshot_with_Rt_index_df$time_reported))
+    if(is.null(revision_current$weekday_first))
+      revision_current$weekday_first <- 1
+    if(is_weekday) {
+      weekdays_present <- sort(unique(weekday_of_days(
+        revision_current$report_days, revision_current$weekday_first)))
+      revision_current$weekday_log_effects <- stats::setNames(
+        rep(0, length(weekdays_present)), weekdays_present)
+    }
+    if(is_report_effects) {
+      revision_current$report_log_effects <- rep(
+        0, length(revision_current$report_days))
+      revision_current$report_sd <- sqrt(
+        priors_reporting$report_sd_scale / (priors_reporting$report_sd_shape - 1))
+    }
+    revision_current <- update_report_multipliers(revision_current)
   }
 
   # batches of erroneous records
@@ -1322,6 +1378,61 @@ mcmc_single <- function(
           dplyr::bind_rows(revision_tmp)
     }
 
+    # sample the extensions to the model of reporting
+    if(is_reporting_extensions) {
+      # log-probability of observations at the values just sampled
+      logl_reporting <- list_revision_logp$logp -
+        prior_revision_parameters(revision_current, priors$revisions) -
+        log_jacobian_revision_parameters(revision_current)
+      if(is_tail) {
+        list_tail <- metropolis_step_tail(
+          df_temp, reporting_current, revision_current, logl_reporting,
+          priors_reporting, steps_reporting, max_erroneous)
+        revision_current <- list_tail$revision_parameters
+        logl_reporting <- list_tail$logl
+      }
+      if(is_weekday) {
+        list_weekday <- metropolis_step_weekday(
+          df_temp, reporting_current, revision_current, logl_reporting,
+          priors_reporting, steps_reporting, max_erroneous)
+        revision_current <- list_weekday$revision_parameters
+        logl_reporting <- list_weekday$logl
+      }
+      if(is_report_effects) {
+        list_effects <- sample_report_effects(
+          df_temp, reporting_current, revision_current, logl_reporting,
+          max_erroneous, steps_reporting$report_blocks)
+        revision_current <- list_effects$revision_parameters
+        revision_current$report_sd <- sample_report_sd(
+          revision_current$report_log_effects, priors_reporting)
+      }
+
+      reporting_effects_tmp <- dplyr::tibble(
+        iteration=i,
+        tail_weight=ifelse(is_tail, revision_current$tail$weight, NA),
+        tail_mean=ifelse(is_tail, revision_current$tail$mean, NA),
+        report_sd=ifelse(is_report_effects, revision_current$report_sd, NA))
+      if(is_weekday)
+        for(weekday in names(revision_current$weekday_log_effects))
+          reporting_effects_tmp[[paste0("weekday_", weekday)]] <-
+            exp(revision_current$weekday_log_effects[[weekday]])
+      report_effects_tmp <- NULL
+      if(is_report_effects)
+        report_effects_tmp <- dplyr::tibble(
+          iteration=i,
+          time_reported=revision_current$report_days,
+          effect=exp(revision_current$report_log_effects))
+      if(i == 1) {
+        reporting_effects_samples <- reporting_effects_tmp
+        report_effects_samples <- report_effects_tmp
+      } else {
+        reporting_effects_samples <- reporting_effects_samples %>%
+          dplyr::bind_rows(reporting_effects_tmp)
+        report_effects_samples <- report_effects_samples %>%
+          dplyr::bind_rows(report_effects_tmp)
+      }
+    }
+
     # sample batches and the parameters governing them
     if(is_batches) {
       lists <- observation_lists(df_temp, reporting_current)
@@ -1458,6 +1569,12 @@ mcmc_single <- function(
     list_results$batch_parameters <- batch_parameters_samples
   }
 
+  if(is_reporting_extensions) {
+    list_results$reporting_effects <- reporting_effects_samples
+    if(is_report_effects)
+      list_results$report_effects <- report_effects_samples
+  }
+
   list_results
 }
 
@@ -1520,7 +1637,8 @@ combine_chains <- function(list_of_results, is_negative_binomial=FALSE) {
   if(is_revisions)
     list_combined$revisions <- revisions_overall
 
-  for(name in c("batches", "batch_parameters")) {
+  for(name in c("batches", "batch_parameters", "reporting_effects",
+               "report_effects")) {
     if(name %in% names(list_of_results[[1]]))
       list_combined[[name]] <- purrr::map_dfr(
         seq_along(list_of_results),
@@ -1595,7 +1713,8 @@ mcmc <- function(
       res$overdispersion$chain <- 1
     if(!is.null(initial_revision_parameters))
       res$revisions$chain <- 1
-    for(name in c("batches", "batch_parameters"))
+    for(name in c("batches", "batch_parameters", "reporting_effects",
+                  "report_effects"))
       if(name %in% names(res))
         res[[name]] <- dplyr::mutate(res[[name]], chain=1)
   } else {

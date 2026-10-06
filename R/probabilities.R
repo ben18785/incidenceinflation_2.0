@@ -96,8 +96,8 @@ misdating_prob <- function(revision_parameters) {
 unrecorded_prob <- function(days, day_onset, reporting_parameters,
                             revision_parameters) {
   f_undetected <- function(day)
-    1 - pgamma_mean_sd(day + 0.5 - day_onset,
-                       reporting_parameters$mean, reporting_parameters$sd)
+    exp(log_undetected_days(day, day_onset, reporting_parameters,
+                            revision_parameters))
   p_misdated <- misdating_prob(revision_parameters)
   n_days <- round(max(days) - day_onset)
   if(p_misdated == 0 | n_days < 1)
@@ -141,9 +141,11 @@ misdated_entry_unit <- function(observation_days, day_onset, shift,
                                 reporting_parameters, revision_parameters) {
   p_shift <- revision_parameters$shift_probs[revision_parameters$shifts == shift]
   day_true <- day_onset - shift
+  # a case cannot be detected before it arises
   f_undetected <- function(day)
-    1 - pgamma_mean_sd(pmax(day + 0.5 - day_true, 0),
-                       reporting_parameters$mean, reporting_parameters$sd)
+    ifelse(day < day_true, 1,
+           exp(log_undetected_days(pmax(day, day_true), day_true,
+                                   reporting_parameters, revision_parameters)))
   rate <- misdating_prob(revision_parameters) * p_shift
 
   initial <- 0
@@ -234,9 +236,9 @@ erroneous_initial_logp <- function(day_first, cases_first, cases_true, day_onset
 
   # expected erroneous records entered each day which remain on day_first
   days <- day_onset + seq_len(n_days)
-  p_undetected <- 1 - pgamma_mean_sd(c(day_onset, days) + 0.5 - day_onset,
-                                     reporting_parameters$mean,
-                                     reporting_parameters$sd)
+  p_undetected <- exp(log_undetected_days(c(day_onset, days), day_onset,
+                                          reporting_parameters,
+                                          revision_parameters))
   p_newly_detected <- -diff(p_undetected)
   p_remaining <- (1 - revision_parameters$rho)^(day_first - days)
   mean_erroneous <- revision_parameters$eta * cases_true *
@@ -340,6 +342,9 @@ observation_process_revisions_logp <- function(observation_df, cases_true,
       misdated_entries, batch, max_batch))
   if(!is.null(batch))
     stop("Batches are only allowed for if use_compiled is TRUE.")
+  if(!is.null(revision_parameters$tail) |
+     !is.null(revision_parameters$report_multipliers))
+    stop("Extensions to the reporting model are only allowed for if use_compiled is TRUE.")
 
   transitions <- erroneous_transitions(max_erroneous)
   n_transitions <- nrow(transitions)
@@ -450,17 +455,17 @@ observation_process_revisions_compiled_logp <- function(
                                       max_erroneous, mean_initial_extra,
                                       phi, max_batch)
 
-  p_undetected <- 1 - pgamma_mean_sd(observation_days + 0.5 - day_onset,
-                                     reporting_parameters$mean,
-                                     reporting_parameters$sd)
+  log_p_undetected <- log_undetected_days(observation_days, day_onset,
+                                          reporting_parameters,
+                                          revision_parameters)
+  p_undetected <- exp(log_p_undetected)
   if(misdating_prob(revision_parameters) > 0) {
     p_unrecorded <- unrecorded_prob(observation_days, day_onset,
                                     reporting_parameters, revision_parameters)
     p_detect <- -diff(p_unrecorded) / p_unrecorded[-(num_periods + 1)]
   } else {
     # from log-probabilities, which remain defined long after onset
-    p_detect <- -expm1(diff(log_undetected_prob(
-      observation_days + 0.5, day_onset, reporting_parameters)))
+    p_detect <- -expm1(diff(log_p_undetected))
   }
 
   revisions_logp_cpp(

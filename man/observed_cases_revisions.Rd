@@ -21,7 +21,10 @@ or a tibble with columns: 'time_onset', 'mean', 'sd' indicating the reporting
 delay distribution for each time period}
 
 \item{revision_parameters}{named list of 'eta', 'rho' and optionally 'pi',
-'shifts' and 'shift_probs' (see \code{unrecorded_prob}); or NULL}
+'shifts' and 'shift_probs' (see \code{unrecorded_prob}); or NULL. It can
+also contain 'tail' and 'report_multipliers', which alter the delay from
+onset to detection (see \code{log_undetected_days} and
+\code{simulate_report_multipliers}).}
 
 \item{days_max_follow_up}{max days at which to simulate reporting case
 trajectory}

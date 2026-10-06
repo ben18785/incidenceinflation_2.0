@@ -99,7 +99,16 @@ priors contains an element 'batches': a named list of 'beta', 'zeta',
 can also contain priors for these (see \code{sample_batch_parameters}),
 'max_batch' (default 30) and 'min_total_fall' (see \code{batch_candidates}).
 Initial batches can be given as an element 'batches' of this list; by
-default they are chosen from falls in reported cases which coincide.}
+default they are chosen from falls in reported cases which coincide.
+Three extensions to the model of reporting are switched on through further
+elements of this list: 'tail' (a named list of initial 'weight' and 'mean'
+of an exponential tail to the delay distribution); 'weekday' (TRUE for an
+effect of the day of the week of each report, with 'weekday_first' giving
+the day of the week, from 1 to 7, of time 1); and 'report_effects' (TRUE for
+a random effect of each report). See \code{log_undetected_days}. Their
+priors can be set through priors$reporting_effects (see
+\code{metropolis_step_tail}, \code{metropolis_step_weekday} and
+\code{sample_report_sd}).}
 
 \item{revision_metropolis_parameters}{named list of 'eta_step' and 'rho_step'
 containing step sizes for Metropolis step for revision parameters (see

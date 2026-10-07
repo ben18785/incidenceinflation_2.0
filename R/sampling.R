@@ -1017,7 +1017,18 @@ metropolis_step_revisions <- function(
 #' (itself described by a gamma distribution); max cases controls the upper
 #' limit of the discrete uniform distribution representing the prior on true
 #' cases; 'overdispersion' is a named list specifying the mean and sd of a gamma
-#' prior on this parameter
+#' prior on this parameter. If the list contains an element 'Rt_changepoints'
+#' (which can be an empty list), the times at which Rt changes are treated as
+#' unknown and are sampled (see \code{sample_Rt_changepoints}): the 'Rt_index'
+#' column of the data and initial_Rt are then used only to start the sampler.
+#' Its optional elements are: 'alpha' and 'beta', the parameters of the beta
+#' prior on the probability that Rt changes on each onset day (which default
+#' to 1 and the number of onset days, see \code{changepoints_logp_prior});
+#' 'min_length', the minimum number of days between changes (default 7); and
+#' 'grid', the Rt values over which Rt is integrated numerically under a
+#' negative binomial model (see \code{Rt_grid}). The 'Rt' element of the
+#' result then has a row for each onset time in each iteration, and an element
+#' 'Rt_changepoints' gives the number of changes in each iteration.
 #' @inheritParams sample_Rt_single_piece
 #' @inheritParams max_uncertain_days
 #' @param reporting_metropolis_parameters named list of 'mean_step', 'sd_step' containing
@@ -1224,6 +1235,27 @@ mcmc_single <- function(
     }
   }
 
+  # changes in Rt at unknown times
+  is_Rt_changepoints <- "Rt_changepoints" %in% names(priors)
+  if(is_Rt_changepoints) {
+    if(maximise)
+      stop("Maximisation when the times of changes in Rt are unknown is not yet allowed.")
+    Rt_changepoints <- list(
+      alpha=1,
+      beta=length(unique(snapshot_with_Rt_index_df$time_onset)),
+      min_length=7,
+      grid=Rt_grid())
+    Rt_changepoints[names(priors$Rt_changepoints)] <- priors$Rt_changepoints
+    if(Rt_changepoints$alpha <= 0 | Rt_changepoints$beta <= 0)
+      stop("The parameters of the prior on the probability of a change in Rt must be positive.")
+    if(Rt_changepoints$min_length < 1)
+      stop("The minimum length of a segment of constant Rt must be at least one day.")
+    Rt_p_change <- Rt_changepoints$alpha /
+      (Rt_changepoints$alpha + Rt_changepoints$beta)
+    Rt_days_samples <- vector("list", niterations)
+    Rt_changepoints_samples <- vector("list", niterations)
+  }
+
   reporting_current <- initial_reporting_parameters
   if(methods::is(reporting_current, "list")) # if only a single list provided
     reporting_current <- dplyr::tibble(
@@ -1298,23 +1330,58 @@ mcmc_single <- function(
       dplyr::rename(cases_true=cases_estimated) %>%
       unique()
 
-    df_Rt <- sample_Rt(cases_history_df,
-                       priors$Rt,
-                       serial_parameters,
-                       serial_max,
-                       ndraws=1,
-                       maximise=maximise,
-                       is_negative_binomial=is_negative_binomial)
-    # nocov start
-    if(nrow(df_Rt) != num_Rts)
-      stop("Number of Rts outputted not equal to initial Rt dims.")
-    # nocov end
-    # store Rts
-    for(j in 1:num_Rts) {
-      Rt_index <- df_Rt$Rt_index[j]
-      Rt_temp <- df_Rt$Rt[j]
-      Rt_samples[k, ] <- c(i, Rt_index, Rt_temp)
-      k <- k + 1
+    if(is_Rt_changepoints) {
+      # the segments within which Rt is constant are sampled along with Rt
+      df_Rt_days <- sample_Rt_changepoints(
+        cases_history_df %>%
+          dplyr::select("time_onset", "cases_true") %>%
+          unique(),
+        priors$Rt,
+        serial_parameters,
+        p_change=Rt_p_change,
+        min_length=Rt_changepoints$min_length,
+        serial_max=serial_max,
+        kappa=overdispersion_current,
+        is_negative_binomial=is_negative_binomial,
+        grid=Rt_changepoints$grid)
+      Rt_n_changes <- max(df_Rt_days$Rt_index) - 1
+      Rt_p_change <- sample_change_probability(
+        Rt_n_changes, nrow(df_Rt_days),
+        Rt_changepoints$alpha, Rt_changepoints$beta)
+      cases_history_df <- cases_history_df %>%
+        dplyr::select(-"Rt_index") %>%
+        dplyr::left_join(df_Rt_days[, c("time_onset", "Rt_index")],
+                         by="time_onset")
+      df_Rt <- df_Rt_days %>%
+        dplyr::select("Rt_index", "Rt") %>%
+        unique() %>%
+        dplyr::mutate(draw_index=1)
+      Rt_days_samples[[i]] <- df_Rt_days %>%
+        dplyr::mutate(iteration=i)
+      Rt_changepoints_samples[[i]] <- dplyr::tibble(
+        iteration=i,
+        n_changes=Rt_n_changes,
+        p_change=Rt_p_change)
+    } else {
+      df_Rt <- sample_Rt(cases_history_df,
+                         priors$Rt,
+                         serial_parameters,
+                         kappa=overdispersion_current,
+                         serial_max=serial_max,
+                         ndraws=1,
+                         maximise=maximise,
+                         is_negative_binomial=is_negative_binomial)
+      # nocov start
+      if(nrow(df_Rt) != num_Rts)
+        stop("Number of Rts outputted not equal to initial Rt dims.")
+      # nocov end
+      # store Rts
+      for(j in 1:num_Rts) {
+        Rt_index <- df_Rt$Rt_index[j]
+        Rt_temp <- df_Rt$Rt[j]
+        Rt_samples[k, ] <- c(i, Rt_index, Rt_temp)
+        k <- k + 1
+      }
     }
 
     # sample reporting parameters
@@ -1546,6 +1613,9 @@ mcmc_single <- function(
   Rt_samples <- Rt_samples %>%
     as.data.frame()
   colnames(Rt_samples) <- c("iteration", "Rt_index", "Rt")
+  if(is_Rt_changepoints)
+    Rt_samples <- dplyr::bind_rows(Rt_days_samples) %>%
+      dplyr::relocate("iteration", "time_onset", "Rt_index", "Rt")
 
   cases_samples <- cases_history_samples %>%
     dplyr::select(-reporting_piece_index)
@@ -1568,6 +1638,9 @@ mcmc_single <- function(
     list_results$batches <- batches_samples
     list_results$batch_parameters <- batch_parameters_samples
   }
+
+  if(is_Rt_changepoints)
+    list_results$Rt_changepoints <- dplyr::bind_rows(Rt_changepoints_samples)
 
   if(is_reporting_extensions) {
     list_results$reporting_effects <- reporting_effects_samples
@@ -1638,7 +1711,7 @@ combine_chains <- function(list_of_results, is_negative_binomial=FALSE) {
     list_combined$revisions <- revisions_overall
 
   for(name in c("batches", "batch_parameters", "reporting_effects",
-               "report_effects")) {
+               "report_effects", "Rt_changepoints")) {
     if(name %in% names(list_of_results[[1]]))
       list_combined[[name]] <- purrr::map_dfr(
         seq_along(list_of_results),

@@ -41,7 +41,18 @@ prior parameters for the mean and sd parameters of the reporting parameters
 (itself described by a gamma distribution); max cases controls the upper
 limit of the discrete uniform distribution representing the prior on true
 cases; 'overdispersion' is a named list specifying the mean and sd of a gamma
-prior on this parameter}
+prior on this parameter. If the list contains an element 'Rt_changepoints'
+(which can be an empty list), the times at which Rt changes are treated as
+unknown and are sampled (see \code{sample_Rt_changepoints}): the 'Rt_index'
+column of the data and initial_Rt are then used only to start the sampler.
+Its optional elements are: 'alpha' and 'beta', the parameters of the beta
+prior on the probability that Rt changes on each onset day (which default
+to 1 and the number of onset days, see \code{changepoints_logp_prior});
+'min_length', the minimum number of days between changes (default 7); and
+'grid', the Rt values over which Rt is integrated numerically under a
+negative binomial model (see \code{Rt_grid}). The 'Rt' element of the
+result then has a row for each onset time in each iteration, and an element
+'Rt_changepoints' gives the number of changes in each iteration.}
 
 \item{serial_parameters}{named list of 'mean' and 'sd' of gamma distribution
 characterising the serial interval distribution}

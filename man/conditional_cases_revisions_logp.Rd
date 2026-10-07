@@ -21,7 +21,8 @@ conditional_cases_revisions_logp(
   Rt_future = NULL,
   max_erroneous = 3,
   log_negligible = 50,
-  f_observation_logp = NULL
+  f_observation_logp = NULL,
+  serial_max = 40
 )
 }
 \arguments{
@@ -71,6 +72,8 @@ returning the log-probability of all observations which depend on them. If
 NULL (the default) this is \code{observation_process_logp} for this onset
 day. With misdating, observations for neighbouring onset days also depend on
 the true case count (see \code{misdating_observation_logp_function}).}
+
+\item{serial_max}{number of days over which the serial interval is defined}
 }
 \value{
 a vector of (unnormalised) log-probabilities

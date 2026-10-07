@@ -18,7 +18,8 @@ conditional_cases_logp(
   cases_future = NULL,
   Rt_future = NULL,
   revision_parameters = NULL,
-  max_erroneous = 3
+  max_erroneous = 3,
+  serial_max = 40
 )
 }
 \arguments{
@@ -59,6 +60,8 @@ erroneous records as returned by \code{sample_batches}, along with
 
 \item{max_erroneous}{maximum number of erroneous records that can be held
 for a single onset day at any one time}
+
+\item{serial_max}{number of days over which the serial interval is defined}
 }
 \value{
 an (unnormalised) log-probability or vector of such log-probabilities

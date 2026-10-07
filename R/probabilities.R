@@ -550,22 +550,31 @@ observation_process_logp <- function(observation_df, cases_true,
 #' or the following if a negative-binomial model is used:
 #' \deqn{NB(cases_true_t|Rt * \sum_tau=1^t_max w_t cases_true_t-tau, kappa)}
 #'
+#' The weights are those of the serial interval over serial_max days
+#' (see \code{weights_series}). Days before the start of the history
+#' contribute nothing, and days more than serial_max before are ignored. The
+#' same weights are used wherever the renewal model is evaluated.
+#'
 #' @inheritParams observed_cases_single
 #' @inheritParams true_cases_single
 #' @inheritParams gamma_discrete_pmf
 #' @param kappa overdispersion parameter
 #' @param is_negative_binomial if negative-binomial renewal model specified (defaults to FALSE)
+#' @param serial_max number of days over which the serial interval is defined
 #'
 #' @return a log-probability or vector of log-probabilities
 state_process_logp <- function(cases_true, cases_history, Rt, serial_parameters,
-                               kappa=NULL, is_negative_binomial=FALSE){
+                               kappa=NULL, is_negative_binomial=FALSE,
+                               serial_max=40){
   t_max <- length(cases_history)
   # cases arising on the first onset day have no earlier cases to have
   # generated them, so the renewal model says nothing about their number
   if(t_max == 0)
     return(rep(0, length(cases_true)))
-  w <- weights_series(t_max, serial_parameters)
-  mean_cases <- expected_cases(Rt=Rt, weights=w, cases_history=cases_history)
+  w <- weights_series(serial_max, serial_parameters)
+  mean_cases <- expected_cases(
+    Rt=Rt, weights=w,
+    cases_history=recent_history(cases_history, serial_max))
 
   if(!is_negative_binomial)
     stats::dpois(cases_true, lambda=mean_cases, log=TRUE)
@@ -592,7 +601,8 @@ state_process_logp <- function(cases_true, cases_history, Rt, serial_parameters,
 #' @return a log-probability or vector of log-probabilities
 future_cases_logp <- function(cases_true, cases_history, cases_future, Rt_future,
                               serial_parameters,
-                              kappa=NULL, is_negative_binomial=FALSE) {
+                              kappa=NULL, is_negative_binomial=FALSE,
+                              serial_max=40) {
   n_future <- length(cases_future)
   if(length(Rt_future) != n_future)
     stop("cases_future and Rt_future must be same length.")
@@ -601,18 +611,16 @@ future_cases_logp <- function(cases_true, cases_history, cases_future, Rt_future
   if(n_future == 0)
     return(logp)
 
-  n_history <- length(cases_history)
-  w_longest <- weights_series(n_history + n_future, serial_parameters)
+  # same weights as used in state_process_logp
+  w <- weights_series(serial_max, serial_parameters)
 
   for(k in 1:n_future) {
-    # same (truncated then normalised) weights as used in state_process_logp
-    w <- w_longest[1:(n_history + k)]
-    w <- w / sum(w)
-
-    # history for this later day from recent to past excluding day_onset,
-    # which is k days before it
-    cases_other <- c(rev(cases_future[seq_len(k - 1)]), cases_history)
-    mean_cases <- Rt_future[k] * (w[k] * cases_true + sum(w[-k] * cases_other))
+    # history for this later day from recent to past, in which day_onset is k
+    # days before it; its place is held by zero and its contribution added
+    cases_other <- recent_history(
+      c(rev(cases_future[seq_len(k - 1)]), 0, cases_history), serial_max)
+    weight_onset <- ifelse(k <= serial_max, w[k], 0)
+    mean_cases <- Rt_future[k] * (weight_onset * cases_true + sum(w * cases_other))
 
     if(!is_negative_binomial)
       logp <- logp + stats::dpois(cases_future[k], lambda=mean_cases, log=TRUE)
@@ -641,7 +649,8 @@ conditional_cases_logp <- function(cases_true, observation_df, cases_history,
                                    Rt, day_onset, serial_parameters, reporting_parameters,
                                    kappa=NULL, is_negative_binomial=FALSE,
                                    cases_future=NULL, Rt_future=NULL,
-                                   revision_parameters=NULL, max_erroneous=3) {
+                                   revision_parameters=NULL, max_erroneous=3,
+                                   serial_max=40) {
 
   logp_observation <- 0
   if(nrow(observation_df) > 1) # handling cases arising today which were reported today
@@ -656,7 +665,8 @@ conditional_cases_logp <- function(cases_true, observation_df, cases_history,
                                    Rt=Rt,
                                    serial_parameters=serial_parameters,
                                    kappa=kappa,
-                                   is_negative_binomial=is_negative_binomial)
+                                   is_negative_binomial=is_negative_binomial,
+                                   serial_max=serial_max)
   logp_future <- 0
   if(!is.null(cases_future))
     logp_future <- future_cases_logp(cases_true=cases_true,
@@ -665,7 +675,8 @@ conditional_cases_logp <- function(cases_true, observation_df, cases_history,
                                      Rt_future=Rt_future,
                                      serial_parameters=serial_parameters,
                                      kappa=kappa,
-                                     is_negative_binomial=is_negative_binomial)
+                                     is_negative_binomial=is_negative_binomial,
+                                     serial_max=serial_max)
   logp_observation + logp_state + logp_future
 }
 
@@ -698,14 +709,16 @@ conditional_cases_revisions_logp <- function(cases_true, observation_df, cases_h
                                              cases_future=NULL, Rt_future=NULL,
                                              max_erroneous=3,
                                              log_negligible=50,
-                                             f_observation_logp=NULL) {
+                                             f_observation_logp=NULL,
+                                             serial_max=40) {
 
   # a single observation contributes nothing to the log-probability, so this
   # gives the components due to the renewal process only
   logps_upper <- conditional_cases_logp(cases_true, observation_df[1, ], cases_history,
                                         Rt, day_onset, serial_parameters, reporting_parameters,
                                         kappa, is_negative_binomial,
-                                        cases_future, Rt_future)
+                                        cases_future, Rt_future,
+                                        serial_max=serial_max)
   if(nrow(observation_df) <= 1 & is.null(f_observation_logp))
     return(logps_upper)
 
@@ -896,7 +909,7 @@ observation_process_all_times_logp <- function(
 #'
 #' @return a log-probability value
 state_process_nb_logp_all_onsets <- function(
-    kappa, cases_history_rt_df, serial_parameters) {
+    kappa, cases_history_rt_df, serial_parameters, serial_max=40) {
 
   if(kappa <= 0)
     return(-Inf)
@@ -922,7 +935,8 @@ state_process_nb_logp_all_onsets <- function(
         Rt=Rt,
         serial_parameters=serial_parameters,
         kappa=kappa,
-        is_negative_binomial=TRUE)
+        is_negative_binomial=TRUE,
+        serial_max=serial_max)
 
       log_p <- log_p + logp_single_onset_time
     }

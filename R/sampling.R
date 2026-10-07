@@ -25,7 +25,7 @@ sample_true_cases_single_onset <- function(
   ndraws=1, maximise=FALSE, kappa=NULL, is_negative_binomial=FALSE,
   cases_future=NULL, Rt_future=NULL,
   revision_parameters=NULL, max_erroneous=3,
-  f_observation_logp=NULL) {
+  f_observation_logp=NULL, serial_max=40) {
 
   max_observed_cases <- max(observation_df$cases_reported)
   if(max_observed_cases > max_cases)
@@ -35,7 +35,8 @@ sample_true_cases_single_onset <- function(
     logps <- conditional_cases_logp(possible_cases, observation_df, cases_history,
                                     Rt, day_onset, serial_parameters, reporting_parameters,
                                     kappa, is_negative_binomial,
-                                    cases_future, Rt_future)
+                                    cases_future, Rt_future,
+                                    serial_max=serial_max)
   } else {
     # reported cases can exceed true cases by the erroneous records, including
     # those of any batch whose footprint contains the onset day
@@ -52,7 +53,8 @@ sample_true_cases_single_onset <- function(
       kappa, is_negative_binomial,
       cases_future, Rt_future,
       max_erroneous,
-      f_observation_logp=f_observation_logp)
+      f_observation_logp=f_observation_logp,
+      serial_max=serial_max)
   }
   probs <- exp(logps - matrixStats::logSumExp(logps))
   if(dplyr::last(probs) > 0.01)
@@ -246,7 +248,8 @@ sample_cases_history <- function(
       Rt_future=Rt_future,
       revision_parameters=revision_parameters,
       max_erroneous=max_erroneous,
-      f_observation_logp=f_observation_logp)
+      f_observation_logp=f_observation_logp,
+      serial_max=future_max)
     index_onset_time <- which(observation_history_df$time_onset==onset_time)
     observation_history_df$cases_estimated[index_onset_time] <- case
     if(is_misdating)
@@ -839,7 +842,8 @@ metropolis_step_overdispersion <- function(
     cases_history_rt_df,
     serial_parameters,
     prior_overdispersion_parameter,
-    overdispersion_metropolis_sd
+    overdispersion_metropolis_sd,
+    serial_max=40
     ) {
 
   overdispersion_proposed <- propose_overdispersion_parameter(
@@ -852,7 +856,8 @@ metropolis_step_overdispersion <- function(
                                prior_overdispersion_parameter$sd,
                                log=TRUE)
   logp_proposed <- state_process_nb_logp_all_onsets(
-    overdispersion_proposed, cases_history_rt_df, serial_parameters
+    overdispersion_proposed, cases_history_rt_df, serial_parameters,
+    serial_max=serial_max
   ) + logp_prior
 
   list_parameters_logp <- accept_reject(
@@ -1671,7 +1676,8 @@ mcmc_single <- function(
                                    priors$overdispersion$sd,
                                    log=TRUE)
       logp_overdispersion <- state_process_nb_logp_all_onsets(
-        overdispersion_current, df_nb_tmp, serial_parameters
+        overdispersion_current, df_nb_tmp, serial_parameters,
+        serial_max=serial_max
       ) + logp_prior
 
       list_parameter_logp <- metropolis_step_overdispersion(
@@ -1680,7 +1686,8 @@ mcmc_single <- function(
         df_nb_tmp,
         serial_parameters,
         priors$overdispersion,
-        overdispersion_metropolis_sd
+        overdispersion_metropolis_sd,
+        serial_max=serial_max
       )
       overdispersion_current <- list_parameter_logp$overdispersion
 

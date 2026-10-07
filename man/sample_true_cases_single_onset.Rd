@@ -20,7 +20,8 @@ sample_true_cases_single_onset(
   Rt_future = NULL,
   revision_parameters = NULL,
   max_erroneous = 3,
-  f_observation_logp = NULL
+  f_observation_logp = NULL,
+  serial_max = 40
 )
 }
 \arguments{
@@ -72,6 +73,8 @@ returning the log-probability of all observations which depend on them. If
 NULL (the default) this is \code{observation_process_logp} for this onset
 day. With misdating, observations for neighbouring onset days also depend on
 the true case count (see \code{misdating_observation_logp_function}).}
+
+\item{serial_max}{number of days over which the serial interval is defined}
 }
 \value{
 a sampled case count arising on a given onset day

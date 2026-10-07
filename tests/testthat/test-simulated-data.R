@@ -371,3 +371,23 @@ test_that("generate_snapshots and thinning work with downward revisions", {
   expect_equal(sum(changes_thin$change < 0), sum(changes$change < 0))
   expect_equal(sum(changes_thin$change > 0), sum(changes$change > 0))
 })
+
+test_that("true_cases weights earlier cases by the serial interval from the first day", {
+  # with a serial interval of exactly one day and Rt of one, each day's cases
+  # have mean equal to the cases of the day before
+  s_params <- list(mean=1, sd=0.01)
+  set.seed(1)
+  cases <- true_cases(30, function(t) 1, 1e8, s_params,
+                      initial_parameters=list(mean=1000, length=3), serial_max=5)
+  expect_true(all(abs(diff(cases) / cases[-30]) < 0.2))
+  expect_true(all(cases > 500))
+  # the mean of the first simulated day is that implied by the seeding days
+  s_params <- list(mean=4, sd=2)
+  w <- weights_series(10, s_params)
+  means <- replicate(400, {
+    set.seed(NULL)
+    true_cases(1, function(t) 2, 1e8, s_params,
+               initial_parameters=list(mean=500, length=3), serial_max=10)
+  })
+  expect_equal(mean(means), 2 * 500 * sum(w[1:3]), tolerance=0.03)
+})

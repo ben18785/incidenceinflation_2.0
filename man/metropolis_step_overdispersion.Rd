@@ -10,7 +10,8 @@ metropolis_step_overdispersion(
   cases_history_rt_df,
   serial_parameters,
   prior_overdispersion_parameter,
-  overdispersion_metropolis_sd
+  overdispersion_metropolis_sd,
+  serial_max = 40
 )
 }
 \arguments{
@@ -28,6 +29,8 @@ characterising the serial interval distribution}
 'sd' denoting the mean and sd of a gamma distribution}
 
 \item{overdispersion_metropolis_sd}{the standard deviation of the proposal kernel}
+
+\item{serial_max}{number of days over which the serial interval is defined}
 }
 \value{
 a named list with two elements: 'overdispersion', an overdispersion parameter

@@ -5,7 +5,12 @@
 \title{Calculates the overall log-probability of cases conditional on their history
 and Rt values, assuming a negative-binomial renewal model}
 \usage{
-state_process_nb_logp_all_onsets(kappa, cases_history_rt_df, serial_parameters)
+state_process_nb_logp_all_onsets(
+  kappa,
+  cases_history_rt_df,
+  serial_parameters,
+  serial_max = 40
+)
 }
 \arguments{
 \item{kappa}{an overdispersion parameter value (if <= 0, returns -Inf)}
@@ -15,6 +20,8 @@ state_process_nb_logp_all_onsets(kappa, cases_history_rt_df, serial_parameters)
 
 \item{serial_parameters}{named list of 'mean' and 'sd' of gamma distribution
 characterising the serial interval distribution}
+
+\item{serial_max}{number of days over which the serial interval is defined}
 }
 \value{
 a log-probability value

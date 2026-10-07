@@ -874,3 +874,93 @@ test_that("state_process_logp is zero for cases with no earlier cases", {
                              kappa=2, is_negative_binomial=TRUE)
   expect_equal(logp, 0)
 })
+
+test_that("recent_history keeps the latest days and pads with zeros", {
+  expect_equal(recent_history(c(5, 4, 3), 5), c(5, 4, 3, 0, 0))
+  expect_equal(recent_history(c(5, 4, 3), 2), c(5, 4))
+  expect_equal(recent_history(c(5, 4, 3), 3), c(5, 4, 3))
+  expect_equal(recent_history(numeric(0), 2), c(0, 0))
+})
+
+test_that("state_process_logp uses the weights of the serial interval over serial_max days", {
+  s_params <- list(mean=5, sd=3)
+  w <- weights_series(10, s_params)
+  # a history shorter than serial_max: earlier days contribute nothing and
+  # the weights are not rescaled to the days available
+  history <- c(7, 3, 9)
+  expect_equal(
+    state_process_logp(4, history, 1.5, s_params, serial_max=10),
+    dpois(4, 1.5 * sum(w[1:3] * history), log=TRUE))
+  # a history longer than serial_max: older days are ignored
+  history <- c(7, 3, 9, 2, 8, 6, 4, 5, 1, 3, 20, 30)
+  expect_equal(
+    state_process_logp(4, history, 1.5, s_params, serial_max=10),
+    dpois(4, 1.5 * sum(w * history[1:10]), log=TRUE))
+  expect_equal(
+    state_process_logp(4, history, 1.5, s_params, kappa=3,
+                       is_negative_binomial=TRUE, serial_max=10),
+    dnbinom(4, mu=1.5 * sum(w * history[1:10]), size=3, log=TRUE))
+  # no history at all says nothing
+  expect_equal(state_process_logp(c(4, 5), numeric(0), 1.5, s_params), c(0, 0))
+})
+
+test_that("the renewal mean is the same wherever it is calculated", {
+  set.seed(1)
+  s_params <- list(mean=6, sd=4)
+  serial_max <- 12
+  cases <- rpois(30, 20)
+  Rt <- runif(30, 0.5, 2)
+  statistics <- renewal_statistics(cases, s_params, serial_max)
+  f_logp <- function(t) {
+    state_process_logp(cases[t], rev(cases[seq_len(t - 1)]), Rt[t], s_params,
+                       serial_max=serial_max)
+  }
+  # the case and overdispersion updates agree with the Rt update, both early
+  # in the series and after more than serial_max days
+  for(t in c(2, 3, 8, 13, 20, 30))
+    expect_equal(f_logp(t),
+                 dpois(cases[t], Rt[t] * statistics$infectiousness[t], log=TRUE))
+
+  # the contribution of later days to the update of a case count
+  for(t in c(1, 4, 15)) {
+    days_future <- (t + 1):min(30, t + serial_max)
+    logp <- future_cases_logp(cases[t], rev(cases[seq_len(t - 1)]),
+                              cases[days_future], Rt[days_future], s_params,
+                              serial_max=serial_max)
+    expect_equal(logp, sum(purrr::map_dbl(days_future, f_logp)))
+    # and as a function of the count: differences match recalculation
+    cases_alt <- cases
+    cases_alt[t] <- cases[t] + 5
+    statistics_alt <- renewal_statistics(cases_alt, s_params, serial_max)
+    logp_alt <- future_cases_logp(cases_alt[t], rev(cases[seq_len(t - 1)]),
+                                  cases[days_future], Rt[days_future], s_params,
+                                  serial_max=serial_max)
+    expect_equal(
+      logp_alt,
+      sum(dpois(cases[days_future],
+                Rt[days_future] * statistics_alt$infectiousness[days_future],
+                log=TRUE)))
+  }
+  # days more than serial_max later do not depend on the count
+  far <- future_cases_logp(c(cases[1], cases[1] + 50), numeric(0),
+                           cases[2:30], Rt[2:30], s_params, serial_max=serial_max)
+  near <- future_cases_logp(c(cases[1], cases[1] + 50), numeric(0),
+                            cases[2:13], Rt[2:13], s_params, serial_max=serial_max)
+  expect_equal(diff(far), diff(near))
+
+  # the negative binomial log-probability over all onset times
+  df <- dplyr::tibble(time_onset=1:30, cases_true=cases, Rt=Rt)
+  informative <- statistics$infectiousness > 0 & seq_len(30) > 1
+  expect_equal(
+    state_process_nb_logp_all_onsets(4, df, s_params, serial_max=serial_max),
+    sum(dnbinom(cases[informative],
+                mu=Rt[informative] * statistics$infectiousness[informative],
+                size=4, log=TRUE)))
+
+  # and the likelihood of a piece used when Rt is updated
+  w <- weights_series(serial_max, s_params)
+  expect_equal(
+    nb_log_likelihood_Rt_piece(1.3, 4, w, 21:30, df),
+    sum(dnbinom(cases[21:30], mu=1.3 * statistics$infectiousness[21:30],
+                size=4, log=TRUE)))
+})

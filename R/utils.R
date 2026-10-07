@@ -12,6 +12,22 @@ weights_series <- function(t_max, serial_parameters) {
   w
 }
 
+#' The most recent days of a history of cases, padded with zeros
+#'
+#' @param cases_history a vector containing history of cases arranged from
+#' recent to past
+#' @param serial_max number of days required
+#'
+#' @return a vector of length serial_max: the most recent serial_max days of
+#' the history, followed by zeros if it is shorter than that
+recent_history <- function(cases_history, serial_max) {
+  n <- length(cases_history)
+  if(n >= serial_max)
+    cases_history[seq_len(serial_max)]
+  else
+    c(cases_history, rep(0, serial_max - n))
+}
+
 #' Gives cases expected given history of cases and Rt
 #'
 #' @inheritParams state_process_logp

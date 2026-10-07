@@ -10,7 +10,8 @@ state_process_logp(
   Rt,
   serial_parameters,
   kappa = NULL,
-  is_negative_binomial = FALSE
+  is_negative_binomial = FALSE,
+  serial_max = 40
 )
 }
 \arguments{
@@ -27,6 +28,8 @@ characterising the serial interval distribution}
 \item{kappa}{overdispersion parameter}
 
 \item{is_negative_binomial}{if negative-binomial renewal model specified (defaults to FALSE)}
+
+\item{serial_max}{number of days over which the serial interval is defined}
 }
 \value{
 a log-probability or vector of log-probabilities
@@ -36,4 +39,10 @@ If a Poisson renwal is being used, this calculates:
 \deqn{Pois(cases_true_t|Rt * \sum_tau=1^t_max w_t cases_true_t-tau)}
 or the following if a negative-binomial model is used:
 \deqn{NB(cases_true_t|Rt * \sum_tau=1^t_max w_t cases_true_t-tau, kappa)}
+}
+\details{
+The weights are those of the serial interval over serial_max days
+(see \code{weights_series}). Days before the start of the history
+contribute nothing, and days more than serial_max before are ignored. The
+same weights are used wherever the renewal model is evaluated.
 }

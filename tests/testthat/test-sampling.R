@@ -1251,10 +1251,12 @@ posterior of case counts", {
                                  cases_true=max_reported + 3)
   m_draws <- matrix(nrow=nsweeps, ncol=length(days_uncertain))
   for(i in 1:nsweeps) {
-    df_est <- sample_cases_history(
+    # the upper limit on cases is kept small so that the exact posterior can
+    # be enumerated, which the sampler warns about
+    df_est <- suppressWarnings(sample_cases_history(
       df, max_cases, Rt_function, s_params, r_params,
       p_gamma_cutoff=p_gamma_cutoff,
-      cases_true_current=cases_current)
+      cases_true_current=cases_current))
     expect_equal(sum(is.na(df_est$cases_estimated)), 0)
     cases_current <- df_est %>%
       dplyr::select(time_onset, cases_true=cases_estimated) %>%

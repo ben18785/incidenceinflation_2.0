@@ -216,8 +216,8 @@ true_cases <- function(days_total, Rt_function, kappa, serial_parameters,
     if(d1 > serial_max) {
       I_history <- I_true[(d1 - serial_max):(d1 - 1)]
     } else {
-      I_history <- I_true[1:d1]
-      d_remaining <- serial_max - d1
+      I_history <- I_true[seq_len(d1 - 1)]
+      d_remaining <- serial_max - (d1 - 1)
       I_history <- c(rep(0, d_remaining), I_history)
     }
     I_history_rev <- rev(I_history)

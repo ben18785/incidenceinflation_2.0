@@ -1029,6 +1029,15 @@ metropolis_step_revisions <- function(
 #' negative binomial model (see \code{Rt_grid}). The 'Rt' element of the
 #' result then has a row for each onset time in each iteration, and an element
 #' 'Rt_changepoints' gives the number of changes in each iteration.
+#' Likewise, if the list contains an element 'reporting_changepoints' (which
+#' can be an empty list), the onset times at which the reporting delay changes
+#' are unknown and are sampled (see \code{sample_reporting_changepoints}): any
+#' 'reporting_piece_index' column in the data is ignored and the sampler
+#' starts from a single segment. Its optional elements are described in
+#' \code{reporting_changepoint_settings}. The result then has elements
+#' 'reporting_days' (the delay parameters for each onset time in each
+#' iteration) and 'reporting_changepoints' (the number of changes and the
+#' centre and spread of the delay parameters of segments in each iteration).
 #' @inheritParams sample_Rt_single_piece
 #' @inheritParams max_uncertain_days
 #' @param reporting_metropolis_parameters named list of 'mean_step', 'sd_step' containing
@@ -1265,6 +1274,27 @@ mcmc_single <- function(
     )
   num_reporting_parameters <- max(reporting_current$reporting_piece_index)
 
+  # changes in the reporting delay at unknown onset times
+  is_reporting_changepoints <- "reporting_changepoints" %in% names(priors)
+  if(is_reporting_changepoints) {
+    if(maximise)
+      stop("Maximisation when the times of changes in the reporting delay are unknown is not yet allowed.")
+    onset_times_all <- sort(unique(snapshot_with_Rt_index_df$time_onset))
+    reporting_changepoints <- reporting_changepoint_settings(
+      length(onset_times_all),
+      c(priors$reporting_changepoints,
+        reporting_metropolis_parameters[setdiff(
+          names(reporting_metropolis_parameters),
+          names(priors$reporting_changepoints))]))
+    # the sampler starts from a single segment
+    reporting_current <- reporting_current[1, ]
+    reporting_current$reporting_piece_index <- 1
+    snapshot_with_Rt_index_df$reporting_piece_index <- 1
+    reporting_state <- initial_reporting_changepoints(reporting_current)
+    reporting_days_samples <- vector("list", niterations)
+    reporting_changepoints_samples <- vector("list", niterations)
+  }
+
   df_running <- snapshot_with_Rt_index_df %>%
     dplyr::left_join(initial_cases_true, by = "time_onset") %>%
     dplyr::left_join(initial_Rt, by = "Rt_index")
@@ -1401,19 +1431,55 @@ mcmc_single <- function(
       if(is_revisions & !is.finite(logp_current_reporting))
         stop("Reported cases have zero probability at current parameter values: max_erroneous (or max_batch) may need to be increased.")
     }
-    list_reporting_logp <- sample_reporting(
-      snapshot_with_true_cases_df=df_temp,
-      current_reporting_parameters=reporting_current,
-      logp_current=logp_current_reporting,
-      prior_parameters=priors$reporting,
-      metropolis_parameters=reporting_metropolis_parameters,
-      maximise=maximise,
-      ndraws=1,
-      revision_parameters=revision_current,
-      max_erroneous=max_erroneous)
-    reporting_temp <- list_reporting_logp$reporting_parameters
-    reporting_temp$draw_index <- NULL
-    reporting_current <- reporting_temp
+    if(is_reporting_changepoints) {
+      # the segments within which the delay is constant are sampled too
+      reporting_state <- sample_reporting_changepoints(
+        reporting_state,
+        reporting_logp_function(df_temp, revision_current, max_erroneous),
+        length(onset_times_all),
+        priors$reporting,
+        reporting_changepoints)
+      reporting_current <- reporting_state$parameters %>%
+        dplyr::mutate(reporting_piece_index=dplyr::row_number())
+      piece_by_onset <- dplyr::tibble(
+        time_onset=onset_times_all,
+        reporting_piece_index=segment_indices(reporting_state$starts,
+                                              length(onset_times_all)))
+      df_temp <- df_temp %>%
+        dplyr::select(-"reporting_piece_index") %>%
+        dplyr::left_join(piece_by_onset, by="time_onset")
+      cases_history_df <- cases_history_df %>%
+        dplyr::select(-"reporting_piece_index") %>%
+        dplyr::left_join(piece_by_onset, by="time_onset")
+      # in the form returned by sample_reporting
+      list_reporting_logp <- list(
+        reporting_parameters=reporting_current,
+        logp=sum(reporting_state$logl) +
+          prior_reporting_parameters(reporting_current, priors$reporting))
+      reporting_days_samples[[i]] <- piece_by_onset %>%
+        dplyr::left_join(reporting_current, by="reporting_piece_index") %>%
+        dplyr::mutate(iteration=i)
+      reporting_changepoints_samples[[i]] <- dplyr::tibble(
+        iteration=i,
+        n_changes=nrow(reporting_current) - 1,
+        centre_mean=reporting_state$centre$mean,
+        centre_sd=reporting_state$centre$sd,
+        spread=reporting_state$spread)
+    } else {
+      list_reporting_logp <- sample_reporting(
+        snapshot_with_true_cases_df=df_temp,
+        current_reporting_parameters=reporting_current,
+        logp_current=logp_current_reporting,
+        prior_parameters=priors$reporting,
+        metropolis_parameters=reporting_metropolis_parameters,
+        maximise=maximise,
+        ndraws=1,
+        revision_parameters=revision_current,
+        max_erroneous=max_erroneous)
+      reporting_temp <- list_reporting_logp$reporting_parameters
+      reporting_temp$draw_index <- NULL
+      reporting_current <- reporting_temp
+    }
 
     # sample revision parameters
     if(is_revisions) {
@@ -1642,6 +1708,14 @@ mcmc_single <- function(
   if(is_Rt_changepoints)
     list_results$Rt_changepoints <- dplyr::bind_rows(Rt_changepoints_samples)
 
+  if(is_reporting_changepoints) {
+    list_results$reporting_days <- dplyr::bind_rows(reporting_days_samples) %>%
+      dplyr::relocate("iteration", "time_onset", "reporting_piece_index",
+                      "mean", "sd")
+    list_results$reporting_changepoints <- dplyr::bind_rows(
+      reporting_changepoints_samples)
+  }
+
   if(is_reporting_extensions) {
     list_results$reporting_effects <- reporting_effects_samples
     if(is_report_effects)
@@ -1711,7 +1785,8 @@ combine_chains <- function(list_of_results, is_negative_binomial=FALSE) {
     list_combined$revisions <- revisions_overall
 
   for(name in c("batches", "batch_parameters", "reporting_effects",
-               "report_effects", "Rt_changepoints")) {
+               "report_effects", "Rt_changepoints", "reporting_days",
+               "reporting_changepoints")) {
     if(name %in% names(list_of_results[[1]]))
       list_combined[[name]] <- purrr::map_dfr(
         seq_along(list_of_results),

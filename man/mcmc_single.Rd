@@ -52,7 +52,16 @@ to 1 and the number of onset days, see \code{changepoints_logp_prior});
 'grid', the Rt values over which Rt is integrated numerically under a
 negative binomial model (see \code{Rt_grid}). The 'Rt' element of the
 result then has a row for each onset time in each iteration, and an element
-'Rt_changepoints' gives the number of changes in each iteration.}
+'Rt_changepoints' gives the number of changes in each iteration.
+Likewise, if the list contains an element 'reporting_changepoints' (which
+can be an empty list), the onset times at which the reporting delay changes
+are unknown and are sampled (see \code{sample_reporting_changepoints}): any
+'reporting_piece_index' column in the data is ignored and the sampler
+starts from a single segment. Its optional elements are described in
+\code{reporting_changepoint_settings}. The result then has elements
+'reporting_days' (the delay parameters for each onset time in each
+iteration) and 'reporting_changepoints' (the number of changes and the
+centre and spread of the delay parameters of segments in each iteration).}
 
 \item{serial_parameters}{named list of 'mean' and 'sd' of gamma distribution
 characterising the serial interval distribution}

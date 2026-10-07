@@ -141,11 +141,13 @@ initial_reporting_changepoints <- function(reporting_parameters, starts=1,
 #' 'birth_sd' (the sd of the log of the ratio of the parameters proposed for a
 #' new segment to those of the segment it is split from); 'shift_max' (the
 #' furthest a change is proposed to move); 'hyper_step' and 'n_hyper_steps'
-#' (the step size and number of updates of the centre and spread)
+#' (the step size and number of updates of the centre and spread);
+#' 'n_partition_moves' (the number of times in each sweep that a split or
+#' merge, and then a shift, is proposed)
 reporting_changepoint_settings <- function(n_days, settings=list()) {
   defaults <- list(alpha=1, beta=n_days, min_length=7, spread_sd=0.5,
                    mean_step=0.25, sd_step=0.1, birth_sd=0.3, shift_max=3,
-                   hyper_step=0.3, n_hyper_steps=5)
+                   hyper_step=0.3, n_hyper_steps=5, n_partition_moves=5)
   unknown <- setdiff(names(settings), names(defaults))
   if(length(unknown) > 0)
     stop(paste0("Unknown settings: ", paste(unknown, collapse=", "), "."))
@@ -367,9 +369,9 @@ reporting_centre_step <- function(state, prior_parameters, settings) {
 #' Onset times are partitioned into segments, within each of which the mean
 #' and sd of the reporting delay are constant. One sweep of
 #' Metropolis-Hastings moves is made: the parameters of each segment are
-#' updated; a segment is split in two or two are merged (with equal
-#' probability); a change is moved; and the centre and spread of the
-#' distribution of the parameters of segments are updated.
+#' updated; several times over, a segment is split in two or two are merged
+#' (with equal probability) and a change is moved; and the centre and spread
+#' of the distribution of the parameters of segments are updated.
 #'
 #' The prior probability of a partition is described in
 #' \code{changepoints_logp_prior}, with the probability of a change on each
@@ -394,11 +396,13 @@ sample_reporting_changepoints <- function(state, f_logp, n_days,
   })
 
   state <- reporting_segments_step(state, f_logp, n_days, settings)
-  if(stats::runif(1) < 0.5)
-    state <- reporting_birth_step(state, f_logp, n_days, settings)
-  else
-    state <- reporting_death_step(state, f_logp, n_days, settings)
-  state <- reporting_shift_step(state, f_logp, n_days, settings)
+  for(i in seq_len(settings$n_partition_moves)) {
+    if(stats::runif(1) < 0.5)
+      state <- reporting_birth_step(state, f_logp, n_days, settings)
+    else
+      state <- reporting_death_step(state, f_logp, n_days, settings)
+    state <- reporting_shift_step(state, f_logp, n_days, settings)
+  }
   reporting_centre_step(state, prior_parameters, settings)
 }
 

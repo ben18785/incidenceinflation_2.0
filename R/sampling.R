@@ -103,6 +103,11 @@ max_uncertain_days <- function(p_gamma_cutoff, reporting_parameters) {
 #' "cases_true", which represents current estimates of the true number of cases
 #' with each onset time. If NULL (the default) each case count is drawn
 #' conditional only on case counts with earlier onset times.
+#' @param cases_before a vector of known true case counts for the days
+#' immediately before the first onset time, from the earliest to the latest
+#' (optional). These enter the renewal equation as the history of cases for
+#' the first onset times but are not themselves estimated, and nothing is
+#' assumed about how they were reported.
 #' @param future_max maximum number of later onset days conditioned on when
 #' cases_true_current is supplied. Defaults to 40.
 #'
@@ -119,7 +124,8 @@ sample_cases_history <- function(
   cases_true_current=NULL,
   future_max=40,
   revision_parameters=NULL,
-  max_erroneous=3) {
+  max_erroneous=3,
+  cases_before=NULL) {
 
   if(!"reporting_piece_index" %in% colnames(observation_onset_df))
     stop("observation_onset_df must contain a column: 'reporting_piece_index'.")
@@ -210,7 +216,8 @@ sample_cases_history <- function(
       dplyr::select("time_onset", "cases_estimated") %>%
       unique() %>%
       dplyr::arrange(dplyr::desc(.data$time_onset))
-    cases_history <- pre_observation_df$cases_estimated
+    # followed by any known cases from before the first onset time
+    cases_history <- c(pre_observation_df$cases_estimated, rev(cases_before))
     Rt <- Rt_function(onset_time)
 
     cases_future <- NULL
@@ -301,7 +308,7 @@ nb_log_likelihood_Rt_piece <- function(Rt, kappa, w, onset_times, cases_df) {
   v_i_ind <- v_i[2:(wmax + piece_width)]
   log_prob <- stats::dnbinom(v_i_dep, mu=(Rt * m_w %*% v_i_ind), size=kappa,
           log=TRUE)
-  if(onset_times[1] == 1) { # first case can't be generated from nothing
+  if(onset_times[1] == min(cases_df$time_onset)) { # first case can't be generated from nothing
     log_prob <- log_prob[1:(length(log_prob) - 1)]
   }
 
@@ -431,10 +438,20 @@ sample_Rt_single_piece <- function(
     kappa=NULL,
     serial_max=40, ndraws=1,
     maximise=FALSE, is_negative_binomial=FALSE,
-    nsteps=10, Rt_current=NULL) {
+    nsteps=10, Rt_current=NULL, cases_before=NULL) {
 
   short_df <- cases_history_df %>%
     dplyr::filter(.data$Rt_index <= Rt_piece_index)
+  # known cases from before the first onset time form part of the history
+  if(length(cases_before) > 0) {
+    time_first <- min(cases_history_df$time_onset)
+    short_df <- dplyr::bind_rows(
+      dplyr::tibble(
+        time_onset=time_first - rev(seq_along(cases_before)),
+        cases_true=cases_before,
+        Rt_index=NA),
+      short_df)
+  }
   time_max_post_initial_period <- max(short_df$time_onset) - serial_max
 
   posterior_shape <- Rt_prior_parameters$shape
@@ -505,6 +522,7 @@ sample_Rt_single_piece <- function(
 #' Metropolis-Hastings steps (see \code{sample_nb_Rt_piece}).
 #'
 #' @inheritParams sample_Rt_single_piece
+#' @inheritParams sample_cases_history
 #' @param Rt_current a tibble with columns 'Rt_index' and 'Rt' giving the
 #' current value of Rt for each piece, from which Metropolis-Hastings steps
 #' start under a negative binomial model (optional)
@@ -519,7 +537,8 @@ sample_Rt <- function(cases_history_df,
                       maximise=FALSE,
                       is_negative_binomial=FALSE,
                       nsteps=10,
-                      Rt_current=NULL) {
+                      Rt_current=NULL,
+                      cases_before=NULL) {
 
   if(is_negative_binomial) {
     if(is.null(kappa)) {
@@ -548,7 +567,8 @@ sample_Rt <- function(cases_history_df,
       serial_max, ndraws, maximise=maximise,
       is_negative_binomial=is_negative_binomial,
       nsteps=nsteps,
-      Rt_current=Rt_piece_current)
+      Rt_current=Rt_piece_current,
+      cases_before=cases_before)
     for(j in 1:ndraws) {
       m_draws[k, ] <- c(Rt_piece_index, j, Rt_vals[j])
       k <- k + 1
@@ -843,7 +863,8 @@ metropolis_step_overdispersion <- function(
     serial_parameters,
     prior_overdispersion_parameter,
     overdispersion_metropolis_sd,
-    serial_max=40
+    serial_max=40,
+    cases_before=NULL
     ) {
 
   overdispersion_proposed <- propose_overdispersion_parameter(
@@ -857,7 +878,7 @@ metropolis_step_overdispersion <- function(
                                log=TRUE)
   logp_proposed <- state_process_nb_logp_all_onsets(
     overdispersion_proposed, cases_history_rt_df, serial_parameters,
-    serial_max=serial_max
+    serial_max=serial_max, cases_before=cases_before
   ) + logp_prior
 
   list_parameters_logp <- accept_reject(
@@ -1139,6 +1160,14 @@ metropolis_step_revisions <- function(
 #' @param revision_metropolis_parameters named list of 'eta_step' and 'rho_step'
 #' containing step sizes for Metropolis step for revision parameters (see
 #' \code{propose_revision_parameters})
+#' @param cases_before a vector of known true case counts for the days
+#' immediately before the first onset time in the data, from the earliest to
+#' the latest (optional). These enter the renewal equation as the history of
+#' cases for the first onset times, so that Rt there is not overstated, but
+#' are not themselves estimated and nothing is assumed about how they were
+#' reported. This is intended for series which begin after an outbreak has
+#' started, where counts for earlier onset times are known well enough but
+#' the data needed to model their reporting are not available.
 #' @return a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters;
 #' and "revisions" if initial_revision_parameters is supplied
 #' @importFrom rlang .data
@@ -1159,7 +1188,15 @@ mcmc_single <- function(
   overdispersion_metropolis_sd=0.5,
   condition_on_future_cases=TRUE,
   initial_revision_parameters=NULL,
-  revision_metropolis_parameters=list(eta_step=0.5, rho_step=0.5)) {
+  revision_metropolis_parameters=list(eta_step=0.5, rho_step=0.5),
+  cases_before=NULL) {
+
+  if(!is.null(cases_before)) {
+    if(any(is.na(cases_before)) || any(cases_before < 0))
+      stop("cases_before must be non-negative case counts.")
+    if(maximise)
+      stop("Maximisation with known cases before the first onset time is not yet allowed.")
+  }
 
   cnames <- colnames(snapshot_with_Rt_index_df)
   expected_names <- c("time_onset", "time_reported",
@@ -1398,7 +1435,8 @@ mcmc_single <- function(
       cases_true_current=cases_true_current,
       future_max=serial_max,
       revision_parameters=revision_current,
-      max_erroneous=max_erroneous)
+      max_erroneous=max_erroneous,
+      cases_before=cases_before)
 
 
     # sample Rt
@@ -1422,7 +1460,8 @@ mcmc_single <- function(
         serial_max=serial_max,
         kappa=overdispersion_current,
         is_negative_binomial=is_negative_binomial,
-        grid=Rt_changepoints$grid)
+        grid=Rt_changepoints$grid,
+        cases_before=cases_before)
       Rt_n_changes <- max(df_Rt_days$Rt_index) - 1
       Rt_p_change <- sample_change_probability(
         Rt_n_changes, nrow(df_Rt_days),
@@ -1450,7 +1489,8 @@ mcmc_single <- function(
                          ndraws=1,
                          maximise=maximise,
                          is_negative_binomial=is_negative_binomial,
-                         Rt_current=unique(df_running[, c("Rt_index", "Rt")]))
+                         Rt_current=unique(df_running[, c("Rt_index", "Rt")]),
+                         cases_before=cases_before)
       # nocov start
       if(nrow(df_Rt) != num_Rts)
         stop("Number of Rts outputted not equal to initial Rt dims.")
@@ -1677,7 +1717,7 @@ mcmc_single <- function(
                                    log=TRUE)
       logp_overdispersion <- state_process_nb_logp_all_onsets(
         overdispersion_current, df_nb_tmp, serial_parameters,
-        serial_max=serial_max
+        serial_max=serial_max, cases_before=cases_before
       ) + logp_prior
 
       list_parameter_logp <- metropolis_step_overdispersion(
@@ -1687,7 +1727,8 @@ mcmc_single <- function(
         serial_parameters,
         priors$overdispersion,
         overdispersion_metropolis_sd,
-        serial_max=serial_max
+        serial_max=serial_max,
+        cases_before=cases_before
       )
       overdispersion_current <- list_parameter_logp$overdispersion
 
@@ -1885,7 +1926,8 @@ mcmc <- function(
     overdispersion_metropolis_sd=0.25,
     condition_on_future_cases=TRUE,
     initial_revision_parameters=NULL,
-    revision_metropolis_parameters=list(eta_step=0.5, rho_step=0.5)) {
+    revision_metropolis_parameters=list(eta_step=0.5, rho_step=0.5),
+    cases_before=NULL) {
 
   if(nchains==1) {
     res <- mcmc_single(niterations,
@@ -1905,7 +1947,8 @@ mcmc <- function(
                        overdispersion_metropolis_sd,
                        condition_on_future_cases,
                        initial_revision_parameters,
-                       revision_metropolis_parameters)
+                       revision_metropolis_parameters,
+                       cases_before=cases_before)
     res$cases$chain <- 1
     res$Rt$chain <- 1
     res$reporting$chain <- 1
@@ -1914,7 +1957,8 @@ mcmc <- function(
     if(!is.null(initial_revision_parameters))
       res$revisions$chain <- 1
     for(name in c("batches", "batch_parameters", "reporting_effects",
-                  "report_effects"))
+                  "report_effects", "Rt_changepoints", "reporting_days",
+                  "reporting_changepoints"))
       if(name %in% names(res))
         res[[name]] <- dplyr::mutate(res[[name]], chain=1)
   } else {
@@ -1942,7 +1986,8 @@ mcmc <- function(
                       overdispersion_metropolis_sd,
                       condition_on_future_cases,
                       initial_revision_parameters,
-                      revision_metropolis_parameters)
+                      revision_metropolis_parameters,
+                      cases_before=cases_before)
         }
 
         list_of_results <- foreach::foreach(i=1:nchains, .export = "mcmc_single") %dopar% {
@@ -1976,7 +2021,8 @@ mcmc <- function(
                            overdispersion_metropolis_sd,
                            condition_on_future_cases,
                            initial_revision_parameters,
-                           revision_metropolis_parameters)
+                           revision_metropolis_parameters,
+                           cases_before=cases_before)
         list_of_results[[i]] <- res
       }
     }

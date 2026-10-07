@@ -11,7 +11,8 @@ metropolis_step_overdispersion(
   serial_parameters,
   prior_overdispersion_parameter,
   overdispersion_metropolis_sd,
-  serial_max = 40
+  serial_max = 40,
+  cases_before = NULL
 )
 }
 \arguments{

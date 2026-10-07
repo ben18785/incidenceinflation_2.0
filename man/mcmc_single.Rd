@@ -22,7 +22,8 @@ mcmc_single(
   overdispersion_metropolis_sd = 0.5,
   condition_on_future_cases = TRUE,
   initial_revision_parameters = NULL,
-  revision_metropolis_parameters = list(eta_step = 0.5, rho_step = 0.5)
+  revision_metropolis_parameters = list(eta_step = 0.5, rho_step = 0.5),
+  cases_before = NULL
 )
 }
 \arguments{
@@ -133,6 +134,15 @@ priors can be set through priors$reporting_effects (see
 \item{revision_metropolis_parameters}{named list of 'eta_step' and 'rho_step'
 containing step sizes for Metropolis step for revision parameters (see
 \code{propose_revision_parameters})}
+
+\item{cases_before}{a vector of known true case counts for the days
+immediately before the first onset time in the data, from the earliest to
+the latest (optional). These enter the renewal equation as the history of
+cases for the first onset times, so that Rt there is not overstated, but
+are not themselves estimated and nothing is assumed about how they were
+reported. This is intended for series which begin after an outbreak has
+started, where counts for earlier onset times are known well enough but
+the data needed to model their reporting are not available.}
 }
 \value{
 a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters;

@@ -17,7 +17,8 @@ sample_cases_history(
   cases_true_current = NULL,
   future_max = 40,
   revision_parameters = NULL,
-  max_erroneous = 3
+  max_erroneous = 3,
+  cases_before = NULL
 )
 }
 \arguments{
@@ -62,6 +63,12 @@ erroneous records as returned by \code{sample_batches}, along with
 
 \item{max_erroneous}{maximum number of erroneous records that can be held
 for a single onset day at any one time}
+
+\item{cases_before}{a vector of known true case counts for the days
+immediately before the first onset time, from the earliest to the latest
+(optional). These enter the renewal equation as the history of cases for
+the first onset times but are not themselves estimated, and nothing is
+assumed about how they were reported.}
 }
 \value{
 a tibble with an extra cases_estimated column

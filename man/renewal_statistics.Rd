@@ -4,7 +4,12 @@
 \alias{renewal_statistics}
 \title{The quantities through which each onset day enters the renewal likelihood}
 \usage{
-renewal_statistics(cases_true, serial_parameters, serial_max = 40)
+renewal_statistics(
+  cases_true,
+  serial_parameters,
+  serial_max = 40,
+  cases_before = NULL
+)
 }
 \arguments{
 \item{cases_true}{a vector of true case counts on consecutive onset days,
@@ -14,6 +19,12 @@ from the earliest to the latest}
 characterising the serial interval distribution}
 
 \item{serial_max}{maximum point at which to truncate sum in renewal process}
+
+\item{cases_before}{a vector of known true case counts for the days
+immediately before the first onset time, from the earliest to the latest
+(optional). These enter the renewal equation as the history of cases for
+the first onset times but are not themselves estimated, and nothing is
+assumed about how they were reported.}
 }
 \value{
 a tibble with a row for each day and columns: 'cases_true',

@@ -555,3 +555,143 @@ test_that("the negative binomial Rt update uses the overdispersion parameter", {
                            is_negative_binomial=TRUE)
   expect_true(sd(draws_small$Rt) > 2 * sd(draws_large$Rt))
 })
+
+test_that("renewal_statistics uses known cases from before the first day", {
+  s_params <- list(mean=5, sd=3)
+  set.seed(30)
+  cases_all <- rpois(40, 30)
+  full <- renewal_statistics(cases_all, s_params, serial_max=12)
+  for(n_before in c(3, 12, 25)) {
+    before <- cases_all[seq_len(n_before)]
+    later <- cases_all[-seq_len(n_before)]
+    part <- renewal_statistics(later, s_params, serial_max=12, cases_before=before)
+    # earlier cases beyond those known count as zero, which matters only
+    # if fewer than serial_max days are known
+    if(n_before >= 12)
+      expect_equal(part$infectiousness, full$infectiousness[-seq_len(n_before)])
+    else
+      expect_true(all(part$infectiousness <= full$infectiousness[-seq_len(n_before)] + 1e-12))
+    expect_true(part$is_informative[1])
+  }
+  # the first of several known days gives the same as a series starting there
+  expect_equal(
+    renewal_statistics(cases_all[4:40], s_params, 12, cases_before=cases_all[1:3])$infectiousness,
+    renewal_statistics(cases_all, s_params, 12)$infectiousness[4:40])
+  # without them the first day is uninformative
+  expect_false(renewal_statistics(cases_all, s_params, 12)$is_informative[1])
+})
+
+test_that("known earlier cases enter every part of the renewal model alike", {
+  set.seed(31)
+  s_params <- list(mean=6, sd=4)
+  serial_max <- 12
+  cases_all <- rpois(45, 25)
+  Rt_all <- runif(45, 0.6, 1.8)
+  before <- cases_all[1:15]
+  cases <- cases_all[16:45]
+  Rt <- Rt_all[16:45]
+  full <- renewal_statistics(cases_all, s_params, serial_max)
+  mean_true <- Rt * full$infectiousness[16:45]
+  statistics <- renewal_statistics(cases, s_params, serial_max, cases_before=before)
+  expect_equal(Rt * statistics$infectiousness, mean_true)
+
+  # overdispersion update: all onset times, including the first, contribute
+  df <- dplyr::tibble(time_onset=1:30, cases_true=cases, Rt=Rt)
+  expect_equal(
+    state_process_nb_logp_all_onsets(4, df, s_params, serial_max=serial_max,
+                                     cases_before=before),
+    sum(dnbinom(cases, mu=mean_true, size=4, log=TRUE)))
+  # without them the first is left out and early means are smaller
+  expect_true(
+    state_process_nb_logp_all_onsets(4, df, s_params, serial_max=serial_max) !=
+      state_process_nb_logp_all_onsets(4, df, s_params, serial_max=serial_max,
+                                       cases_before=before))
+
+  # Rt update with periods fixed in advance: Poisson conditional distribution
+  df_pieces <- dplyr::tibble(time_onset=1:30, cases_true=cases,
+                             Rt_index=rep(1:3, each=10))
+  prior <- list(shape=1, rate=1)
+  set.seed(32)
+  draws <- sample_Rt_single_piece(1, df_pieces, prior, s_params,
+                                  serial_max=serial_max, ndraws=4000,
+                                  cases_before=before)
+  shape <- 1 + sum(cases[1:10])
+  rate <- 1 + sum(full$infectiousness[16:25])
+  expect_equal(mean(draws), shape / rate, tolerance=0.01)
+  # with nothing known the first period has far less infectiousness
+  draws_none <- sample_Rt_single_piece(1, df_pieces, prior, s_params,
+                                       serial_max=serial_max, ndraws=4000)
+  expect_true(mean(draws_none) > 1.3 * mean(draws))
+  # later periods beyond serial_max days are unaffected
+  set.seed(33)
+  a <- sample_Rt_single_piece(3, df_pieces, prior, s_params, serial_max=serial_max,
+                              ndraws=5, cases_before=before)
+  set.seed(33)
+  b <- sample_Rt_single_piece(3, df_pieces, prior, s_params, serial_max=serial_max,
+                              ndraws=5)
+  expect_equal(a, b)
+
+  # the negative binomial likelihood of the first period includes its first day
+  w <- weights_series(serial_max, s_params)
+  df_with <- dplyr::bind_rows(
+    dplyr::tibble(time_onset=-14:0, cases_true=before), df[, 1:2])
+  expect_equal(
+    nb_log_likelihood_Rt_piece(1.2, 4, w, 1:10, df_with[df_with$time_onset <= 10, ]),
+    sum(dnbinom(cases[1:10], mu=1.2 * full$infectiousness[16:25], size=4, log=TRUE)))
+
+  # Rt with unknown changes: draws agree with those from the full series
+  # restricted to the later days when the partition cannot change
+  set.seed(34)
+  df_days <- dplyr::tibble(time_onset=1:30, cases_true=cases)
+  draws <- purrr::map_dbl(1:300, function(i) {
+    sample_Rt_changepoints(df_days, prior, s_params, p_change=0.01,
+                           min_length=40, serial_max=serial_max,
+                           cases_before=before)$Rt[1]
+  })
+  shape <- 1 + sum(cases)
+  rate <- 1 + sum(full$infectiousness[16:45])
+  expect_equal(mean(draws), shape / rate, tolerance=0.01)
+})
+
+test_that("Rt is not overstated at the start of a series when earlier cases are known", {
+  skip_on_cran()
+  set.seed(35)
+  s_params <- list(mean=8, sd=5)
+  days_total <- 70
+  cases_all <- true_cases(days_total, function(t) 1.1, 1000, s_params,
+                          initial_parameters=list(mean=40, length=30))
+  df_all <- observed_cases(cases_all, list(mean=3, sd=2), days_max_follow_up=70)
+  # the series analysed starts on day 31 of the simulated one
+  df <- df_all %>%
+    dplyr::filter(time_onset > 30) %>%
+    dplyr::mutate(time_onset=time_onset - 30, time_reported=time_reported - 30)
+  before <- cases_all[1:30]
+  f_fit <- function(cases_before) {
+    data <- df %>%
+      dplyr::select(time_onset, time_reported, cases_reported) %>%
+      dplyr::mutate(Rt_index=1)
+    initial_cases_true <- df %>%
+      dplyr::group_by(time_onset) %>%
+      dplyr::summarise(cases_true=max(cases_reported))
+    priors <- list(Rt=list(shape=1, rate=1),
+                   reporting=list(mean_mu=5, mean_sigma=10, sd_mu=3, sd_sigma=5),
+                   max_cases=3000, Rt_changepoints=list())
+    res <- mcmc_single(60, data, priors, s_params, initial_cases_true,
+                       list(mean=3, sd=2), dplyr::tibble(Rt_index=1, Rt=1),
+                       print_to_screen=FALSE, cases_before=cases_before)
+    res$Rt %>%
+      dplyr::filter(iteration > 20) %>%
+      dplyr::group_by(time_onset) %>%
+      dplyr::summarise(Rt=median(Rt))
+  }
+  with_history <- f_fit(before)
+  without <- f_fit(NULL)
+  # with the earlier cases Rt is right from the first day
+  expect_true(all(abs(with_history$Rt[1:10] - 1.1) < 0.2))
+  # without them it is greatly overstated at the start
+  expect_true(without$Rt[1] > 2)
+  # and the two agree later in the series
+  expect_true(all(abs(with_history$Rt[30:40] - without$Rt[30:40]) < 0.15))
+  expect_error(f_fit(c(1, -2)))
+  expect_error(f_fit(c(1, NA)))
+})

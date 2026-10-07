@@ -184,13 +184,17 @@ piecewise_values <- function(starts, values, n_days) {
 #' @param cases_true a vector of true case counts on consecutive onset days,
 #' from the earliest to the latest
 #' @inheritParams sample_Rt_single_piece
+#' @inheritParams sample_cases_history
 #'
 #' @return a tibble with a row for each day and columns: 'cases_true',
 #' 'infectiousness' and 'is_informative'
-renewal_statistics <- function(cases_true, serial_parameters, serial_max=40) {
+renewal_statistics <- function(cases_true, serial_parameters, serial_max=40,
+                               cases_before=NULL) {
   w <- weights_series(serial_max, serial_parameters)
   n_days <- length(cases_true)
-  cases_padded <- c(rep(0, serial_max), cases_true)
+  # the serial_max days before the first, of which any not known are zero
+  cases_earlier <- rev(recent_history(rev(cases_before), serial_max))
+  cases_padded <- c(cases_earlier, cases_true)
   infectiousness <- purrr::map_dbl(seq_len(n_days), function(t) {
     sum(w * rev(cases_padded[t:(t + serial_max - 1)]))
   })
@@ -371,6 +375,7 @@ sample_Rt_grid <- function(logl_segment, log_prior, grid) {
 #' @inheritParams sample_Rt_single_piece
 #' @inheritParams partition_forward
 #' @inheritParams renewal_logl_grid
+#' @inheritParams sample_cases_history
 #' @param use_grid whether to integrate over Rt numerically under a Poisson
 #' renewal model (always the case under a negative binomial model)
 #'
@@ -386,7 +391,8 @@ sample_Rt_changepoints <- function(cases_history_df,
                                    kappa=NULL,
                                    is_negative_binomial=FALSE,
                                    grid=Rt_grid(),
-                                   use_grid=FALSE) {
+                                   use_grid=FALSE,
+                                   cases_before=NULL) {
 
   cases_history_df <- cases_history_df %>%
     dplyr::arrange(.data$time_onset)
@@ -403,7 +409,7 @@ sample_Rt_changepoints <- function(cases_history_df,
 
   n_days <- nrow(cases_history_df)
   statistics <- renewal_statistics(cases_history_df$cases_true,
-                                   serial_parameters, serial_max)
+                                   serial_parameters, serial_max, cases_before)
   is_grid <- is_negative_binomial | use_grid
   if(is_grid) {
     logl <- renewal_logl_grid(statistics, grid, kappa, is_negative_binomial)

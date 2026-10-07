@@ -9,7 +9,8 @@ state_process_nb_logp_all_onsets(
   kappa,
   cases_history_rt_df,
   serial_parameters,
-  serial_max = 40
+  serial_max = 40,
+  cases_before = NULL
 )
 }
 \arguments{

@@ -34,9 +34,9 @@ process log-probability of each segment
 Onset times are partitioned into segments, within each of which the mean
 and sd of the reporting delay are constant. One sweep of
 Metropolis-Hastings moves is made: the parameters of each segment are
-updated; a segment is split in two or two are merged (with equal
-probability); a change is moved; and the centre and spread of the
-distribution of the parameters of segments are updated.
+updated; several times over, a segment is split in two or two are merged
+(with equal probability) and a change is moved; and the centre and spread
+of the distribution of the parameters of segments are updated.
 }
 \details{
 The prior probability of a partition is described in

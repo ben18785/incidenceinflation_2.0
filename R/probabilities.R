@@ -909,7 +909,8 @@ observation_process_all_times_logp <- function(
 #'
 #' @return a log-probability value
 state_process_nb_logp_all_onsets <- function(
-    kappa, cases_history_rt_df, serial_parameters, serial_max=40) {
+    kappa, cases_history_rt_df, serial_parameters, serial_max=40,
+    cases_before=NULL) {
 
   if(kappa <= 0)
     return(-Inf)
@@ -920,13 +921,14 @@ state_process_nb_logp_all_onsets <- function(
   for(i in seq_along(onset_times)) {
 
     onset_time <- onset_times[i]
-    if(onset_time > 1) {
+    # the first onset time is informative only if earlier cases are known
+    if(onset_time > 1 | (i == 1 & length(cases_before) > 0)) {
 
       cases_true <- cases_history_rt_df$cases_true[i]
       pre_observation_df <- cases_history_rt_df %>%
         dplyr::filter(.data$time_onset < onset_time) %>%
         dplyr::arrange(dplyr::desc(.data$time_onset))
-      cases_history <- pre_observation_df$cases_true
+      cases_history <- c(pre_observation_df$cases_true, rev(cases_before))
       Rt <- cases_history_rt_df$Rt[i]
 
       logp_single_onset_time <- state_process_logp(

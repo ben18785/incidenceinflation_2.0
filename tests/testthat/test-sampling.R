@@ -1694,3 +1694,26 @@ onset", {
   expect_true(all(is.finite(res$reporting$mean)))
   expect_equal(nrow(res$revisions), niter)
 })
+
+test_that("sample_cases_history uses known cases from before the first onset time", {
+  # the first onset time has a renewal mean only if earlier cases are known,
+  # which then changes the conditional distribution of its case count
+  s_params <- list(mean=3, sd=2)
+  r_params <- dplyr::tibble(reporting_piece_index=1, mean=6, sd=3)
+  df <- dplyr::tibble(time_onset=c(1, 1, 2, 2), time_reported=c(1, 2, 2, 3),
+                      cases_reported=c(0, 2, 0, 1), reporting_piece_index=1)
+  Rt_function <- function(t) rep(1, length(t))
+  f_mean <- function(cases_before, seed) {
+    set.seed(seed)
+    mean(replicate(300, {
+      suppressWarnings(sample_cases_history(
+        df, 400, Rt_function, s_params, r_params,
+        cases_before=cases_before)$cases_estimated[1])
+    }))
+  }
+  low <- f_mean(rep(5, 10), 1)
+  high <- f_mean(rep(60, 10), 2)
+  expect_true(high > low + 10)
+  # no history: no error and no renewal term for the first day
+  expect_true(is.finite(f_mean(NULL, 3)))
+})

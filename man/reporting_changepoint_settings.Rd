@@ -20,7 +20,9 @@ times in a segment); 'spread_sd' (see \code{reporting_centre_logp_prior});
 'birth_sd' (the sd of the log of the ratio of the parameters proposed for a
 new segment to those of the segment it is split from); 'shift_max' (the
 furthest a change is proposed to move); 'hyper_step' and 'n_hyper_steps'
-(the step size and number of updates of the centre and spread)
+(the step size and number of updates of the centre and spread);
+'n_partition_moves' (the number of times in each sweep that a split or
+merge, and then a shift, is proposed)
 }
 \description{
 Default settings for sampling reporting delays whose changes are unknown

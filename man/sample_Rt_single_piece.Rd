@@ -16,7 +16,8 @@ sample_Rt_single_piece(
   maximise = FALSE,
   is_negative_binomial = FALSE,
   nsteps = 10,
-  Rt_current = NULL
+  Rt_current = NULL,
+  cases_before = NULL
 )
 }
 \arguments{
@@ -47,6 +48,12 @@ if assuming a negative binomial model (see \code{sample_nb_Rt_piece})}
 
 \item{Rt_current}{the current value of Rt for the piece, from which these
 steps start (optional)}
+
+\item{cases_before}{a vector of known true case counts for the days
+immediately before the first onset time, from the earliest to the latest
+(optional). These enter the renewal equation as the history of cases for
+the first onset times but are not themselves estimated, and nothing is
+assumed about how they were reported.}
 }
 \value{
 a draw (or draws) for Rt

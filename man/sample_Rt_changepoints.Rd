@@ -14,7 +14,8 @@ sample_Rt_changepoints(
   kappa = NULL,
   is_negative_binomial = FALSE,
   grid = Rt_grid(),
-  use_grid = FALSE
+  use_grid = FALSE,
+  cases_before = NULL
 )
 }
 \arguments{
@@ -41,6 +42,12 @@ characterising the serial interval distribution}
 
 \item{use_grid}{whether to integrate over Rt numerically under a Poisson
 renewal model (always the case under a negative binomial model)}
+
+\item{cases_before}{a vector of known true case counts for the days
+immediately before the first onset time, from the earliest to the latest
+(optional). These enter the renewal equation as the history of cases for
+the first onset times but are not themselves estimated, and nothing is
+assumed about how they were reported.}
 }
 \value{
 a tibble with a row for each onset time and columns: 'time_onset',

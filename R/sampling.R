@@ -305,16 +305,28 @@ nb_log_likelihood_Rt_piece <- function(Rt, kappa, w, onset_times, cases_df) {
   sum(log_prob)
 }
 
-#' Uses importance resampling to infer a posterior over Rt under a negative
-#' binomial renewal model
+#' Samples Rt for a single piece under a negative binomial renewal model using
+#' Metropolis-Hastings steps
+#'
+#' Under a negative binomial renewal model the conditional distribution of Rt
+#' has no closed form. Each step proposes a new value in one of two ways,
+#' chosen at random: independently of the current value, from a gamma
+#' distribution centred on the conditional distribution under a Poisson model
+#' and widened to allow for overdispersion; or by a random walk on the log of
+#' the current value. The proposal is accepted or rejected in the usual way, so
+#' that the draws target the conditional distribution exactly.
 #'
 #' @param prior_shape Rt prior shape parameter
 #' @param prior_rate Rt prior rate parameter
-#' @param posterior_shape Rt posterior shape parameter
-#' @param posterior_rate Rt posterior rate parameter
+#' @param posterior_shape shape parameter of the conditional distribution of Rt
+#' under a Poisson renewal model
+#' @param posterior_rate rate parameter of the conditional distribution of Rt
+#' under a Poisson renewal model
 #' @inheritParams nb_log_likelihood_Rt_piece
 #' @param ndraws number of draws of Rt to return
-#' @param nresamples number of resamples used to calculate weights for
+#' @param nsteps number of Metropolis-Hastings steps taken for each draw
+#' @param Rt_current the current value of Rt, from which the steps start; if
+#' NULL they start from the mean under a Poisson model
 #'
 #' @return a vector of Rt draws
 sample_nb_Rt_piece <- function(prior_shape, prior_rate,
@@ -324,33 +336,55 @@ sample_nb_Rt_piece <- function(prior_shape, prior_rate,
           onset_times,
           cases_df,
           ndraws,
-          nresamples) {
+          nsteps=10,
+          Rt_current=NULL) {
 
-  # sample from Poisson posterior but with larger sd
+  # proposal: the Poisson conditional with its sd inflated in line with the
+  # variance of the negative binomial relative to the Poisson
   mu <- posterior_shape / posterior_rate
-  sd <- sqrt(posterior_shape / posterior_rate^2)
-  sd <- sd * (1 + mu / kappa) * 5 # approximate inflation adjustment
-  new_shape <- mu^2 / sd^2
-  new_rate <- new_shape / mu
-  R_proposed <- stats::rgamma(nresamples, new_shape, new_rate)
-  # log_prior and log_posterior (from Poisson)
-  log_prior <- stats::dgamma(R_proposed, prior_shape, prior_rate,
-                             log=TRUE)
-  log_posterior_poisson <- stats::dgamma(R_proposed, new_shape, new_rate,
-                                         log=TRUE)
+  sd <- sqrt(posterior_shape) / posterior_rate
+  mean_daily_cases <- (posterior_shape - prior_shape) / length(onset_times)
+  sd <- 1.5 * sd * sqrt(1 + mean_daily_cases / kappa)
+  shape_q <- max(mu^2 / sd^2, 1)
+  rate_q <- shape_q / mu
+  step_log <- 1 / sqrt(shape_q)
 
-  # calculate weights
-  log_ws <- vector(length = nresamples)
-  for(i in 1:nresamples) {
-    log_like <- nb_log_likelihood_Rt_piece(R_proposed[i], kappa, w, onset_times, cases_df)
-    log_ws[i] <- log_like + log_prior[i] - log_posterior_poisson[i]
+  f_target <- function(Rt) {
+    if(!is.finite(Rt) || Rt <= 0)
+      return(-Inf)
+    nb_log_likelihood_Rt_piece(Rt, kappa, w, onset_times, cases_df) +
+      stats::dgamma(Rt, prior_shape, prior_rate, log=TRUE)
   }
-  log_sum_p <- matrixStats::logSumExp(log_ws)
-  ws <- exp(log_ws - log_sum_p)
 
-  ids <- sample(1:nresamples, replace=TRUE, prob=ws,
-                size=ndraws)
-  R_proposed[ids]
+  Rt <- Rt_current
+  if(is.null(Rt) || !is.finite(Rt) || Rt <= 0)
+    Rt <- mu
+  logp <- f_target(Rt)
+  draws <- vector(length=ndraws)
+  for(i in seq_len(ndraws)) {
+    for(j in seq_len(nsteps)) {
+      if(stats::runif(1) < 0.5) {
+        Rt_proposed <- stats::rgamma(1, shape_q, rate_q)
+        log_q <- stats::dgamma(Rt, shape_q, rate_q, log=TRUE) -
+          stats::dgamma(Rt_proposed, shape_q, rate_q, log=TRUE)
+      } else {
+        Rt_proposed <- Rt * exp(stats::rnorm(1, 0, step_log))
+        # Jacobian of proposing on the log scale
+        log_q <- log(Rt_proposed) - log(Rt)
+      }
+      logp_proposed <- f_target(Rt_proposed)
+      log_r <- logp_proposed - logp + log_q
+      # a current value of zero probability is always left
+      if(!is.finite(logp) && is.finite(logp_proposed))
+        log_r <- Inf
+      if(!is.na(log_r) && log(stats::runif(1)) < log_r) {
+        Rt <- Rt_proposed
+        logp <- logp_proposed
+      }
+    }
+    draws[i] <- Rt
+  }
+  draws
 }
 
 #' Draws from the gamma distribution or returns the value which maximises
@@ -381,8 +415,10 @@ sample_or_maximise_gamma <- function(shape, rate, ndraws, maximise=FALSE) {
 #' @inheritParams sample_cases_history
 #' @param ndraws number of draws of Rt
 #' @inheritParams true_cases
-#' @param nresamples number of importance resamples of Rt to perform if assuming a
-#' negative binomial model
+#' @param nsteps number of Metropolis-Hastings steps taken for each draw of Rt
+#' if assuming a negative binomial model (see \code{sample_nb_Rt_piece})
+#' @param Rt_current the current value of Rt for the piece, from which these
+#' steps start (optional)
 #'
 #' @return a draw (or draws) for Rt
 #' @importFrom rlang .data
@@ -392,7 +428,7 @@ sample_Rt_single_piece <- function(
     kappa=NULL,
     serial_max=40, ndraws=1,
     maximise=FALSE, is_negative_binomial=FALSE,
-    nresamples=100) {
+    nsteps=10, Rt_current=NULL) {
 
   short_df <- cases_history_df %>%
     dplyr::filter(.data$Rt_index <= Rt_piece_index)
@@ -438,7 +474,8 @@ sample_Rt_single_piece <- function(
               onset_times,
               short_df,
               ndraws,
-              nresamples)
+              nsteps,
+              Rt_current)
   }
 }
 
@@ -461,11 +498,13 @@ sample_Rt_single_piece <- function(
 #' (if maximise=TRUE).
 #' Alternatively the renewal equation may be specified by a negative binomial distribution:
 #' \deqn{cases_true_t ~ NB(Rt * \sum_tau=1^t_max w_t cases_true_t-tau, kappa)}
-#' where kappa is the overdispersion parameter. In this case, importance sampling
-#' using the Poisson posterior as the importance distribution is used to
-#' estimate a negative binomial posterior.
+#' where kappa is the overdispersion parameter. In this case Rt is updated by
+#' Metropolis-Hastings steps (see \code{sample_nb_Rt_piece}).
 #'
 #' @inheritParams sample_Rt_single_piece
+#' @param Rt_current a tibble with columns 'Rt_index' and 'Rt' giving the
+#' current value of Rt for each piece, from which Metropolis-Hastings steps
+#' start under a negative binomial model (optional)
 #' @return a tibble with three columns: "Rt_piece_index", "draw_index", "Rt"
 #' @export
 sample_Rt <- function(cases_history_df,
@@ -476,7 +515,8 @@ sample_Rt <- function(cases_history_df,
                       ndraws=1,
                       maximise=FALSE,
                       is_negative_binomial=FALSE,
-                      nresamples=100) {
+                      nsteps=10,
+                      Rt_current=NULL) {
 
   if(is_negative_binomial) {
     if(is.null(kappa)) {
@@ -495,13 +535,17 @@ sample_Rt <- function(cases_history_df,
   k <- 1
   for(i in seq_along(Rt_piece_indices)) {
     Rt_piece_index <- Rt_piece_indices[i]
+    Rt_piece_current <- NULL
+    if(!is.null(Rt_current))
+      Rt_piece_current <- Rt_current$Rt[match(Rt_piece_index, Rt_current$Rt_index)]
     Rt_vals <- sample_Rt_single_piece(
       Rt_piece_index, cases_history_df,
       Rt_prior_parameters, serial_parameters,
       kappa,
       serial_max, ndraws, maximise=maximise,
       is_negative_binomial=is_negative_binomial,
-      nresamples=nresamples)
+      nsteps=nsteps,
+      Rt_current=Rt_piece_current)
     for(j in 1:ndraws) {
       m_draws[k, ] <- c(Rt_piece_index, j, Rt_vals[j])
       k <- k + 1
@@ -1400,7 +1444,8 @@ mcmc_single <- function(
                          serial_max=serial_max,
                          ndraws=1,
                          maximise=maximise,
-                         is_negative_binomial=is_negative_binomial)
+                         is_negative_binomial=is_negative_binomial,
+                         Rt_current=unique(df_running[, c("Rt_index", "Rt")]))
       # nocov start
       if(nrow(df_Rt) != num_Rts)
         stop("Number of Rts outputted not equal to initial Rt dims.")

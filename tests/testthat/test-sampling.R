@@ -1089,8 +1089,8 @@ test_that("sample_nb_Rt_piece works as expected", {
   posterior_rate <- prior_rate + sum(w * rev(cases_df$cases_true[1:3])) +
     sum(w * rev(cases_df$cases_true[2:4]))
 
-  ndraws <- 1000
-  nresamples <- 10000
+  ndraws <- 3000
+  set.seed(1)
 
   # for large kappa the NB and Poisson distributions should be similar
   kappa <- 10000
@@ -1101,15 +1101,23 @@ test_that("sample_nb_Rt_piece works as expected", {
     w,
     onset_times,
     cases_df,
-    ndraws,
-    nresamples)
+    ndraws)
   expect_equal(length(Rt_nb), ndraws)
-  Rt_poisson <- stats::rgamma(ndraws, posterior_shape, posterior_rate)
-  expect_true(abs(mean(Rt_nb) - mean(Rt_poisson)) < 1)
-  expect_true(abs(sd(Rt_nb) - sd(Rt_poisson)) < 0.1)
+  expect_equal(mean(Rt_nb), posterior_shape / posterior_rate, tolerance=0.02)
+  expect_equal(sd(Rt_nb), sqrt(posterior_shape) / posterior_rate, tolerance=0.1)
 
-  # for small kappa the sd of NB should be greater
+  # for small kappa draws follow the conditional distribution found numerically
   kappa <- 1
+  f_density <- function(Rt, power=0) {
+    purrr::map_dbl(Rt, function(r) {
+      r^power * exp(nb_log_likelihood_Rt_piece(r, kappa, w, onset_times, cases_df)) *
+        stats::dgamma(r, prior_shape, prior_rate)
+    })
+  }
+  constant <- integrate(f_density, 0, Inf)$value
+  mean_exact <- integrate(f_density, 0, Inf, power=1)$value / constant
+  sd_exact <- sqrt(integrate(f_density, 0, Inf, power=2)$value / constant -
+                     mean_exact^2)
   Rt_nb <- sample_nb_Rt_piece(
     prior_shape, prior_rate,
     posterior_shape, posterior_rate,
@@ -1117,9 +1125,53 @@ test_that("sample_nb_Rt_piece works as expected", {
     w,
     onset_times,
     cases_df,
-    ndraws,
-    nresamples)
-  expect_true(sd(Rt_nb) > sd(Rt_poisson))
+    ndraws)
+  expect_equal(mean(Rt_nb), mean_exact, tolerance=0.05)
+  expect_equal(sd(Rt_nb), sd_exact, tolerance=0.1)
+  expect_true(sd(Rt_nb) > 2 * sqrt(posterior_shape) / posterior_rate)
+  probs <- c(0.1, 0.5, 0.9)
+  f_cdf <- function(q) integrate(f_density, 0, q)$value / constant
+  expect_equal(purrr::map_dbl(stats::quantile(Rt_nb, probs), f_cdf),
+               probs, tolerance=0.1, ignore_attr=TRUE)
+
+  # a single step from the current value either stays there or moves
+  Rt_one <- sample_nb_Rt_piece(
+    prior_shape, prior_rate, posterior_shape, posterior_rate, kappa, w,
+    onset_times, cases_df, ndraws=1, nsteps=0, Rt_current=0.7)
+  expect_equal(Rt_one, 0.7)
+  # the starting value is forgotten, even if it is very unlikely or invalid
+  for(Rt_current in list(500, 1e-6, -1, NA, NULL)) {
+    Rt_far <- sample_nb_Rt_piece(
+      prior_shape, prior_rate, posterior_shape, posterior_rate, kappa, w,
+      onset_times, cases_df, ndraws=200, nsteps=10, Rt_current=Rt_current)
+    expect_true(all(is.finite(Rt_far) & Rt_far > 0))
+    expect_true(abs(median(Rt_far[-(1:20)]) - mean_exact) < 2 * sd_exact)
+  }
+
+  # very strong overdispersion does not cause failure
+  Rt_small <- sample_nb_Rt_piece(
+    prior_shape, prior_rate, posterior_shape, posterior_rate, 0.001, w,
+    onset_times, cases_df, ndraws=50)
+  expect_true(all(is.finite(Rt_small) & Rt_small > 0))
+})
+
+test_that("sample_Rt starts negative binomial updates from current values", {
+  set.seed(2)
+  cases_df <- dplyr::tibble(time_onset=1:20,
+                            cases_true=c(10, rpois(19, 30)),
+                            Rt_index=rep(1:2, each=10))
+  prior <- list(shape=1, rate=1)
+  s_params <- list(mean=4, sd=2)
+  # with no steps taken the current values are returned
+  Rt_df <- sample_Rt(cases_df, prior, s_params, kappa=5, serial_max=10,
+                     is_negative_binomial=TRUE, nsteps=0,
+                     Rt_current=dplyr::tibble(Rt_index=c(2, 1), Rt=c(0.6, 1.7)))
+  expect_equal(Rt_df$Rt[Rt_df$Rt_index == 1], 1.7)
+  expect_equal(Rt_df$Rt[Rt_df$Rt_index == 2], 0.6)
+  Rt_df <- sample_Rt(cases_df, prior, s_params, kappa=5, serial_max=10,
+                     is_negative_binomial=TRUE,
+                     Rt_current=dplyr::tibble(Rt_index=c(2, 1), Rt=c(0.6, 1.7)))
+  expect_true(all(Rt_df$Rt > 0))
 })
 
 test_that("sample_true_cases_single_onset uses later cases if supplied", {

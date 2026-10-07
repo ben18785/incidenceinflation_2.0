@@ -15,7 +15,8 @@ sample_Rt_single_piece(
   ndraws = 1,
   maximise = FALSE,
   is_negative_binomial = FALSE,
-  nresamples = 100
+  nsteps = 10,
+  Rt_current = NULL
 )
 }
 \arguments{
@@ -41,8 +42,11 @@ maximum probability (by default is FALSE)}
 
 \item{is_negative_binomial}{if negative-binomial renewal model specified (defaults to FALSE)}
 
-\item{nresamples}{number of importance resamples of Rt to perform if assuming a
-negative binomial model}
+\item{nsteps}{number of Metropolis-Hastings steps taken for each draw of Rt
+if assuming a negative binomial model (see \code{sample_nb_Rt_piece})}
+
+\item{Rt_current}{the current value of Rt for the piece, from which these
+steps start (optional)}
 }
 \value{
 a draw (or draws) for Rt

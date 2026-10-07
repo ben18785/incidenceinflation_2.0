@@ -13,7 +13,8 @@ sample_Rt(
   ndraws = 1,
   maximise = FALSE,
   is_negative_binomial = FALSE,
-  nresamples = 100
+  nsteps = 10,
+  Rt_current = NULL
 )
 }
 \arguments{
@@ -37,8 +38,12 @@ maximum probability (by default is FALSE)}
 
 \item{is_negative_binomial}{if negative-binomial renewal model specified (defaults to FALSE)}
 
-\item{nresamples}{number of importance resamples of Rt to perform if assuming a
-negative binomial model}
+\item{nsteps}{number of Metropolis-Hastings steps taken for each draw of Rt
+if assuming a negative binomial model (see \code{sample_nb_Rt_piece})}
+
+\item{Rt_current}{a tibble with columns 'Rt_index' and 'Rt' giving the
+current value of Rt for each piece, from which Metropolis-Hastings steps
+start under a negative binomial model (optional)}
 }
 \value{
 a tibble with three columns: "Rt_piece_index", "draw_index", "Rt"
@@ -60,7 +65,6 @@ this posterior, or it returns the Rt set that maximises it
 (if maximise=TRUE).
 Alternatively the renewal equation may be specified by a negative binomial distribution:
 \deqn{cases_true_t ~ NB(Rt * \sum_tau=1^t_max w_t cases_true_t-tau, kappa)}
-where kappa is the overdispersion parameter. In this case, importance sampling
-using the Poisson posterior as the importance distribution is used to
-estimate a negative binomial posterior.
+where kappa is the overdispersion parameter. In this case Rt is updated by
+Metropolis-Hastings steps (see \code{sample_nb_Rt_piece}).
 }

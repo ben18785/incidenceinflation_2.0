@@ -550,8 +550,8 @@ test_that("the negative binomial Rt update uses the overdispersion parameter", {
     dplyr::mutate(Rt_index=1)
   prior <- list(shape=1, rate=1)
   draws_small <- sample_Rt(df, prior, serial_parameters, kappa=0.5, ndraws=400,
-                           is_negative_binomial=TRUE, nresamples=2000)
+                           is_negative_binomial=TRUE)
   draws_large <- sample_Rt(df, prior, serial_parameters, kappa=1000, ndraws=400,
-                           is_negative_binomial=TRUE, nresamples=2000)
+                           is_negative_binomial=TRUE)
   expect_true(sd(draws_small$Rt) > 2 * sd(draws_large$Rt))
 })

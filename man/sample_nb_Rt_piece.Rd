@@ -2,8 +2,8 @@
 % Please edit documentation in R/sampling.R
 \name{sample_nb_Rt_piece}
 \alias{sample_nb_Rt_piece}
-\title{Uses importance resampling to infer a posterior over Rt under a negative
-binomial renewal model}
+\title{Samples Rt for a single piece under a negative binomial renewal model using
+Metropolis-Hastings steps}
 \usage{
 sample_nb_Rt_piece(
   prior_shape,
@@ -15,7 +15,8 @@ sample_nb_Rt_piece(
   onset_times,
   cases_df,
   ndraws,
-  nresamples
+  nsteps = 10,
+  Rt_current = NULL
 )
 }
 \arguments{
@@ -23,9 +24,11 @@ sample_nb_Rt_piece(
 
 \item{prior_rate}{Rt prior rate parameter}
 
-\item{posterior_shape}{Rt posterior shape parameter}
+\item{posterior_shape}{shape parameter of the conditional distribution of Rt
+under a Poisson renewal model}
 
-\item{posterior_rate}{Rt posterior rate parameter}
+\item{posterior_rate}{rate parameter of the conditional distribution of Rt
+under a Poisson renewal model}
 
 \item{kappa}{overdispersion parameter}
 
@@ -38,12 +41,20 @@ so that the latest onset times are at the bottom}
 
 \item{ndraws}{number of draws of Rt to return}
 
-\item{nresamples}{number of resamples used to calculate weights for}
+\item{nsteps}{number of Metropolis-Hastings steps taken for each draw}
+
+\item{Rt_current}{the current value of Rt, from which the steps start; if
+NULL they start from the mean under a Poisson model}
 }
 \value{
 a vector of Rt draws
 }
 \description{
-Uses importance resampling to infer a posterior over Rt under a negative
-binomial renewal model
+Under a negative binomial renewal model the conditional distribution of Rt
+has no closed form. Each step proposes a new value in one of two ways,
+chosen at random: independently of the current value, from a gamma
+distribution centred on the conditional distribution under a Poisson model
+and widened to allow for overdispersion; or by a random walk on the log of
+the current value. The proposal is accepted or rejected in the usual way, so
+that the draws target the conditional distribution exactly.
 }

@@ -20,6 +20,8 @@ relaxed_stan_data(
   tail = FALSE,
   report_effects = FALSE,
   misdating = NULL,
+  Rt_max_changes = 0,
+  delay_max_changes = 0,
   priors = relaxed_priors()
 )
 }
@@ -75,6 +77,18 @@ rate of reporting}
 \item{misdating}{NULL if cases are never misdated; or a named list of
 'shifts' and 'shift_probs' (see \code{unrecorded_prob}), in which case the
 probability that a case is misdated is estimated}
+
+\item{Rt_max_changes}{if greater than zero, Rt changes at unknown onset
+times, at most this number of times, and is constant between changes with
+the gamma prior of \code{relaxed_priors}. Rt_index, Rt_period_width and
+Rt_random_walk are then ignored. The prior on the changes is that of
+\code{changepoints_logp_prior}, limited to this number of changes and
+without a minimum length of segment. The default, zero, switches this off.}
+
+\item{delay_max_changes}{as Rt_max_changes, for the mean and sd of the
+reporting delay; reporting_piece_index is then ignored. Each change allowed
+adds about as much computation as the whole model of reporting without
+changes. This cannot be combined with misdating.}
 
 \item{priors}{a named list as returned by \code{relaxed_priors}}
 }

@@ -3,10 +3,16 @@
 // - true case counts of recent onset days are continuous (those of older onset
 //   days are fixed at their latest reported counts);
 // - Rt is constant within periods of onset days given in advance, and either
-//   follows a random walk between them or is independent between them, in
-//   place of changes at unknown times;
+//   follows a random walk between them or is independent between them;
 // - the reporting delay is the same within periods of onset days given in
 //   advance.
+// Optionally, Rt or the delay can instead change at unknown onset days, up to
+// a maximum number of changes given in advance. The segment to which each
+// onset day belongs is then a hidden state which can only stay as it is or
+// move on by one, and the days of the changes are summed over exactly by a
+// forward recursion. This has the prior on changes of the package (each day
+// starts a new segment with probability p, which has a beta prior), limited
+// to the maximum number, and without a minimum length of segment.
 // The model of reporting is otherwise that of the package: a gamma delay,
 // optionally with an exponential tail; optional effects of the day of the week
 // of each report and of each report; erroneous records which are entered and
@@ -227,6 +233,179 @@ functions {
     }
     return log_sum_exp(log_alpha);
   }
+
+  // Forward recursion over segments. ll[t, k] is the log-likelihood of day t
+  // if it belongs to segment k. Each day after the first starts the next
+  // segment with probability p_change. Every path with j changes has weight
+  // p_change^j (1 - p_change)^(n - 1 - j), whichever segment it ends in.
+  // Returns the matrix whose element (t, k) is the log of the summed weight of
+  // all paths over days 1 to t which end in segment k.
+  matrix changepoint_forward(matrix ll, real p_change) {
+    int n = rows(ll);
+    int n_segments = cols(ll);
+    matrix[n, n_segments] log_alpha = rep_matrix(negative_infinity(), n, n_segments);
+    log_alpha[1, 1] = ll[1, 1];
+    for (t in 2:n) {
+      for (k in 1:(t < n_segments ? t : n_segments)) {
+        // terms of minus infinity are left out of sums, since their
+        // gradients are not numbers
+        int can_stay = log_alpha[t - 1, k] > negative_infinity();
+        int can_move = k > 1 ? log_alpha[t - 1, k - 1] > negative_infinity() : 0;
+        if (ll[t, k] > negative_infinity()) {
+          if (can_stay && can_move) {
+            log_alpha[t, k] = ll[t, k]
+                              + log_sum_exp(log_alpha[t - 1, k] + log1m(p_change),
+                                            log_alpha[t - 1, k - 1] + log(p_change));
+          } else if (can_stay) {
+            log_alpha[t, k] = ll[t, k] + log_alpha[t - 1, k] + log1m(p_change);
+          } else if (can_move) {
+            log_alpha[t, k] = ll[t, k] + log_alpha[t - 1, k - 1] + log(p_change);
+          }
+        }
+      }
+    }
+    return log_alpha;
+  }
+
+  // log of the summed weight of all paths
+  real changepoint_marginal(matrix ll, real p_change) {
+    int n = rows(ll);
+    int n_segments = cols(ll);
+    int n_reachable = n < n_segments ? n : n_segments;
+    row_vector[n_segments] last = changepoint_forward(ll, p_change)[n];
+    real total = negative_infinity();
+    for (k in 1:n_reachable) {
+      if (last[k] > negative_infinity()) {
+        total = total > negative_infinity() ? log_sum_exp(total, last[k]) : last[k];
+      }
+    }
+    return total;
+  }
+
+  // a draw of the segment of each day given everything else
+  array[] int changepoint_segments_rng(matrix ll, real p_change) {
+    int n = rows(ll);
+    int n_segments = cols(ll);
+    matrix[n, n_segments] log_alpha = changepoint_forward(ll, p_change);
+    array[n] int segment;
+    int n_reachable = n < n_segments ? n : n_segments;
+    segment[n] = categorical_logit_rng(log_alpha[n, 1:n_reachable]');
+    for (i in 1:(n - 1)) {
+      int t = n - i;
+      int k = segment[t + 1];
+      if (k == 1) {
+        segment[t] = 1;
+      } else if (log_alpha[t, k] == negative_infinity()) {
+        segment[t] = k - 1;                  // segment k cannot yet have started
+      } else {
+        real stay = log_alpha[t, k] + log1m(p_change);
+        real move = log_alpha[t, k - 1] + log(p_change);
+        segment[t] = bernoulli_logit_rng(stay - move) ? k : k - 1;
+      }
+    }
+    return segment;
+  }
+
+  // log-likelihood of the true cases of each onset day under the renewal
+  // model, for each of a set of values of log Rt (columns)
+  matrix renewal_ll(vector cases_true, vector cases_before, vector serial_weights,
+                    vector log_Rt, int is_negative_binomial, real kappa) {
+    int n_days = rows(cases_true);
+    int serial_max = rows(serial_weights);
+    int n_values = rows(log_Rt);
+    vector[serial_max + n_days] cases_all = append_row(cases_before, cases_true);
+    matrix[n_days, n_values] ll = rep_matrix(0, n_days, n_values);
+    for (t in 1:n_days) {
+      real infectiousness = dot_product(
+        serial_weights, reverse(cases_all[t:(t + serial_max - 1)]));
+      if (infectiousness > 0) {
+        for (k in 1:n_values) {
+          real mean_cases = exp(log_Rt[k]) * infectiousness;
+          if (is_negative_binomial) {
+            ll[t, k] = neg_binomial_real_logp(cases_true[t], mean_cases, kappa);
+          } else {
+            ll[t, k] = poisson_real_logp(cases_true[t], mean_cases);
+          }
+        }
+      }
+    }
+    return ll;
+  }
+
+  // log-likelihood of the reported counts of each onset day. If
+  // is_delay_changepoints there is a column for each segment of the delay;
+  // otherwise there is a single column, each onset day having the delay of its
+  // period.
+  matrix reporting_ll(vector cases_true, array[] int obs_day, array[] int obs_count,
+                      array[] int obs_start, array[] int obs_n,
+                      vector delay_mean, vector delay_sd, array[] int delay_period,
+                      int is_delay_changepoints, real tail_weight, real tail_mean,
+                      vector hazard_multiplier, real eta, real rho, int max_erroneous,
+                      real p_misdated, array[] int shifts, vector shift_probs) {
+    int n_days = rows(cases_true);
+    int n_delays = rows(delay_mean);
+    int n_columns = is_delay_changepoints ? n_delays : 1;
+    matrix[n_days, n_columns] ll = rep_matrix(0, n_days, n_columns);
+    array[n_delays] vector[n_days] log_base;
+    matrix[n_days, n_days] log_undetected;
+    for (p in 1:n_delays) {
+      log_base[p] = delay_log_survival(n_days, delay_mean[p], delay_sd[p],
+                                       tail_weight, tail_mean);
+    }
+    if (!is_delay_changepoints) {
+      for (t in 1:n_days) {
+        log_undetected[t] = log_undetected_row(t, log_base[delay_period[t]],
+                                               hazard_multiplier)';
+      }
+    }
+    for (t in 1:n_days) {
+      if (obs_n[t] > 1) {
+        array[obs_n[t]] int days = obs_day[obs_start[t]:(obs_start[t] + obs_n[t] - 1)];
+        array[obs_n[t]] int counts = obs_count[obs_start[t]:(obs_start[t] + obs_n[t] - 1)];
+        int n_after = n_days - t;
+        for (c in 1:n_columns) {
+          vector[n_after + 1] row_undetected;
+          vector[n_after + 1] unrecorded;
+          vector[obs_n[t]] entries_extra = rep_vector(0, obs_n[t]);
+          if (is_delay_changepoints) {
+            row_undetected = log_undetected_row(t, log_base[c],
+                                                hazard_multiplier)[1:(n_after + 1)];
+          } else {
+            row_undetected = log_undetected[t, 1:(n_after + 1)]';
+          }
+          unrecorded = exp(row_undetected);
+          if (p_misdated > 0) {
+            unrecorded = unrecorded_row(row_undetected, n_after, rho, p_misdated,
+                                        shifts, shift_probs);
+            entries_extra = misdated_entries(t, days, cases_true, log_undetected, rho,
+                                             p_misdated, shifts, shift_probs);
+          }
+          ll[t, c] = observation_logp(cases_true[t], days, counts, t, row_undetected,
+                                      unrecorded, entries_extra, eta, rho,
+                                      max_erroneous);
+        }
+      }
+    }
+    return ll;
+  }
+
+  // multiplier on the hazard of reporting on each day
+  vector hazard_multipliers(int n_days, int is_weekday, array[] int weekday_report,
+                            vector log_weekday, int is_report_effects,
+                            array[] int report_index, vector log_report) {
+    vector[n_days] out;
+    for (k in 1:n_days) {
+      real log_multiplier = 0;
+      if (is_weekday && weekday_report[k] > 0) {
+        log_multiplier += log_weekday[weekday_report[k]];
+      }
+      if (is_report_effects && report_index[k] > 0) {
+        log_multiplier += log_report[report_index[k]];
+      }
+      out[k] = exp(log_multiplier);
+    }
+    return out;
+  }
 }
 data {
   int<lower=1> n_days;                      // onset days
@@ -250,9 +429,16 @@ data {
   int<lower=1> n_periods;                   // periods within which Rt is constant
   array[n_days] int<lower=1, upper=n_periods> period;
   int<lower=0, upper=1> is_Rt_random_walk;  // else Rt independent between periods
+  int<lower=0, upper=1> is_Rt_changepoints; // Rt changes at unknown onset days: the
+                                            // periods are then its segments in order
+                                            // (n_periods is one more than the maximum
+                                            // number of changes) and 'period' is unused
 
   int<lower=1> n_delay_periods;             // periods within which the delay is the same
   array[n_days] int<lower=1, upper=n_delay_periods> delay_period;
+  int<lower=0, upper=1> is_delay_changepoints; // the delay changes at unknown onset
+                                            // days: the delay periods are then its
+                                            // segments and 'delay_period' is unused
   int<lower=0, upper=1> is_tail;            // exponential tail to the delay
 
   int<lower=0, upper=1> is_weekday;         // effect of the day of the week of a report
@@ -292,6 +478,8 @@ data {
   real<lower=0> report_sd_scale;            // logs of the effects of reports
   real<lower=0> pi_alpha;
   real<lower=0> pi_beta;
+  real<lower=0> change_alpha;               // beta prior on the probability that each
+  real<lower=0> change_beta;                // onset day starts a new segment
 }
 parameters {
   vector<lower=0>[n_sampled] cases_extra;   // true cases above their lower bound
@@ -308,6 +496,8 @@ parameters {
   vector[is_report_effects ? n_reports : 0] report_raw;
   array[is_report_effects] real<lower=0> report_sd;
   array[is_misdating] real<lower=0, upper=1> pi_misdated;
+  array[is_Rt_changepoints] real<lower=0, upper=1> Rt_p_change;
+  array[is_delay_changepoints] real<lower=0, upper=1> delay_p_change;
 }
 transformed parameters {
   vector[n_days] cases_true = cases_fixed;
@@ -323,33 +513,10 @@ transformed parameters {
   }
 }
 model {
-  vector[n_days] hazard_multiplier = rep_vector(1, n_days);
-  matrix[n_days, n_days] log_undetected;
-  vector[serial_max + n_days] cases_all = append_row(cases_before, cases_true);
+  vector[n_days] hazard_multiplier = hazard_multipliers(
+    n_days, is_weekday, weekday_report, log_weekday, is_report_effects, report_index,
+    is_report_effects ? report_sd[1] * report_raw : rep_vector(0, 0));
   real p_misdated = is_misdating ? pi_misdated[1] : 0;
-
-  for (k in 1:n_days) {
-    real log_multiplier = 0;
-    if (is_weekday && weekday_report[k] > 0) {
-      log_multiplier += log_weekday[weekday_report[k]];
-    }
-    if (is_report_effects && report_index[k] > 0) {
-      log_multiplier += report_sd[1] * report_raw[report_index[k]];
-    }
-    hazard_multiplier[k] = exp(log_multiplier);
-  }
-  {
-    array[n_delay_periods] vector[n_days] log_base;
-    for (p in 1:n_delay_periods) {
-      log_base[p] = delay_log_survival(n_days, delay_mean[p], delay_sd[p],
-                                       is_tail ? tail_weight[1] : 0,
-                                       is_tail ? tail_mean[1] : 1);
-    }
-    for (t in 1:n_days) {
-      log_undetected[t] = log_undetected_row(t, log_base[delay_period[t]],
-                                             hazard_multiplier)';
-    }
-  }
 
   // priors (gamma distributions given by mean and sd)
   delay_mean ~ gamma(square(delay_mean_mu / delay_mean_sigma),
@@ -383,47 +550,78 @@ model {
   if (is_misdating) {
     pi_misdated ~ beta(pi_alpha, pi_beta);
   }
+  if (is_Rt_changepoints) {
+    Rt_p_change ~ beta(change_alpha, change_beta);
+  }
+  if (is_delay_changepoints) {
+    delay_p_change ~ beta(change_alpha, change_beta);
+  }
 
   // renewal model
-  for (t in 1:n_days) {
-    real infectiousness = dot_product(
-      serial_weights, reverse(cases_all[t:(t + serial_max - 1)]));
-    if (infectiousness > 0) {
-      real mean_cases = exp(log_Rt[period[t]]) * infectiousness;
-      if (is_negative_binomial) {
-        target += neg_binomial_real_logp(cases_true[t], mean_cases, kappa[1]);
-      } else {
-        target += poisson_real_logp(cases_true[t], mean_cases);
+  {
+    matrix[n_days, n_periods] ll = renewal_ll(
+      cases_true, cases_before, serial_weights, log_Rt, is_negative_binomial,
+      is_negative_binomial ? kappa[1] : 1);
+    if (is_Rt_changepoints) {
+      target += changepoint_marginal(ll, Rt_p_change[1]);
+    } else {
+      for (t in 1:n_days) {
+        target += ll[t, period[t]];
       }
     }
   }
 
   // reporting
-  for (t in 1:n_days) {
-    if (obs_n[t] > 1) {
-      array[obs_n[t]] int days = obs_day[obs_start[t]:(obs_start[t] + obs_n[t] - 1)];
-      int n_after = n_days - t;
-      vector[n_after + 1] row_undetected = log_undetected[t, 1:(n_after + 1)]';
-      vector[n_after + 1] unrecorded = exp(row_undetected);
-      vector[obs_n[t]] entries_extra = rep_vector(0, obs_n[t]);
-      if (is_misdating) {
-        unrecorded = unrecorded_row(row_undetected, n_after, rho, p_misdated,
-                                    shifts, shift_probs);
-        entries_extra = misdated_entries(t, days, cases_true, log_undetected, rho,
-                                         p_misdated, shifts, shift_probs);
-      }
-      target += observation_logp(
-        cases_true[t], days,
-        obs_count[obs_start[t]:(obs_start[t] + obs_n[t] - 1)],
-        t, row_undetected, unrecorded, entries_extra, eta, rho, max_erroneous);
+  {
+    matrix[n_days, is_delay_changepoints ? n_delay_periods : 1] ll = reporting_ll(
+      cases_true, obs_day, obs_count, obs_start, obs_n, delay_mean, delay_sd,
+      delay_period, is_delay_changepoints, is_tail ? tail_weight[1] : 0,
+      is_tail ? tail_mean[1] : 1, hazard_multiplier, eta, rho, max_erroneous,
+      p_misdated, shifts, shift_probs);
+    if (is_delay_changepoints) {
+      target += changepoint_marginal(ll, delay_p_change[1]);
+    } else {
+      target += sum(ll);
     }
   }
 }
 generated quantities {
-  vector[n_days] Rt = exp(log_Rt[period]);
+  vector[n_days] Rt;
+  vector[n_days] delay_mean_day;
+  vector[n_days] delay_sd_day;
+  int Rt_n_changes = 0;
+  int delay_n_changes = 0;
   vector[7] weekday_effect = exp(log_weekday);
   vector[is_report_effects ? n_reports : 0] report_effect;
   if (is_report_effects) {
     report_effect = exp(report_sd[1] * report_raw);
+  }
+  if (is_Rt_changepoints) {
+    array[n_days] int segment = changepoint_segments_rng(
+      renewal_ll(cases_true, cases_before, serial_weights, log_Rt,
+                 is_negative_binomial, is_negative_binomial ? kappa[1] : 1),
+      Rt_p_change[1]);
+    Rt = exp(log_Rt[segment]);
+    Rt_n_changes = segment[n_days] - 1;
+  } else {
+    Rt = exp(log_Rt[period]);
+  }
+  if (is_delay_changepoints) {
+    array[n_days] int segment = changepoint_segments_rng(
+      reporting_ll(cases_true, obs_day, obs_count, obs_start, obs_n, delay_mean,
+                   delay_sd, delay_period, 1, is_tail ? tail_weight[1] : 0,
+                   is_tail ? tail_mean[1] : 1,
+                   hazard_multipliers(n_days, is_weekday, weekday_report, log_weekday,
+                                      is_report_effects, report_index,
+                                      is_report_effects ? report_sd[1] * report_raw
+                                                        : rep_vector(0, 0)),
+                   eta, rho, max_erroneous, 0, shifts, shift_probs),
+      delay_p_change[1]);
+    delay_mean_day = delay_mean[segment];
+    delay_sd_day = delay_sd[segment];
+    delay_n_changes = segment[n_days] - 1;
+  } else {
+    delay_mean_day = delay_mean[delay_period];
+    delay_sd_day = delay_sd[delay_period];
   }
 }

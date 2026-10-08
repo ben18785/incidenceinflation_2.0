@@ -14,8 +14,11 @@
 #' (if it is independent between periods); the parameters of the beta prior on
 #' the weight of the tail of the delay and the mean and sd of the gamma prior
 #' on its mean; the shape and scale of the inverse-gamma prior on the variance
-#' of the logs of the effects of reports; and the parameters of the beta prior
-#' on the probability that a case is misdated
+#' of the logs of the effects of reports; the parameters of the beta prior
+#' on the probability that a case is misdated; and the parameters of the beta
+#' prior on the probability that each onset time starts a new segment, where
+#' changes are at unknown times (the second defaults to the number of onset
+#' times, as in \code{changepoints_logp_prior})
 #' @export
 relaxed_priors <- function() {
   list(delay_mean_mu=7, delay_mean_sigma=10, delay_sd_mu=5, delay_sd_sigma=5,
@@ -24,7 +27,8 @@ relaxed_priors <- function() {
        log_Rt_first_sd=1, Rt_step_sd=0.1, Rt_shape=1, Rt_rate=1,
        tail_weight_alpha=1, tail_weight_beta=3, tail_mean_mu=15, tail_mean_sigma=10,
        report_sd_shape=3, report_sd_scale=0.2,
-       pi_alpha=1, pi_beta=9)
+       pi_alpha=1, pi_beta=9,
+       change_alpha=1, change_beta=NA)
 }
 
 #' Prepares the data for the relaxed model
@@ -59,6 +63,16 @@ relaxed_priors <- function() {
 #' @param misdating NULL if cases are never misdated; or a named list of
 #' 'shifts' and 'shift_probs' (see \code{unrecorded_prob}), in which case the
 #' probability that a case is misdated is estimated
+#' @param Rt_max_changes if greater than zero, Rt changes at unknown onset
+#' times, at most this number of times, and is constant between changes with
+#' the gamma prior of \code{relaxed_priors}. Rt_index, Rt_period_width and
+#' Rt_random_walk are then ignored. The prior on the changes is that of
+#' \code{changepoints_logp_prior}, limited to this number of changes and
+#' without a minimum length of segment. The default, zero, switches this off.
+#' @param delay_max_changes as Rt_max_changes, for the mean and sd of the
+#' reporting delay; reporting_piece_index is then ignored. Each change allowed
+#' adds about as much computation as the whole model of reporting without
+#' changes. This cannot be combined with misdating.
 #' @param priors a named list as returned by \code{relaxed_priors}
 #'
 #' @return a named list of data for the Stan model
@@ -71,6 +85,7 @@ relaxed_stan_data <- function(snapshot_df, serial_parameters, cases_before=NULL,
                               reporting_piece_index=NULL,
                               is_negative_binomial=TRUE, tail=FALSE,
                               report_effects=FALSE, misdating=NULL,
+                              Rt_max_changes=0, delay_max_changes=0,
                               priors=relaxed_priors()) {
   df <- snapshot_df %>%
     dplyr::arrange(.data$time_onset, .data$time_reported)
@@ -124,11 +139,25 @@ relaxed_stan_data <- function(snapshot_df, serial_parameters, cases_before=NULL,
        any(shifts == 0) || abs(sum(shift_probs) - 1) > 1e-8)
       stop("Shifts must be non-zero and their probabilities must sum to one.")
   }
+  # changes at unknown onset times: the periods become segments in order
+  if(Rt_max_changes < 0 | delay_max_changes < 0)
+    stop("The maximum number of changes cannot be negative.")
+  if(Rt_max_changes > 0) {
+    period <- as.integer(pmin(seq_len(n_days), Rt_max_changes + 1))
+    Rt_random_walk <- FALSE
+  }
+  if(delay_max_changes > 0) {
+    if(!is.null(misdating))
+      stop("Changes in the delay at unknown times cannot be combined with misdating.")
+    delay_period <- as.integer(pmin(seq_len(n_days), delay_max_changes + 1))
+  }
   unknown <- setdiff(names(priors), names(relaxed_priors()))
   if(length(unknown) > 0)
     stop(paste0("Unknown priors: ", paste(unknown, collapse=", "), "."))
   priors_all <- relaxed_priors()
   priors_all[names(priors)] <- priors
+  if(is.na(priors_all$change_beta))
+    priors_all$change_beta <- n_days
 
   c(list(
     n_days=n_days,
@@ -149,8 +178,10 @@ relaxed_stan_data <- function(snapshot_df, serial_parameters, cases_before=NULL,
     n_periods=max(period),
     period=period,
     is_Rt_random_walk=as.integer(Rt_random_walk),
+    is_Rt_changepoints=as.integer(Rt_max_changes > 0),
     n_delay_periods=max(delay_period),
     delay_period=delay_period,
+    is_delay_changepoints=as.integer(delay_max_changes > 0),
     is_tail=as.integer(tail),
     is_weekday=as.integer(!is.null(weekday_first)),
     weekday_report=weekday_report,
@@ -192,7 +223,9 @@ relaxed_inits <- function(data) {
       eta=0.01,
       rho=0.2,
       kappa=as.array(stats::runif(data$is_negative_binomial, 5, 30)),
-      log_Rt_raw=as.array(rep(0, data$n_periods)),
+      log_Rt_raw=as.array(stats::rnorm(data$n_periods, 0, 0.1)),
+      Rt_p_change=as.array(rep(1 / data$n_days, data$is_Rt_changepoints)),
+      delay_p_change=as.array(rep(1 / data$n_days, data$is_delay_changepoints)),
       Rt_step=as.array(rep(0.05, data$is_Rt_random_walk)),
       tail_weight=as.array(rep(0.05, data$is_tail)),
       tail_mean=as.array(rep(15, data$is_tail)),
@@ -233,7 +266,8 @@ fit_relaxed <- function(data, method=c("nuts", "pathfinder", "advi",
 #' @param fit as returned by \code{fit_relaxed}
 #'
 #' @return a named list of tibbles: 'cases' (iteration, time_onset,
-#' cases_true), 'Rt' (iteration, time_onset, Rt) and 'parameters' (a column
+#' cases_true), 'Rt' (iteration, time_onset, Rt), 'delay' (iteration,
+#' time_onset, mean, sd) and 'parameters' (a column
 #' for each of the other parameters; where the delay differs between periods
 #' its mean and sd have a column for each)
 #' @export
@@ -250,7 +284,8 @@ relaxed_draws <- function(fit) {
   # parameters which a model option leaves out are skipped
   names_parameters <- c("delay_mean", "delay_sd", "eta", "rho", "kappa", "Rt_step",
                         "tail_weight", "tail_mean", "report_sd", "pi_misdated",
-                        "weekday_effect", "report_effect")
+                        "Rt_p_change", "delay_p_change", "Rt_n_changes",
+                        "delay_n_changes", "weekday_effect", "report_effect")
   names_fit <- unique(sub("\\[.*", "", posterior::variables(fit$draws())))
   parameters <- fit$draws(intersect(names_parameters, names_fit),
                           format="draws_df") %>%
@@ -259,12 +294,16 @@ relaxed_draws <- function(fit) {
     dplyr::rename(iteration=".draw")
   # those of which there is only one are named without an index
   for(name in c("delay_mean", "delay_sd", "kappa", "Rt_step", "tail_weight",
-                "tail_mean", "report_sd", "pi_misdated")) {
+                "tail_mean", "report_sd", "pi_misdated", "Rt_p_change",
+                "delay_p_change")) {
     indexed <- grep(paste0("^", name, "\\["), colnames(parameters), value=TRUE)
     if(length(indexed) == 1)
       colnames(parameters)[colnames(parameters) == indexed] <- name
   }
   list(cases=f_long("cases_true", "cases_true"),
        Rt=f_long("Rt", "Rt"),
+       delay=dplyr::left_join(f_long("delay_mean_day", "mean"),
+                              f_long("delay_sd_day", "sd"),
+                              by=c("iteration", "time_onset")),
        parameters=parameters)
 }

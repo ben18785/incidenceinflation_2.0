@@ -77,6 +77,23 @@ test_that("relaxed_stan_data lays out the data for the model", {
   expect_equal(length(init$report_raw), options$n_reports)
   expect_equal(length(init$pi_misdated), 1)
 
+  # changes at unknown times: off by default
+  expect_equal(c(data$is_Rt_changepoints, data$is_delay_changepoints), c(0, 0))
+  expect_equal(data$change_beta, 14)
+  changes <- relaxed_stan_data(df, list(mean=3, sd=2), Rt_max_changes=2,
+                               delay_max_changes=1, priors=list(change_beta=30))
+  expect_equal(c(changes$is_Rt_changepoints, changes$is_delay_changepoints), c(1, 1))
+  expect_equal(c(changes$n_periods, changes$n_delay_periods), c(3, 2))
+  expect_equal(changes$is_Rt_random_walk, 0)
+  expect_equal(changes$change_beta, 30)
+  init <- relaxed_inits(changes)()
+  expect_equal(c(length(init$Rt_p_change), length(init$delay_p_change)), c(1, 1))
+  expect_equal(length(init$log_Rt_raw), 3)
+  expect_error(relaxed_stan_data(df, list(mean=3, sd=2), Rt_max_changes=-1))
+  expect_error(relaxed_stan_data(
+    df, list(mean=3, sd=2), delay_max_changes=1,
+    misdating=list(shifts=c(-1, 1), shift_probs=c(0.5, 0.5))))
+
   expect_error(relaxed_stan_data(df, list(mean=3, sd=2), Rt_index=rep(2, 14)))
   expect_error(relaxed_stan_data(df, list(mean=3, sd=2), Rt_index=c(1, 3, rep(3, 12))))
   expect_error(relaxed_stan_data(df, list(mean=3, sd=2), reporting_piece_index=1:3))
@@ -202,6 +219,48 @@ test_that("the likelihood of the relaxed model matches that of the package", {
       }
     }
   }
+  # changes at unknown times: the sum over the days of changes, against
+  # enumeration of every set of days with at most two changes
+  n_cp <- 8
+  p_change <- 0.2
+  ll <- matrix(rnorm(n_cp * 3), n_cp, 3)
+  f_paths <- function(ll, f_keep=function(segment) TRUE) {
+    total <- -Inf
+    for(code in 0:(2^(n_cp - 1) - 1)) {
+      change <- as.integer(bitwAnd(code, 2^(0:(n_cp - 2))) > 0)
+      if(sum(change) > 2)
+        next
+      segment <- 1 + c(0, cumsum(change))
+      if(f_keep(segment))
+        total <- matrixStats::logSumExp(c(
+          total, sum(ll[cbind(1:n_cp, segment)]) + sum(change) * log(p_change) +
+            (n_cp - 1 - sum(change)) * log(1 - p_change)))
+    }
+    total
+  }
+  expect_equal(f$changepoint_marginal(ll, p_change), f_paths(ll))
+  # a single segment is the likelihood of no change
+  expect_equal(f$changepoint_marginal(ll[, 1, drop=FALSE], p_change),
+               sum(ll[, 1]) + (n_cp - 1) * log(1 - p_change))
+  # more segments than days
+  expect_true(is.finite(f$changepoint_marginal(ll[1:2, ], p_change)))
+  # draws of segments: with a flat likelihood the number of changes follows the
+  # prior limited to two changes
+  k <- 0:2
+  prior <- choose(n_cp - 1, k) * p_change^k * (1 - p_change)^(n_cp - 1 - k)
+  n_changes <- replicate(3000, max(f$changepoint_segments_rng(matrix(0, n_cp, 3),
+                                                              p_change)) - 1)
+  expect_true(max(abs(as.numeric(table(factor(n_changes, levels=k))) / 3000 -
+                        prior / sum(prior))) < 0.03)
+  # and otherwise follow the posterior found by enumeration
+  ll[5:8, 2] <- ll[5:8, 2] + 4
+  segments <- t(replicate(2000, f$changepoint_segments_rng(ll, p_change)))
+  expect_true(all(apply(segments, 1, function(x) all(diff(x) %in% c(0, 1)) & x[1] == 1)))
+  for(day in c(3, 5, 7))
+    expect_equal(mean(segments[, day] >= 2),
+                 exp(f_paths(ll, function(segment) segment[day] >= 2) - f_paths(ll)),
+                 tolerance=0.04)
+
   expect_equal(f$neg_binomial_real_logp(7, 5.5, 3), dnbinom(7, mu=5.5, size=3, log=TRUE))
   expect_equal(f$poisson_real_logp(4, 2.5), dpois(4, 2.5, log=TRUE))
   expect_equal(f$binomial_real_logp(3, 10, 0.3), dbinom(3, 10, 0.3, log=TRUE))
@@ -258,4 +317,28 @@ test_that("the relaxed model can be fitted and its draws extracted", {
   Rt <- draws_all$Rt %>% dplyr::filter(iteration == 1) %>% dplyr::arrange(time_onset)
   expect_equal(length(unique(Rt$Rt)), 3)
   expect_equal(Rt$Rt[1], Rt$Rt[10])
+  expect_equal(colnames(draws_all$delay), c("iteration", "time_onset", "mean", "sd"))
+  expect_true(all(draws_all$parameters$Rt_n_changes == 0))
+
+  # changes at unknown times in Rt and in the delay
+  data_changes <- relaxed_stan_data(
+    dplyr::select(df, -cases_true), list(mean=4, sd=2), days_sampled=12,
+    Rt_max_changes=2, delay_max_changes=1)
+  fit_changes <- suppressMessages(fit_relaxed(data_changes, "laplace", model, seed=6,
+                                              refresh=0, draws=100, show_messages=FALSE))
+  draws_changes <- relaxed_draws(fit_changes)
+  expect_true(all(draws_changes$parameters$Rt_n_changes %in% 0:2))
+  expect_true(all(draws_changes$parameters$delay_n_changes %in% 0:1))
+  expect_true(all(c("Rt_p_change", "delay_p_change") %in% colnames(draws_changes$parameters)))
+  # within a draw Rt takes at most three values, in runs
+  n_values <- draws_changes$Rt %>%
+    dplyr::group_by(iteration) %>%
+    dplyr::arrange(time_onset, .by_group=TRUE) %>%
+    dplyr::summarise(n_runs=1 + sum(diff(Rt) != 0), n_values=dplyr::n_distinct(Rt))
+  expect_true(all(n_values$n_runs == n_values$n_values))
+  expect_true(all(n_values$n_values <= 3))
+  n_delays <- draws_changes$delay %>%
+    dplyr::group_by(iteration) %>%
+    dplyr::summarise(n=dplyr::n_distinct(mean))
+  expect_true(all(n_delays$n <= 2))
 })

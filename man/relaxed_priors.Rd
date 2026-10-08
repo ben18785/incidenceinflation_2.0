@@ -17,8 +17,11 @@ half-normal prior on the sd of the steps in the log of Rt between periods
 (if it is independent between periods); the parameters of the beta prior on
 the weight of the tail of the delay and the mean and sd of the gamma prior
 on its mean; the shape and scale of the inverse-gamma prior on the variance
-of the logs of the effects of reports; and the parameters of the beta prior
-on the probability that a case is misdated
+of the logs of the effects of reports; the parameters of the beta prior
+on the probability that a case is misdated; and the parameters of the beta
+prior on the probability that each onset time starts a new segment, where
+changes are at unknown times (the second defaults to the number of onset
+times, as in \code{changepoints_logp_prior})
 }
 \description{
 Default priors of the relaxed model

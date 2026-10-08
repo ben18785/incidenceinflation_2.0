@@ -11,7 +11,8 @@ relaxed_draws(fit)
 }
 \value{
 a named list of tibbles: 'cases' (iteration, time_onset,
-cases_true), 'Rt' (iteration, time_onset, Rt) and 'parameters' (a column
+cases_true), 'Rt' (iteration, time_onset, Rt), 'delay' (iteration,
+time_onset, mean, sd) and 'parameters' (a column
 for each of the other parameters; where the delay differs between periods
 its mean and sd have a column for each)
 }

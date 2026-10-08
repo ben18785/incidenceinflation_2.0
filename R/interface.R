@@ -1,6 +1,6 @@
-# A common interface to the ways of fitting the model: the exact sampler
-# (mcmc_single) and the relaxed model in Stan (fit_relaxed), fitted by
-# Hamiltonian Monte Carlo or by an approximation. The same data, options and
+# A common interface to the two versions of the model: the discrete model,
+# fitted by its Gibbs sampler (mcmc_single), and the relaxed model in Stan
+# (fit_relaxed), fitted by Hamiltonian Monte Carlo or by an approximation. The same data, options and
 # priors are given whichever is used, and the result has the same form.
 
 #' Options of the model, common to all ways of fitting it
@@ -18,7 +18,7 @@
 #' width
 #' @param Rt_max_changes for "changepoints" in the relaxed model, the largest
 #' number of changes allowed
-#' @param Rt_min_length for "changepoints" in the exact sampler, the smallest
+#' @param Rt_min_length for "changepoints" in the discrete model, the smallest
 #' number of onset times between changes
 #' @param delay_model how the reporting delay varies over onset times:
 #' "single" (the same throughout), "periods" (its own mean and sd in each of
@@ -38,8 +38,8 @@
 #' @param misdating NULL if cases are never misdated; or a named list of
 #' 'shifts' and 'shift_probs' (see \code{unrecorded_prob})
 #' @param batches NULL for no batches of erroneous records; or a named list
-#' as for the 'batches' element of the priors of \code{mcmc_single} (exact
-#' sampler only)
+#' as for the 'batches' element of the priors of \code{mcmc_single} (discrete
+#' model only)
 #' @param max_erroneous the largest number of erroneous records held for an
 #' onset time at once; by default one more than the largest fall in a
 #' reported count, and at least 3
@@ -93,25 +93,34 @@ model_priors <- function(...) {
   priors
 }
 
-#' Checks that the options are available for a way of fitting the model
+#' Checks that the options are available in a version of the model
 #'
 #' @param options as returned by \code{model_options}
-#' @param engine as for \code{fit_incidence}
+#' @param model as for \code{fit_incidence}
 #'
 #' @return nothing; stops with a message if an option is not available
-check_options_engine <- function(options, engine) {
-  if(engine == "mcmc") {
+check_options_model <- function(options, model) {
+  if(model == "discrete") {
     if(options$Rt_model == "random_walk")
-      stop(paste("A random walk for Rt is not available in the exact sampler:",
-                 "use an Rt_model of 'periods' or 'changepoints', or another engine."))
+      stop(paste("A random walk for Rt is not available in the discrete model:",
+                 "use an Rt_model of 'periods' or 'changepoints', or the relaxed model."))
   } else {
     if(!is.null(options$batches))
-      stop("Batches of erroneous records are only available in the exact sampler (engine 'mcmc').")
+      stop("Batches of erroneous records are only available in the discrete model.")
     if(options$delay_model == "changepoints" & !is.null(options$misdating))
       stop(paste("In the relaxed model, changes in the delay at unknown times",
                  "cannot be combined with misdating."))
   }
   invisible(NULL)
+}
+
+#' The methods by which each version of the model can be fitted
+#'
+#' @return a named list, with the default method of each model first
+#' @export
+fit_methods <- function() {
+  list(discrete="gibbs",
+       relaxed=c("nuts", "laplace", "advi", "advi_fullrank", "pathfinder"))
 }
 
 #' The period of each onset time
@@ -131,8 +140,8 @@ period_index <- function(n_days, width, index=NULL) {
   as.integer(ceiling((seq_len(n_days) + offset) / width))
 }
 
-#' Fits the model by the exact sampler, with arguments and result in the
-#' common form
+#' Fits the discrete model by its Gibbs sampler, with arguments and result in
+#' the common form
 #'
 #' @inheritParams fit_incidence
 #' @param max_erroneous the largest number of erroneous records
@@ -150,7 +159,7 @@ fit_incidence_mcmc <- function(snapshot_df, serial_parameters, options, priors,
                    overdispersion_metropolis_sd=8, n_partition_moves=50)
   unknown <- setdiff(names(control), names(defaults))
   if(length(unknown) > 0)
-    stop(paste0("Unknown settings for the exact sampler: ",
+    stop(paste0("Unknown settings for the Gibbs sampler: ",
                 paste(unknown, collapse=", "), "."))
   defaults[names(control)] <- control
   control <- defaults
@@ -268,7 +277,7 @@ fit_incidence_mcmc <- function(snapshot_df, serial_parameters, options, priors,
   }), names(results[[1]]))
 }
 
-#' Draws from one chain of the exact sampler, in the common form
+#' Draws from one chain of the Gibbs sampler, in the common form
 #'
 #' The first half of the chain is discarded and the rest thinned to at most
 #' control$draws draws.
@@ -341,13 +350,14 @@ mcmc_common_draws <- function(res, chain, control, onset_times, Rt_index,
 #' Fits the relaxed model, with arguments and result in the common form
 #'
 #' @inheritParams fit_incidence_mcmc
-#' @param engine one of the engines of \code{fit_incidence} other than "mcmc"
+#' @param method one of the methods of the relaxed model (see
+#' \code{fit_methods})
 #'
 #' @return a named list of 'cases', 'Rt', 'delay' and 'parameters', with the
 #' Stan fit as 'raw'
 #' @importFrom rlang .data
 fit_incidence_relaxed <- function(snapshot_df, serial_parameters, options, priors,
-                                  cases_before, serial_max, max_erroneous, engine,
+                                  cases_before, serial_max, max_erroneous, method,
                                   control) {
   data <- relaxed_stan_data(
     snapshot_df, serial_parameters, cases_before=cases_before,
@@ -367,17 +377,17 @@ fit_incidence_relaxed <- function(snapshot_df, serial_parameters, options, prior
   control$model <- NULL
   if(is.null(model))
     model <- relaxed_model()
-  defaults <- if(engine == "nuts")
+  defaults <- if(method == "nuts")
     list(chains=4, parallel_chains=4, iter_warmup=500, iter_sampling=500,
          adapt_delta=0.9, refresh=0)
   else
     list(draws=1000, refresh=0)
   defaults[names(control)] <- control
-  fit <- do.call(fit_relaxed, c(list(data=data, method=engine, model=model), defaults))
+  fit <- do.call(fit_relaxed, c(list(data=data, method=method, model=model), defaults))
 
   draws <- relaxed_draws(fit)
   chain_of_draw <- rep(1L, max(draws$cases$iteration))
-  if(engine == "nuts") {
+  if(method == "nuts") {
     chain_of_draw <- as.integer(posterior::as_draws_df(fit$draws("eta"))$.chain)
   }
   f_index <- function(df) {
@@ -390,7 +400,7 @@ fit_incidence_relaxed <- function(snapshot_df, serial_parameters, options, prior
       dplyr::relocate("chain", "draw")
   }
   parameters <- f_index(draws$parameters)
-  # names in common with the exact sampler
+  # names in common with the discrete model
   colnames(parameters) <- sub("^weekday_effect\\[(\\d)\\]$", "weekday_\\1",
                               colnames(parameters))
   if(!data$is_weekday)
@@ -433,23 +443,23 @@ split_rhat <- function(values, chain) {
 
 #' Diagnostics of a fit
 #'
-#' For engines which sample (the exact sampler and Hamiltonian Monte Carlo):
+#' For methods which sample (the Gibbs sampler and Hamiltonian Monte Carlo):
 #' the split R-hat of each parameter, of Rt and the delay for the latest onset
 #' time and of the total of the latest 14 onset times' cases; and the largest
 #' over all onset times' cases. For approximations: the Pareto k statistic of
 #' the importance ratios between the model and the approximation, where the
-#' engine provides them (values above about 0.7 indicate that the
+#' method provides them (values above about 0.7 indicate that the
 #' approximation is poor).
 #'
 #' @param result the draws in the common form
-#' @param engine as for \code{fit_incidence}
+#' @param method as for \code{fit_incidence}
 #'
 #' @return a named list of 'rhat' (a tibble, or NULL), 'rhat_cases_max',
 #' 'pareto_k' and, for Hamiltonian Monte Carlo, 'divergences'
 #' @importFrom rlang .data
-fit_diagnostics <- function(result, engine) {
+fit_diagnostics <- function(result, method) {
   out <- list(rhat=NULL, rhat_cases_max=NA_real_, pareto_k=NA_real_)
-  if(engine %in% c("mcmc", "nuts")) {
+  if(method %in% c("gibbs", "nuts")) {
     day_last <- max(result$Rt$time_onset)
     f_order <- function(df) dplyr::arrange(df, .data$chain, .data$draw)
     recent <- result$cases %>%
@@ -478,7 +488,7 @@ fit_diagnostics <- function(result, engine) {
     out$rhat_cases_max <- max(by_day$rhat[is.finite(by_day$rhat)], 1)
   }
   if(!is.null(result$raw)) {
-    if(engine == "nuts")
+    if(method == "nuts")
       out$divergences <- sum(result$raw$diagnostic_summary(quiet=TRUE)$num_divergent)
     variables <- posterior::variables(result$raw$draws())
     if(all(c("lp__", "lp_approx__") %in% variables)) {
@@ -498,29 +508,31 @@ fit_diagnostics <- function(result, engine) {
 #' options of the model and the priors are given in the same form whichever
 #' is used, and the result has the same form.
 #'
-#' The engines are:
+#' There are two versions of the model:
 #' \itemize{
-#' \item "mcmc": the exact sampler (\code{mcmc_single}), in which true case
-#' counts are whole numbers. Rt and the delay can change at unknown times
-#' without a limit on the number of changes, and batches of erroneous records
-#' are available. Rt cannot follow a random walk.
-#' \item "nuts": Hamiltonian Monte Carlo on the relaxed model (see
-#' \code{fit_relaxed}), in which true case counts are continuous. Changes at
-#' unknown times are limited to a maximum number.
-#' \item "laplace", "advi", "advi_fullrank", "pathfinder": approximations to
-#' the posterior of the relaxed model, which take seconds but can be poor,
-#' particularly where Rt or the delay changes at unknown times.
+#' \item "discrete": true case counts are whole numbers. Rt and the delay can
+#' change at unknown times without a limit on the number of changes, and
+#' batches of erroneous records are available. Rt cannot follow a random walk.
+#' It is fitted by the method "gibbs" (\code{mcmc_single}).
+#' \item "relaxed": true case counts are continuous (see \code{fit_relaxed}).
+#' Changes at unknown times are limited to a maximum number. It is fitted by
+#' the method "nuts" (Hamiltonian Monte Carlo, the default) or by one of the
+#' approximations "laplace", "advi", "advi_fullrank" and "pathfinder", which
+#' take seconds but can be poor, particularly where Rt or the delay changes at
+#' unknown times.
 #' }
-#' Options which an engine does not have give an error.
+#' Options which a version of the model does not have give an error.
 #'
 #' @param snapshot_df a tibble with columns: time_onset, time_reported,
 #' cases_reported. Onset times must be consecutive and start at 1.
 #' @inheritParams state_process_logp
-#' @param engine the method of fitting (see Details)
+#' @param model the version of the model: "discrete" or "relaxed" (see Details)
+#' @param method the method of fitting; by default "gibbs" for the discrete
+#' model and "nuts" for the relaxed model (see \code{fit_methods})
 #' @param options as returned by \code{model_options}
 #' @param priors as returned by \code{model_priors}
 #' @inheritParams sample_cases_history
-#' @param control a named list of settings for the engine. For "mcmc":
+#' @param control a named list of settings for the method. For "gibbs":
 #' 'niterations', 'chains', 'draws' (kept from each chain, after its first
 #' half), 'cores' (chains run at once), 'seed', 'n_parameter_steps',
 #' 'n_partition_moves' and step sizes (see \code{mcmc_single}). For the
@@ -541,18 +553,23 @@ fit_diagnostics <- function(result, engine) {
 #' tail_mean, report_sd, weekday_1 to weekday_7, Rt_n_changes and
 #' delay_n_changes, as the options require)
 #' \item 'diagnostics': see \code{fit_diagnostics}
-#' \item 'engine', 'options', 'priors', 'seconds' and, for engines other than
-#' "mcmc", 'raw' (the cmdstanr fit)
+#' \item 'model', 'method', 'options', 'priors', 'seconds' and, for the
+#' relaxed model, 'raw' (the cmdstanr fit)
 #' }
 #' @export
 #' @importFrom rlang .data
 fit_incidence <- function(snapshot_df, serial_parameters,
-                          engine=c("mcmc", "nuts", "laplace", "advi",
-                                   "advi_fullrank", "pathfinder"),
+                          model=c("discrete", "relaxed"), method=NULL,
                           options=model_options(), priors=model_priors(),
                           cases_before=NULL, serial_max=40, control=list()) {
-  engine <- match.arg(engine)
-  check_options_engine(options, engine)
+  model <- match.arg(model)
+  methods_model <- fit_methods()[[model]]
+  if(is.null(method))
+    method <- methods_model[1]
+  if(length(method) != 1 || !method %in% methods_model)
+    stop(paste0("The ", model, " model is fitted by method: ",
+                paste0("'", methods_model, "'", collapse=", "), "."))
+  check_options_model(options, model)
   required <- c("time_onset", "time_reported", "cases_reported")
   if(!all(required %in% colnames(snapshot_df)))
     stop("snapshot_df must have columns: time_onset, time_reported, cases_reported.")
@@ -565,15 +582,16 @@ fit_incidence <- function(snapshot_df, serial_parameters,
     max_erroneous <- max(3, max_downward_revision(snapshot_df) + 1)
 
   time_start <- Sys.time()
-  if(engine == "mcmc")
+  if(model == "discrete")
     result <- fit_incidence_mcmc(snapshot_df, serial_parameters, options, priors,
                                  cases_before, serial_max, max_erroneous, control)
   else
     result <- fit_incidence_relaxed(snapshot_df, serial_parameters, options, priors,
-                                    cases_before, serial_max, max_erroneous, engine,
+                                    cases_before, serial_max, max_erroneous, method,
                                     control)
-  result$diagnostics <- fit_diagnostics(result, engine)
-  result$engine <- engine
+  result$diagnostics <- fit_diagnostics(result, method)
+  result$model <- model
+  result$method <- method
   result$options <- options
   result$priors <- priors
   result$seconds <- as.numeric(Sys.time() - time_start, units="secs")
@@ -622,7 +640,8 @@ summary.incidenceinflation_fit <- function(object, probs=c(0.05, 0.5, 0.95), ...
 #' @export
 print.incidenceinflation_fit <- function(x, ...) {
   n_draws <- nrow(x$parameters)
-  cat("Fit by engine '", x$engine, "': ", n_draws, " draws in ",
+  cat("Fit of the ", x$model, " model by method '", x$method, "': ", n_draws,
+      " draws in ",
       length(unique(x$parameters$chain)), " chain(s), ",
       round(x$seconds), " seconds\n", sep="")
   s <- summary(x)

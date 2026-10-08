@@ -7,7 +7,8 @@
 fit_incidence(
   snapshot_df,
   serial_parameters,
-  engine = c("mcmc", "nuts", "laplace", "advi", "advi_fullrank", "pathfinder"),
+  model = c("discrete", "relaxed"),
+  method = NULL,
   options = model_options(),
   priors = model_priors(),
   cases_before = NULL,
@@ -22,7 +23,10 @@ cases_reported. Onset times must be consecutive and start at 1.}
 \item{serial_parameters}{named list of 'mean' and 'sd' of gamma distribution
 characterising the serial interval distribution}
 
-\item{engine}{the method of fitting (see Details)}
+\item{model}{the version of the model: "discrete" or "relaxed" (see Details)}
+
+\item{method}{the method of fitting; by default "gibbs" for the discrete
+model and "nuts" for the relaxed model (see \code{fit_methods})}
 
 \item{options}{as returned by \code{model_options}}
 
@@ -36,7 +40,7 @@ assumed about how they were reported.}
 
 \item{serial_max}{number of days over which the serial interval is defined}
 
-\item{control}{a named list of settings for the engine. For "mcmc":
+\item{control}{a named list of settings for the method. For "gibbs":
 'niterations', 'chains', 'draws' (kept from each chain, after its first
 half), 'cores' (chains run at once), 'seed', 'n_parameter_steps',
 'n_partition_moves' and step sizes (see \code{mcmc_single}). For the
@@ -58,8 +62,8 @@ other parameter (among kappa, eta, rho, pi_misdated, tail_weight,
 tail_mean, report_sd, weekday_1 to weekday_7, Rt_n_changes and
 delay_n_changes, as the options require)
 \item 'diagnostics': see \code{fit_diagnostics}
-\item 'engine', 'options', 'priors', 'seconds' and, for engines other than
-"mcmc", 'raw' (the cmdstanr fit)
+\item 'model', 'method', 'options', 'priors', 'seconds' and, for the
+relaxed model, 'raw' (the cmdstanr fit)
 }
 }
 \description{
@@ -68,18 +72,18 @@ options of the model and the priors are given in the same form whichever
 is used, and the result has the same form.
 }
 \details{
-The engines are:
+There are two versions of the model:
 \itemize{
-\item "mcmc": the exact sampler (\code{mcmc_single}), in which true case
-counts are whole numbers. Rt and the delay can change at unknown times
-without a limit on the number of changes, and batches of erroneous records
-are available. Rt cannot follow a random walk.
-\item "nuts": Hamiltonian Monte Carlo on the relaxed model (see
-\code{fit_relaxed}), in which true case counts are continuous. Changes at
-unknown times are limited to a maximum number.
-\item "laplace", "advi", "advi_fullrank", "pathfinder": approximations to
-the posterior of the relaxed model, which take seconds but can be poor,
-particularly where Rt or the delay changes at unknown times.
+\item "discrete": true case counts are whole numbers. Rt and the delay can
+change at unknown times without a limit on the number of changes, and
+batches of erroneous records are available. Rt cannot follow a random walk.
+It is fitted by the method "gibbs" (\code{mcmc_single}).
+\item "relaxed": true case counts are continuous (see \code{fit_relaxed}).
+Changes at unknown times are limited to a maximum number. It is fitted by
+the method "nuts" (Hamiltonian Monte Carlo, the default) or by one of the
+approximations "laplace", "advi", "advi_fullrank" and "pathfinder", which
+take seconds but can be poor, particularly where Rt or the delay changes at
+unknown times.
 }
-Options which an engine does not have give an error.
+Options which a version of the model does not have give an error.
 }

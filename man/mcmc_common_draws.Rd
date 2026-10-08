@@ -2,7 +2,7 @@
 % Please edit documentation in R/interface.R
 \name{mcmc_common_draws}
 \alias{mcmc_common_draws}
-\title{Draws from one chain of the exact sampler, in the common form}
+\title{Draws from one chain of the Gibbs sampler, in the common form}
 \usage{
 mcmc_common_draws(res, chain, control, onset_times, Rt_index, piece_index)
 }

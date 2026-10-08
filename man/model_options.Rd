@@ -43,7 +43,7 @@ width}
 \item{Rt_max_changes}{for "changepoints" in the relaxed model, the largest
 number of changes allowed}
 
-\item{Rt_min_length}{for "changepoints" in the exact sampler, the smallest
+\item{Rt_min_length}{for "changepoints" in the discrete model, the smallest
 number of onset times between changes}
 
 \item{delay_model}{how the reporting delay varies over onset times:
@@ -71,8 +71,8 @@ rate of reporting}
 'shifts' and 'shift_probs' (see \code{unrecorded_prob})}
 
 \item{batches}{NULL for no batches of erroneous records; or a named list
-as for the 'batches' element of the priors of \code{mcmc_single} (exact
-sampler only)}
+as for the 'batches' element of the priors of \code{mcmc_single} (discrete
+model only)}
 
 \item{max_erroneous}{the largest number of erroneous records held for an
 onset time at once; by default one more than the largest fall in a

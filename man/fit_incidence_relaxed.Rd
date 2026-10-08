@@ -12,7 +12,7 @@ fit_incidence_relaxed(
   cases_before,
   serial_max,
   max_erroneous,
-  engine,
+  method,
   control
 )
 }
@@ -37,9 +37,10 @@ assumed about how they were reported.}
 
 \item{max_erroneous}{the largest number of erroneous records}
 
-\item{engine}{one of the engines of \code{fit_incidence} other than "mcmc"}
+\item{method}{one of the methods of the relaxed model (see
+\code{fit_methods})}
 
-\item{control}{a named list of settings for the engine. For "mcmc":
+\item{control}{a named list of settings for the method. For "gibbs":
 'niterations', 'chains', 'draws' (kept from each chain, after its first
 half), 'cores' (chains run at once), 'seed', 'n_parameter_steps',
 'n_partition_moves' and step sizes (see \code{mcmc_single}). For the

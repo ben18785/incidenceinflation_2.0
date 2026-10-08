@@ -2,8 +2,8 @@
 % Please edit documentation in R/interface.R
 \name{fit_incidence_mcmc}
 \alias{fit_incidence_mcmc}
-\title{Fits the model by the exact sampler, with arguments and result in the
-common form}
+\title{Fits the discrete model by its Gibbs sampler, with arguments and result in
+the common form}
 \usage{
 fit_incidence_mcmc(
   snapshot_df,
@@ -37,7 +37,7 @@ assumed about how they were reported.}
 
 \item{max_erroneous}{the largest number of erroneous records}
 
-\item{control}{a named list of settings for the engine. For "mcmc":
+\item{control}{a named list of settings for the method. For "gibbs":
 'niterations', 'chains', 'draws' (kept from each chain, after its first
 half), 'cores' (chains run at once), 'seed', 'n_parameter_steps',
 'n_partition_moves' and step sizes (see \code{mcmc_single}). For the
@@ -50,6 +50,6 @@ a named list of 'cases', 'Rt', 'delay' and 'parameters' in the
 form described in \code{fit_incidence}
 }
 \description{
-Fits the model by the exact sampler, with arguments and result in the
-common form
+Fits the discrete model by its Gibbs sampler, with arguments and result in
+the common form
 }

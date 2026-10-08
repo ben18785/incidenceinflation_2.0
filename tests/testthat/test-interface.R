@@ -38,25 +38,33 @@ test_that("model_options and model_priors check what they are given", {
   expect_error(model_priors(nonsense=1))
 })
 
-test_that("options which an engine does not have give an error", {
-  expect_error(check_options_engine(model_options(), "mcmc"), "random walk")
-  expect_null(check_options_engine(model_options(Rt_model="periods"), "mcmc"))
-  expect_null(check_options_engine(model_options(), "nuts"))
-  expect_error(check_options_engine(model_options(batches=list(beta=0.01)), "laplace"),
-               "exact sampler")
+test_that("options which a version of the model does not have give an error", {
+  expect_error(check_options_model(model_options(), "discrete"), "random walk")
+  expect_null(check_options_model(model_options(Rt_model="periods"), "discrete"))
+  expect_null(check_options_model(model_options(), "relaxed"))
+  expect_error(check_options_model(model_options(batches=list(beta=0.01)), "relaxed"),
+               "discrete model")
   misdating <- list(shifts=c(-1, 1), shift_probs=c(0.5, 0.5))
-  expect_error(check_options_engine(
-    model_options(delay_model="changepoints", misdating=misdating), "nuts"))
-  expect_null(check_options_engine(
+  expect_error(check_options_model(
+    model_options(delay_model="changepoints", misdating=misdating), "relaxed"))
+  expect_null(check_options_model(
     model_options(Rt_model="periods", delay_model="changepoints", misdating=misdating),
-    "mcmc"))
+    "discrete"))
   df <- f_interface_data()
-  expect_error(fit_incidence(df, list(mean=4, sd=2), "mcmc"))
+  expect_error(fit_incidence(df, list(mean=4, sd=2), "discrete"))
   expect_error(fit_incidence(df, list(mean=4, sd=2), "nonsense"))
-  expect_error(fit_incidence(df[, 1:2], list(mean=4, sd=2), "mcmc",
+  # each version of the model has its own methods
+  expect_equal(fit_methods()$discrete, "gibbs")
+  expect_equal(fit_methods()$relaxed[1], "nuts")
+  periods <- model_options(Rt_model="periods")
+  expect_error(fit_incidence(df, list(mean=4, sd=2), "discrete", "nuts", periods),
+               "'gibbs'")
+  expect_error(fit_incidence(df, list(mean=4, sd=2), "relaxed", "gibbs"), "'nuts'")
+  expect_error(fit_incidence(df, list(mean=4, sd=2), "relaxed", c("nuts", "laplace")))
+  expect_error(fit_incidence(df[, 1:2], list(mean=4, sd=2), "discrete",
                              model_options(Rt_model="periods")))
   expect_error(fit_incidence(dplyr::filter(df, time_onset != 5), list(mean=4, sd=2),
-                             "mcmc", model_options(Rt_model="periods")))
+                             "discrete", options=model_options(Rt_model="periods")))
 })
 
 test_that("period_index aligns periods to the last onset time", {
@@ -77,15 +85,15 @@ test_that("split_rhat detects disagreement between and within chains", {
   expect_true(is.na(split_rhat(1:2, c(1, 1))))
 })
 
-test_that("the exact sampler is run through the common interface", {
+test_that("the discrete model is fitted through the common interface", {
   df <- f_interface_data()
   control <- list(niterations=20, chains=2, draws=5, n_parameter_steps=1)
   set.seed(3)
-  fit <- fit_incidence(df, list(mean=4, sd=2), "mcmc",
-                       model_options(Rt_model="periods", Rt_period_width=8),
+  fit <- fit_incidence(df, list(mean=4, sd=2), "discrete",
+                       options=model_options(Rt_model="periods", Rt_period_width=8),
                        control=control)
   f_check_form(fit, 24, 10)
-  expect_equal(fit$engine, "mcmc")
+  expect_equal(c(fit$model, fit$method), c("discrete", "gibbs"))
   expect_equal(sort(unique(fit$cases$chain)), 1:2)
   expect_true("kappa" %in% colnames(fit$parameters))
   # Rt is constant within each of three periods
@@ -104,13 +112,13 @@ test_that("the exact sampler is run through the common interface", {
   expect_equal(colnames(s$Rt), c("time_onset", "q05", "q50", "q95"))
   expect_true(all(s$cases$q05 <= s$cases$q95))
   expect_true("eta" %in% s$parameters$parameter)
-  expect_output(print(fit), "engine 'mcmc'")
+  expect_output(print(fit), "discrete model by method 'gibbs'")
   expect_output(print(fit), "Largest split R-hat")
 
   # other options: changes at unknown times, effect of the day of the week,
   # Poisson renewal, misdating, known earlier cases
   fit <- fit_incidence(
-    df, list(mean=4, sd=2), "mcmc",
+    df, list(mean=4, sd=2), "discrete", "gibbs",
     model_options(Rt_model="changepoints", delay_model="changepoints",
                   weekday_first=2, is_negative_binomial=FALSE, delay_min_length=5,
                   misdating=list(shifts=c(-1, 1), shift_probs=c(0.5, 0.5)),
@@ -120,13 +128,13 @@ test_that("the exact sampler is run through the common interface", {
   expect_true(all(c("Rt_n_changes", "delay_n_changes", "weekday_1", "pi_misdated") %in%
                     colnames(fit$parameters)))
   expect_false("kappa" %in% colnames(fit$parameters))
-  expect_error(fit_incidence(df, list(mean=4, sd=2), "mcmc",
-                             model_options(Rt_model="periods"),
+  expect_error(fit_incidence(df, list(mean=4, sd=2), "discrete",
+                             options=model_options(Rt_model="periods"),
                              control=list(nonsense=1)))
   # delay periods given in advance
   fit <- fit_incidence(
-    df, list(mean=4, sd=2), "mcmc",
-    model_options(Rt_model="periods", delay_model="periods",
+    df, list(mean=4, sd=2), "discrete",
+    options=model_options(Rt_model="periods", delay_model="periods",
                   reporting_piece_index=rep(1:2, each=12), tail=TRUE),
     control=control)
   delay <- fit$delay %>% dplyr::filter(chain == 1, draw == 1) %>% dplyr::arrange(time_onset)
@@ -135,7 +143,7 @@ test_that("the exact sampler is run through the common interface", {
   expect_true(all(c("tail_weight", "tail_mean") %in% colnames(fit$parameters)))
 })
 
-test_that("the relaxed model is run through the common interface, with results in the same form", {
+test_that("the relaxed model is fitted through the common interface, with results in the same form", {
   skip_on_cran()
   skip_if_not_installed("cmdstanr")
   skip_if(is.null(tryCatch(cmdstanr::cmdstan_version(), error=function(e) NULL)),
@@ -145,16 +153,16 @@ test_that("the relaxed model is run through the common interface, with results i
   options <- model_options(Rt_model="periods", Rt_period_width=8, weekday_first=2,
                            days_sampled=10)
   fit <- suppressMessages(fit_incidence(
-    df, list(mean=4, sd=2), "laplace", options,
+    df, list(mean=4, sd=2), "relaxed", "laplace", options,
     control=list(model=model, draws=50, seed=4, show_messages=FALSE)))
   f_check_form(fit, 24, 50)
-  expect_equal(fit$engine, "laplace")
+  expect_equal(c(fit$model, fit$method), c("relaxed", "laplace"))
   expect_false(is.null(fit$raw))
   expect_null(fit$diagnostics$rhat)
-  expect_output(print(fit), "engine 'laplace'")
+  expect_output(print(fit), "relaxed model by method 'laplace'")
 
-  # the same options through the exact sampler give the same parameters
-  fit_mcmc <- fit_incidence(df, list(mean=4, sd=2), "mcmc", options,
+  # the same options in the discrete model give the same parameters
+  fit_mcmc <- fit_incidence(df, list(mean=4, sd=2), "discrete", options=options,
                             control=list(niterations=20, chains=1, draws=5,
                                          n_parameter_steps=1))
   expect_setequal(colnames(fit$parameters), colnames(fit_mcmc$parameters))
@@ -162,16 +170,17 @@ test_that("the relaxed model is run through the common interface, with results i
 
   # Hamiltonian Monte Carlo, with a random walk for Rt
   fit <- suppressWarnings(suppressMessages(fit_incidence(
-    df, list(mean=4, sd=2), "nuts", model_options(days_sampled=10),
+    df, list(mean=4, sd=2), "relaxed", options=model_options(days_sampled=10),
     control=list(model=model, chains=2, parallel_chains=2, iter_warmup=30,
                  iter_sampling=20, seed=5, show_messages=FALSE,
                  show_exceptions=FALSE))))
   f_check_form(fit, 24, 40)
+  expect_equal(fit$method, "nuts")
   expect_equal(sort(unique(fit$Rt$chain)), 1:2)
   expect_equal(max(fit$Rt$draw), 20)
   expect_true("Rt_step" %in% colnames(fit$parameters))
   expect_false(is.null(fit$diagnostics$rhat))
   expect_true(is.numeric(fit$diagnostics$divergences))
-  expect_error(fit_incidence(df, list(mean=4, sd=2), "laplace",
+  expect_error(fit_incidence(df, list(mean=4, sd=2), "relaxed", "laplace",
                              model_options(batches=list(beta=0.01))))
 })

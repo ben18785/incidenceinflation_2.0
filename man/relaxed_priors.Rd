@@ -11,8 +11,14 @@ a named list of: the means and sds of the gamma priors on the mean
 and sd of the reporting delay, on eta and on the overdispersion parameter
 kappa; the parameters of the beta prior on rho; the sd of the normal prior
 on the log of each effect of the day of the week; the sd of the normal
-prior on the log of Rt in the first period; and the scale of the
+prior on the log of Rt in the first period and the scale of the
 half-normal prior on the sd of the steps in the log of Rt between periods
+(if Rt follows a random walk); the shape and rate of the gamma prior on Rt
+(if it is independent between periods); the parameters of the beta prior on
+the weight of the tail of the delay and the mean and sd of the gamma prior
+on its mean; the shape and scale of the inverse-gamma prior on the variance
+of the logs of the effects of reports; and the parameters of the beta prior
+on the probability that a case is misdated
 }
 \description{
 Default priors of the relaxed model

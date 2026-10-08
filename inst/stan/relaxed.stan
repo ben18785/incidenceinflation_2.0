@@ -2,12 +2,16 @@
 // be fitted by Hamiltonian Monte Carlo or by variational methods:
 // - true case counts of recent onset days are continuous (those of older onset
 //   days are fixed at their latest reported counts);
-// - Rt follows a random walk between periods of onset days, in place of
-//   changes at unknown times;
-// - there is a single reporting delay distribution.
-// The model of reporting is otherwise that of the package: a gamma delay, an
-// effect of the day of the week of each report, and erroneous records which
-// are entered and later removed (summed over by a forward recursion).
+// - Rt is constant within periods of onset days given in advance, and either
+//   follows a random walk between them or is independent between them, in
+//   place of changes at unknown times;
+// - the reporting delay is the same within periods of onset days given in
+//   advance.
+// The model of reporting is otherwise that of the package: a gamma delay,
+// optionally with an exponential tail; optional effects of the day of the week
+// of each report and of each report; erroneous records which are entered and
+// later removed (summed over by a forward recursion); and optionally the
+// misdating of cases to neighbouring onset days.
 functions {
   // binomial probability mass at k successes of n trials, for real n and k
   real binomial_real_logp(real k, real n, real p) {
@@ -25,12 +29,140 @@ functions {
            + lmultiply(y, mu / (kappa + mu));
   }
 
+  // Poisson density with mean mu, for real y
+  real poisson_real_logp(real y, real mu) {
+    return lmultiply(y, mu) - mu - lgamma(y + 1);
+  }
+
+  // log of the probability that a gamma delay exceeds d - 0.5 days, for
+  // d = 1, ..., n_days. The built-in functions for this have gradients which
+  // fail for some values, so the density is integrated numerically instead
+  // (Simpson's rule with four steps a day), working down from a point well
+  // beyond the last day, where the remaining tail is given by its asymptotic
+  // expansion. Only the density at delays of half a day or more is used, which
+  // is smooth even where the shape is less than one.
+  vector gamma_log_survival(int n_days, real shape, real rate) {
+    int n_extra = 60;                       // days integrated beyond the last
+    int n_total = n_days - 1 + n_extra;     // whole days integrated over
+    int n_points = 4 * n_total + 1;
+    vector[n_points] x = linspaced_vector(n_points, 0.5, 0.5 + n_total);
+    vector[n_points] density = exp(shape * log(rate) - lgamma(shape)
+                                   + (shape - 1) * log(x) - rate * x);
+    real x_end = x[n_points];
+    vector[n_total + 1] survival;
+    survival[n_total + 1] = density[n_points] / rate
+                            * (1 + (shape - 1) / (rate * x_end)
+                               + (shape - 1) * (shape - 2) / square(rate * x_end));
+    for (i in 1:n_total) {
+      int day = n_total + 1 - i;            // interval from x[4 day - 3] to x[4 day + 1]
+      int k = 4 * day - 3;
+      survival[day] = survival[day + 1]
+                      + (density[k] + 4 * density[k + 1] + 2 * density[k + 2]
+                         + 4 * density[k + 3] + density[k + 4]) / 12;
+    }
+    return log(survival[1:n_days]);
+  }
+
+  // log of the probability that the delay exceeds d - 0.5 days, d = 1, ...,
+  // n_days, where a proportion tail_weight of cases have a delay which is
+  // exponential with mean tail_mean rather than gamma
+  vector delay_log_survival(int n_days, real delay_mean, real delay_sd,
+                            real tail_weight, real tail_mean) {
+    vector[n_days] out = gamma_log_survival(n_days, square(delay_mean / delay_sd),
+                                            delay_mean / square(delay_sd));
+    if (tail_weight > 0) {
+      for (d in 1:n_days) {
+        out[d] = log_sum_exp(log1m(tail_weight) + out[d],
+                             log(tail_weight) - (d - 0.5) / tail_mean);
+      }
+    }
+    return out;
+  }
+
+  // log-probability that a case remains unreported at the end of each of the
+  // days from its onset day on (element k is day onset + k - 1), with the
+  // daily hazard of reporting multiplied by that day's multiplier
+  vector log_undetected_row(int day_onset, vector log_base, vector hazard_multiplier) {
+    int n_days = rows(hazard_multiplier);
+    vector[n_days] out = rep_vector(0, n_days);
+    out[1] = log_base[1];
+    for (k in (day_onset + 1):n_days) {
+      out[k - day_onset + 1] = out[k - day_onset]
+        - hazard_multiplier[k] * (log_base[k - day_onset] - log_base[k - day_onset + 1]);
+    }
+    return out;
+  }
+
+  // probability that a case has not yet been recorded under its own onset day
+  // at the end of each day from its onset day on: it is either unreported, or
+  // reported but misdated and not yet corrected
+  vector unrecorded_row(vector log_undetected, int n_after, real rho,
+                        real p_misdated, array[] int shifts, vector shift_probs) {
+    vector[n_after + 1] out;
+    real awaiting = 0;
+    out[1] = exp(log_undetected[1]);
+    for (k in 1:n_after) {
+      real p_possible = 0;
+      for (s in 1:size(shifts)) {
+        if (shifts[s] <= k - 1) {
+          p_possible += shift_probs[s];
+        }
+      }
+      awaiting = awaiting * (1 - rho)
+                 + p_possible * (exp(log_undetected[k]) - exp(log_undetected[k + 1]));
+      out[k + 1] = exp(log_undetected[k + 1]) + p_misdated * awaiting;
+    }
+    return out;
+  }
+
+  // probability that a case of onset day day_true remains unreported at the
+  // end of a day (one if the day is before its onset)
+  real undetected_at(matrix log_undetected, int day_true, int day) {
+    if (day < day_true) {
+      return 1;
+    }
+    return exp(log_undetected[day_true, day - day_true + 1]);
+  }
+
+  // expected numbers of records of cases of neighbouring onset days which are
+  // misdated to an onset day: element 1 is the number present at its first
+  // report, and element j + 1 the number entered between reports j and j + 1
+  vector misdated_entries(int day_onset, array[] int days, vector cases_true,
+                          matrix log_undetected, real rho, real p_misdated,
+                          array[] int shifts, vector shift_probs) {
+    int n = size(days);
+    int n_days = rows(cases_true);
+    vector[n] out = rep_vector(0, n);
+    for (s in 1:size(shifts)) {
+      int day_true = day_onset - shifts[s];
+      if (day_true >= 1 && day_true <= n_days) {
+        real rate = p_misdated * shift_probs[s] * cases_true[day_true];
+        for (k in (day_onset + 1):days[1]) {
+          out[1] += rate
+                    * (undetected_at(log_undetected, day_true, k - 1)
+                       - undetected_at(log_undetected, day_true, k))
+                    * pow(1 - rho, days[1] - k);
+        }
+        for (j in 2:n) {
+          out[j] += rate * (undetected_at(log_undetected, day_true, days[j - 1])
+                            - undetected_at(log_undetected, day_true, days[j]));
+        }
+      }
+    }
+    return out;
+  }
+
   // log-probability of the reported counts of one onset day given its true
   // cases. log_undetected[k] is the log-probability that a case remains
-  // unreported at the end of day (day_onset + k - 1).
+  // unreported at the end of day (day_onset + k - 1), and unrecorded[k] the
+  // probability that it has not been recorded under its onset day by then
+  // (the same thing unless cases can be misdated). entries_extra holds the
+  // expected numbers of misdated records from neighbouring onset days (see
+  // misdated_entries), which are removed in the same way as erroneous records.
   real observation_logp(real cases_true, array[] int days, array[] int counts,
-                      int day_onset, vector log_undetected, real eta, real rho,
-                      int max_erroneous) {
+                        int day_onset, vector log_undetected, vector unrecorded,
+                        vector entries_extra, real eta, real rho,
+                        int max_erroneous) {
     int n = size(days);
     vector[max_erroneous + 1] log_alpha = rep_vector(negative_infinity(),
                                                      max_erroneous + 1);
@@ -38,18 +170,17 @@ functions {
       return 0;
     }
     // erroneous records present at the first report, given its count
-    if (days[1] == day_onset || eta == 0) {
+    if (days[1] == day_onset || (eta == 0 && entries_extra[1] == 0)) {
       log_alpha[1] = 0;
     } else {
       real mean_erroneous = 0;
-      real p_detect = -expm1(log_undetected[days[1] - day_onset + 1]
-                             - log_undetected[1]);
+      real p_detect = 1 - unrecorded[days[1] - day_onset + 1] / unrecorded[1];
       for (k in (day_onset + 1):days[1]) {
         mean_erroneous += (exp(log_undetected[k - day_onset])
                            - exp(log_undetected[k - day_onset + 1]))
                           * pow(1 - rho, days[1] - k);
       }
-      mean_erroneous *= eta * cases_true;
+      mean_erroneous = eta * cases_true * mean_erroneous + entries_extra[1];
       for (e in 0:min(max_erroneous, counts[1])) {
         if (counts[1] - e <= cases_true) {
           log_alpha[e + 1] = poisson_lpmf(e | mean_erroneous)
@@ -60,10 +191,12 @@ functions {
     }
 
     for (j in 2:n) {
-      real log_before = log_undetected[days[j - 1] - day_onset + 1];
-      real log_after = log_undetected[days[j] - day_onset + 1];
-      real p_reported = -expm1(log_after - log_before);
-      real mean_entered = eta * cases_true * (exp(log_before) - exp(log_after));
+      int k_before = days[j - 1] - day_onset + 1;
+      int k_after = days[j] - day_onset + 1;
+      real p_reported = 1 - unrecorded[k_after] / unrecorded[k_before];
+      real mean_entered = eta * cases_true * (exp(log_undetected[k_before])
+                                              - exp(log_undetected[k_after]))
+                          + entries_extra[j];
       real p_removed = 1 - pow(1 - rho, days[j] - days[j - 1]);
       int change = counts[j] - counts[j - 1];
       vector[max_erroneous + 1] log_alpha_new = rep_vector(negative_infinity(),
@@ -94,57 +227,6 @@ functions {
     }
     return log_sum_exp(log_alpha);
   }
-
-  // log of the probability that a gamma delay exceeds d - 0.5 days, for
-  // d = 1, ..., n_days. The built-in functions for this have gradients which
-  // fail for some values, so the density is integrated numerically instead
-  // (Simpson's rule with four steps a day), working down from a point well
-  // beyond the last day, where the remaining tail is given by its asymptotic
-  // expansion. Only the density at delays of half a day or more is used, which
-  // is smooth even where the shape is less than one.
-  vector gamma_log_survival(int n_days, real shape, real rate) {
-    int n_extra = 60;                       // days integrated beyond the last
-    int n_total = n_days - 1 + n_extra;     // whole days integrated over
-    int n_points = 4 * n_total + 1;
-    vector[n_points] x = linspaced_vector(n_points, 0.5, 0.5 + n_total);
-    vector[n_points] density = exp(shape * log(rate) - lgamma(shape)
-                                   + (shape - 1) * log(x) - rate * x);
-    real x_end = x[n_points];
-    vector[n_total + 1] survival;
-    vector[n_days] out;
-    survival[n_total + 1] = density[n_points] / rate
-                            * (1 + (shape - 1) / (rate * x_end)
-                               + (shape - 1) * (shape - 2) / square(rate * x_end));
-    for (i in 1:n_total) {
-      int day = n_total + 1 - i;            // interval from x[4 day - 3] to x[4 day + 1]
-      int k = 4 * day - 3;
-      survival[day] = survival[day + 1]
-                      + (density[k] + 4 * density[k + 1] + 2 * density[k + 2]
-                         + 4 * density[k + 3] + density[k + 4]) / 12;
-    }
-    out = log(survival[1:n_days]);
-    return out;
-  }
-
-  // log-probability that a case of each onset day (rows) remains unreported
-  // at the end of each later day (column k is day onset + k - 1), with the
-  // daily hazard of reporting multiplied by that day's hazard_multiplier
-  matrix log_undetected_matrix(int n_days, real delay_mean, real delay_sd,
-                               vector hazard_multiplier) {
-    real shape = square(delay_mean / delay_sd);
-    real rate = delay_mean / square(delay_sd);
-    vector[n_days] log_base;
-    matrix[n_days, n_days] out = rep_matrix(0, n_days, n_days);
-    log_base = gamma_log_survival(n_days, shape, rate);
-    for (t in 1:n_days) {
-      out[t, 1] = log_base[1];
-      for (k in (t + 1):n_days) {
-        out[t, k - t + 1] = out[t, k - t]
-                            - hazard_multiplier[k] * (log_base[k - t] - log_base[k - t + 1]);
-      }
-    }
-    return out;
-  }
 }
 data {
   int<lower=1> n_days;                      // onset days
@@ -163,12 +245,28 @@ data {
   int<lower=1> serial_max;
   vector<lower=0>[serial_max] serial_weights;
   vector<lower=0>[serial_max] cases_before; // known cases before day 1, earliest first
+  int<lower=0, upper=1> is_negative_binomial; // renewal model (Poisson if 0)
 
   int<lower=1> n_periods;                   // periods within which Rt is constant
   array[n_days] int<lower=1, upper=n_periods> period;
+  int<lower=0, upper=1> is_Rt_random_walk;  // else Rt independent between periods
+
+  int<lower=1> n_delay_periods;             // periods within which the delay is the same
+  array[n_days] int<lower=1, upper=n_delay_periods> delay_period;
+  int<lower=0, upper=1> is_tail;            // exponential tail to the delay
+
+  int<lower=0, upper=1> is_weekday;         // effect of the day of the week of a report
   array[n_days] int<lower=0, upper=7> weekday_report; // day of week of the first report
                                             // on or after each day (0 if none)
-  int<lower=0, upper=1> is_weekday;         // whether to include the effect
+  int<lower=0, upper=1> is_report_effects;  // random effect of each report
+  int<lower=0> n_reports;
+  array[n_days] int<lower=0, upper=n_reports> report_index; // first report on or after
+                                            // each day (0 if none)
+
+  int<lower=0, upper=1> is_misdating;
+  int<lower=0> n_shifts;
+  array[n_shifts] int shifts;               // differences between recorded and true onset
+  vector<lower=0>[n_shifts] shift_probs;
 
   // priors
   real<lower=0> delay_mean_mu;
@@ -182,43 +280,76 @@ data {
   real<lower=0> kappa_mu;
   real<lower=0> kappa_sigma;
   real<lower=0> weekday_sd;
-  real<lower=0> log_Rt_first_sd;            // sd of log Rt in the first period
+  real<lower=0> log_Rt_first_sd;            // sd of log Rt in the first period (random walk)
   real<lower=0> Rt_step_sd;                 // scale of the prior on the sd of steps in log Rt
+  real<lower=0> Rt_shape;                   // gamma prior on Rt (independent periods)
+  real<lower=0> Rt_rate;
+  real<lower=0> tail_weight_alpha;
+  real<lower=0> tail_weight_beta;
+  real<lower=0> tail_mean_mu;
+  real<lower=0> tail_mean_sigma;
+  real<lower=0> report_sd_shape;            // inverse-gamma prior on the variance of the
+  real<lower=0> report_sd_scale;            // logs of the effects of reports
+  real<lower=0> pi_alpha;
+  real<lower=0> pi_beta;
 }
 parameters {
   vector<lower=0>[n_sampled] cases_extra;   // true cases above their lower bound
-  real<lower=0> delay_mean;
-  real<lower=0> delay_sd;
+  vector<lower=0>[n_delay_periods] delay_mean;
+  vector<lower=0>[n_delay_periods] delay_sd;
   sum_to_zero_vector[7] log_weekday;
   real<lower=0> eta;
   real<lower=0, upper=1> rho;
-  real<lower=0> kappa;
-  real log_Rt_first;
-  vector[n_periods - 1] Rt_step_raw;
-  real<lower=0> Rt_step;
+  array[is_negative_binomial] real<lower=0> kappa;
+  vector[n_periods] log_Rt_raw;
+  array[is_Rt_random_walk] real<lower=0> Rt_step;
+  array[is_tail] real<lower=0, upper=1> tail_weight;
+  array[is_tail] real<lower=0> tail_mean;
+  vector[is_report_effects ? n_reports : 0] report_raw;
+  array[is_report_effects] real<lower=0> report_sd;
+  array[is_misdating] real<lower=0, upper=1> pi_misdated;
 }
 transformed parameters {
   vector[n_days] cases_true = cases_fixed;
   vector[n_periods] log_Rt;
   cases_true[sampled_day] = cases_lower[sampled_day] + cases_extra;
-  log_Rt[1] = log_Rt_first;
-  for (p in 2:n_periods) {
-    log_Rt[p] = log_Rt[p - 1] + Rt_step * Rt_step_raw[p - 1];
+  if (is_Rt_random_walk) {
+    log_Rt[1] = log_Rt_first_sd * log_Rt_raw[1];
+    for (p in 2:n_periods) {
+      log_Rt[p] = log_Rt[p - 1] + Rt_step[1] * log_Rt_raw[p];
+    }
+  } else {
+    log_Rt = log_Rt_raw;
   }
 }
 model {
   vector[n_days] hazard_multiplier = rep_vector(1, n_days);
   matrix[n_days, n_days] log_undetected;
   vector[serial_max + n_days] cases_all = append_row(cases_before, cases_true);
+  real p_misdated = is_misdating ? pi_misdated[1] : 0;
 
-  if (is_weekday) {
-    for (k in 1:n_days) {
-      if (weekday_report[k] > 0) {
-        hazard_multiplier[k] = exp(log_weekday[weekday_report[k]]);
-      }
+  for (k in 1:n_days) {
+    real log_multiplier = 0;
+    if (is_weekday && weekday_report[k] > 0) {
+      log_multiplier += log_weekday[weekday_report[k]];
+    }
+    if (is_report_effects && report_index[k] > 0) {
+      log_multiplier += report_sd[1] * report_raw[report_index[k]];
+    }
+    hazard_multiplier[k] = exp(log_multiplier);
+  }
+  {
+    array[n_delay_periods] vector[n_days] log_base;
+    for (p in 1:n_delay_periods) {
+      log_base[p] = delay_log_survival(n_days, delay_mean[p], delay_sd[p],
+                                       is_tail ? tail_weight[1] : 0,
+                                       is_tail ? tail_mean[1] : 1);
+    }
+    for (t in 1:n_days) {
+      log_undetected[t] = log_undetected_row(t, log_base[delay_period[t]],
+                                             hazard_multiplier)';
     }
   }
-  log_undetected = log_undetected_matrix(n_days, delay_mean, delay_sd, hazard_multiplier);
 
   // priors (gamma distributions given by mean and sd)
   delay_mean ~ gamma(square(delay_mean_mu / delay_mean_sigma),
@@ -227,34 +358,72 @@ model {
                    delay_sd_mu / square(delay_sd_sigma));
   eta ~ gamma(square(eta_mu / eta_sigma), eta_mu / square(eta_sigma));
   rho ~ beta(rho_alpha, rho_beta);
-  kappa ~ gamma(square(kappa_mu / kappa_sigma), kappa_mu / square(kappa_sigma));
   log_weekday ~ normal(0, weekday_sd);
-  log_Rt_first ~ normal(0, log_Rt_first_sd);
-  Rt_step_raw ~ std_normal();
-  Rt_step ~ normal(0, Rt_step_sd);
+  if (is_negative_binomial) {
+    kappa ~ gamma(square(kappa_mu / kappa_sigma), kappa_mu / square(kappa_sigma));
+  }
+  if (is_Rt_random_walk) {
+    log_Rt_raw ~ std_normal();
+    Rt_step ~ normal(0, Rt_step_sd);
+  } else {
+    // gamma prior on Rt, with the Jacobian of taking logs
+    target += gamma_lpdf(exp(log_Rt_raw) | Rt_shape, Rt_rate) + sum(log_Rt_raw);
+  }
+  if (is_tail) {
+    tail_weight ~ beta(tail_weight_alpha, tail_weight_beta);
+    tail_mean ~ gamma(square(tail_mean_mu / tail_mean_sigma),
+                      tail_mean_mu / square(tail_mean_sigma));
+  }
+  if (is_report_effects) {
+    report_raw ~ std_normal();
+    // inverse-gamma prior on the variance, with the Jacobian of squaring
+    target += inv_gamma_lpdf(square(report_sd[1]) | report_sd_shape, report_sd_scale)
+              + log(report_sd[1]);
+  }
+  if (is_misdating) {
+    pi_misdated ~ beta(pi_alpha, pi_beta);
+  }
 
   // renewal model
   for (t in 1:n_days) {
     real infectiousness = dot_product(
       serial_weights, reverse(cases_all[t:(t + serial_max - 1)]));
     if (infectiousness > 0) {
-      target += neg_binomial_real_logp(cases_true[t],
-                                     exp(log_Rt[period[t]]) * infectiousness, kappa);
+      real mean_cases = exp(log_Rt[period[t]]) * infectiousness;
+      if (is_negative_binomial) {
+        target += neg_binomial_real_logp(cases_true[t], mean_cases, kappa[1]);
+      } else {
+        target += poisson_real_logp(cases_true[t], mean_cases);
+      }
     }
   }
 
   // reporting
   for (t in 1:n_days) {
     if (obs_n[t] > 1) {
+      array[obs_n[t]] int days = obs_day[obs_start[t]:(obs_start[t] + obs_n[t] - 1)];
+      int n_after = n_days - t;
+      vector[n_after + 1] row_undetected = log_undetected[t, 1:(n_after + 1)]';
+      vector[n_after + 1] unrecorded = exp(row_undetected);
+      vector[obs_n[t]] entries_extra = rep_vector(0, obs_n[t]);
+      if (is_misdating) {
+        unrecorded = unrecorded_row(row_undetected, n_after, rho, p_misdated,
+                                    shifts, shift_probs);
+        entries_extra = misdated_entries(t, days, cases_true, log_undetected, rho,
+                                         p_misdated, shifts, shift_probs);
+      }
       target += observation_logp(
-        cases_true[t],
-        obs_day[obs_start[t]:(obs_start[t] + obs_n[t] - 1)],
+        cases_true[t], days,
         obs_count[obs_start[t]:(obs_start[t] + obs_n[t] - 1)],
-        t, log_undetected[t]', eta, rho, max_erroneous);
+        t, row_undetected, unrecorded, entries_extra, eta, rho, max_erroneous);
     }
   }
 }
 generated quantities {
   vector[n_days] Rt = exp(log_Rt[period]);
   vector[7] weekday_effect = exp(log_weekday);
+  vector[is_report_effects ? n_reports : 0] report_effect;
+  if (is_report_effects) {
+    report_effect = exp(report_sd[1] * report_raw);
+  }
 }

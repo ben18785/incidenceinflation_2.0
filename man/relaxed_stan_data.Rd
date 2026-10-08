@@ -13,6 +13,13 @@ relaxed_stan_data(
   days_sampled = 35,
   serial_max = 40,
   Rt_period_width = 7,
+  Rt_index = NULL,
+  Rt_random_walk = TRUE,
+  reporting_piece_index = NULL,
+  is_negative_binomial = TRUE,
+  tail = FALSE,
+  report_effects = FALSE,
+  misdating = NULL,
   priors = relaxed_priors()
 )
 }
@@ -44,6 +51,30 @@ latest reported counts.}
 
 \item{Rt_period_width}{number of onset times in each period within which
 Rt is constant; periods are aligned to end on the last onset time}
+
+\item{Rt_index}{the period of each onset time (a vector of whole numbers
+from 1, non-decreasing), in place of periods of equal width}
+
+\item{Rt_random_walk}{if TRUE (the default) the log of Rt follows a random
+walk between periods; if FALSE Rt is independent between periods, with a
+gamma prior, as when periods are given to \code{mcmc}}
+
+\item{reporting_piece_index}{the period of each onset time for the
+reporting delay, which has its own mean and sd in each (a vector of whole
+numbers from 1); by default there is a single delay}
+
+\item{is_negative_binomial}{whether the renewal model is negative binomial
+(the default) or Poisson}
+
+\item{tail}{whether a proportion of cases have a delay which is
+exponential rather than gamma (see \code{log_undetected_days})}
+
+\item{report_effects}{whether each report has its own random effect on the
+rate of reporting}
+
+\item{misdating}{NULL if cases are never misdated; or a named list of
+'shifts' and 'shift_probs' (see \code{unrecorded_prob}), in which case the
+probability that a case is misdated is estimated}
 
 \item{priors}{a named list as returned by \code{relaxed_priors}}
 }

@@ -7,3 +7,6 @@ inst/doc
 src/*.o
 src/*.so
 src/*.dll
+inst/stan/relaxed
+inst/stan/*.hpp
+inst/stan/*.o

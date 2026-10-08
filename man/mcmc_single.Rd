@@ -23,7 +23,8 @@ mcmc_single(
   condition_on_future_cases = TRUE,
   initial_revision_parameters = NULL,
   revision_metropolis_parameters = list(eta_step = 0.5, rho_step = 0.5),
-  cases_before = NULL
+  cases_before = NULL,
+  n_parameter_steps = 1
 )
 }
 \arguments{
@@ -143,6 +144,13 @@ are not themselves estimated and nothing is assumed about how they were
 reported. This is intended for series which begin after an outbreak has
 started, where counts for earlier onset times are known well enough but
 the data needed to model their reporting are not available.}
+
+\item{n_parameter_steps}{the number of Metropolis steps taken in each
+iteration for each group of continuous parameters updated in that way: the
+reporting delay parameters of each segment (if their changes are sampled),
+the revision parameters, the extensions to the model of reporting and the
+overdispersion parameter. These steps are cheap beside the update of the
+true cases, so taking several improves mixing at little cost.}
 }
 \value{
 a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters;

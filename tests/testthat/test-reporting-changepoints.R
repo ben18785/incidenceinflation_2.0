@@ -303,3 +303,24 @@ test_that("mcmc recovers a change in the reporting delay", {
   combined <- combine_chains(list(res, res))
   expect_equal(nrow(combined$reporting_changepoints), 600)
 })
+
+test_that("several updates of segment parameters in a sweep leave the state consistent", {
+  l <- f_delay_data(50, days_total=30, starts=c(1, 16))
+  f_logp <- reporting_logp_function(l$df)
+  settings <- reporting_changepoint_settings(30, list(min_length=3, n_segment_steps=4,
+                                                      n_partition_moves=6))
+  expect_equal(settings$n_segment_steps, 4)
+  state <- f_state(starts=c(1, 16), means=c(3, 8), sds=c(2, 4))
+  set.seed(51)
+  for(i in 1:10) {
+    state <- sample_reporting_changepoints(state, f_logp, 30, prior_parameters, settings)
+    ends <- c(state$starts[-1] - 1, 30)
+    logl <- purrr::map_dbl(seq_along(state$starts), function(j) {
+      f_logp(state$starts[j]:ends[j], as.list(state$parameters[j, ]))
+    })
+    expect_equal(state$logl, logl)
+  }
+  # the delay with revisions, weekday effect and several steps runs in mcmc_single
+  res <- f_mcmc_delay(l, 3, list(min_length=3), n_parameter_steps=3)
+  expect_equal(nrow(res$reporting_changepoints), 3)
+})

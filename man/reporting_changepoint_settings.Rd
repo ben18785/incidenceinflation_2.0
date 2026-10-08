@@ -22,7 +22,8 @@ new segment to those of the segment it is split from); 'shift_max' (the
 furthest a change is proposed to move); 'hyper_step' and 'n_hyper_steps'
 (the step size and number of updates of the centre and spread);
 'n_partition_moves' (the number of times in each sweep that a split or
-merge, and then a shift, is proposed)
+merge, and then a shift, is proposed); 'n_segment_steps' (the number of
+times in each sweep that the parameters of each segment are updated)
 }
 \description{
 Default settings for sampling reporting delays whose changes are unknown

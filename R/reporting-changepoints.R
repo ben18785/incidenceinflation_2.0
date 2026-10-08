@@ -143,11 +143,13 @@ initial_reporting_changepoints <- function(reporting_parameters, starts=1,
 #' furthest a change is proposed to move); 'hyper_step' and 'n_hyper_steps'
 #' (the step size and number of updates of the centre and spread);
 #' 'n_partition_moves' (the number of times in each sweep that a split or
-#' merge, and then a shift, is proposed)
+#' merge, and then a shift, is proposed); 'n_segment_steps' (the number of
+#' times in each sweep that the parameters of each segment are updated)
 reporting_changepoint_settings <- function(n_days, settings=list()) {
   defaults <- list(alpha=1, beta=n_days, min_length=7, spread_sd=0.5,
                    mean_step=0.25, sd_step=0.1, birth_sd=0.3, shift_max=3,
-                   hyper_step=0.3, n_hyper_steps=5, n_partition_moves=5)
+                   hyper_step=0.3, n_hyper_steps=5, n_partition_moves=5,
+                   n_segment_steps=1)
   unknown <- setdiff(names(settings), names(defaults))
   if(length(unknown) > 0)
     stop(paste0("Unknown settings: ", paste(unknown, collapse=", "), "."))
@@ -395,7 +397,8 @@ sample_reporting_changepoints <- function(state, f_logp, n_days,
     f_logp(state$starts[j]:ends[j], as.list(state$parameters[j, ]))
   })
 
-  state <- reporting_segments_step(state, f_logp, n_days, settings)
+  for(i in seq_len(settings$n_segment_steps))
+    state <- reporting_segments_step(state, f_logp, n_days, settings)
   for(i in seq_len(settings$n_partition_moves)) {
     if(stats::runif(1) < 0.5)
       state <- reporting_birth_step(state, f_logp, n_days, settings)

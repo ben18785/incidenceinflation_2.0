@@ -917,6 +917,20 @@ state_process_nb_logp_all_onsets <- function(
 
   onset_times <- unique(cases_history_rt_df$time_onset)
 
+  # consecutive onset times in order (the usual case) are handled at once
+  n_onset <- length(onset_times)
+  if(n_onset == nrow(cases_history_rt_df) && n_onset > 1 &&
+     all(diff(cases_history_rt_df$time_onset) == 1)) {
+    statistics <- renewal_statistics(cases_history_rt_df$cases_true,
+                                     serial_parameters, serial_max, cases_before)
+    # the first onset time is informative only if earlier cases are known
+    is_included <- onset_times > 1 | (seq_len(n_onset) == 1 & length(cases_before) > 0)
+    return(sum(stats::dnbinom(
+      cases_history_rt_df$cases_true[is_included],
+      mu=cases_history_rt_df$Rt[is_included] * statistics$infectiousness[is_included],
+      size=kappa, log=TRUE)))
+  }
+
   log_p <- 0
   for(i in seq_along(onset_times)) {
 

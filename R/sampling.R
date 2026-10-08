@@ -1168,6 +1168,12 @@ metropolis_step_revisions <- function(
 #' reported. This is intended for series which begin after an outbreak has
 #' started, where counts for earlier onset times are known well enough but
 #' the data needed to model their reporting are not available.
+#' @param n_parameter_steps the number of Metropolis steps taken in each
+#' iteration for each group of continuous parameters updated in that way: the
+#' reporting delay parameters of each segment (if their changes are sampled),
+#' the revision parameters, the extensions to the model of reporting and the
+#' overdispersion parameter. These steps are cheap beside the update of the
+#' true cases, so taking several improves mixing at little cost.
 #' @return a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters;
 #' and "revisions" if initial_revision_parameters is supplied
 #' @importFrom rlang .data
@@ -1189,7 +1195,11 @@ mcmc_single <- function(
   condition_on_future_cases=TRUE,
   initial_revision_parameters=NULL,
   revision_metropolis_parameters=list(eta_step=0.5, rho_step=0.5),
-  cases_before=NULL) {
+  cases_before=NULL,
+  n_parameter_steps=1) {
+
+  if(n_parameter_steps < 1)
+    stop("n_parameter_steps must be at least one.")
 
   if(!is.null(cases_before)) {
     if(any(is.na(cases_before)) || any(cases_before < 0))
@@ -1376,6 +1386,8 @@ mcmc_single <- function(
     reporting_current <- reporting_current[1, ]
     reporting_current$reporting_piece_index <- 1
     snapshot_with_Rt_index_df$reporting_piece_index <- 1
+    if(!"n_segment_steps" %in% names(priors$reporting_changepoints))
+      reporting_changepoints$n_segment_steps <- n_parameter_steps
     reporting_state <- initial_reporting_changepoints(reporting_current)
     reporting_days_samples <- vector("list", niterations)
     reporting_changepoints_samples <- vector("list", niterations)
@@ -1579,15 +1591,18 @@ mcmc_single <- function(
       logp_current_revisions <- logp_observation +
         prior_revision_parameters(revision_current, priors$revisions) +
         log_jacobian_revision_parameters(revision_current)
-      list_revision_logp <- metropolis_step_revisions(
-        snapshot_with_true_cases_df=df_temp,
-        reporting_parameters=reporting_current,
-        current_revision_parameters=revision_current,
-        logp_current=logp_current_revisions,
-        prior_parameters=priors$revisions,
-        metropolis_parameters=revision_metropolis_parameters,
-        max_erroneous=max_erroneous)
-      revision_current <- list_revision_logp$revision_parameters
+      for(step in seq_len(n_parameter_steps)) {
+        list_revision_logp <- metropolis_step_revisions(
+          snapshot_with_true_cases_df=df_temp,
+          reporting_parameters=reporting_current,
+          current_revision_parameters=revision_current,
+          logp_current=logp_current_revisions,
+          prior_parameters=priors$revisions,
+          metropolis_parameters=revision_metropolis_parameters,
+          max_erroneous=max_erroneous)
+        revision_current <- list_revision_logp$revision_parameters
+        logp_current_revisions <- list_revision_logp$logp
+      }
 
       revision_tmp <- dplyr::tibble(
         eta=revision_current$eta,
@@ -1607,19 +1622,21 @@ mcmc_single <- function(
       logl_reporting <- list_revision_logp$logp -
         prior_revision_parameters(revision_current, priors$revisions) -
         log_jacobian_revision_parameters(revision_current)
-      if(is_tail) {
-        list_tail <- metropolis_step_tail(
-          df_temp, reporting_current, revision_current, logl_reporting,
-          priors_reporting, steps_reporting, max_erroneous)
-        revision_current <- list_tail$revision_parameters
-        logl_reporting <- list_tail$logl
-      }
-      if(is_weekday) {
-        list_weekday <- metropolis_step_weekday(
-          df_temp, reporting_current, revision_current, logl_reporting,
-          priors_reporting, steps_reporting, max_erroneous)
-        revision_current <- list_weekday$revision_parameters
-        logl_reporting <- list_weekday$logl
+      for(step in seq_len(n_parameter_steps)) {
+        if(is_tail) {
+          list_tail <- metropolis_step_tail(
+            df_temp, reporting_current, revision_current, logl_reporting,
+            priors_reporting, steps_reporting, max_erroneous)
+          revision_current <- list_tail$revision_parameters
+          logl_reporting <- list_tail$logl
+        }
+        if(is_weekday) {
+          list_weekday <- metropolis_step_weekday(
+            df_temp, reporting_current, revision_current, logl_reporting,
+            priors_reporting, steps_reporting, max_erroneous)
+          revision_current <- list_weekday$revision_parameters
+          logl_reporting <- list_weekday$logl
+        }
       }
       if(is_report_effects) {
         list_effects <- sample_report_effects(
@@ -1720,17 +1737,20 @@ mcmc_single <- function(
         serial_max=serial_max, cases_before=cases_before
       ) + logp_prior
 
-      list_parameter_logp <- metropolis_step_overdispersion(
-        overdispersion_current,
-        logp_overdispersion,
-        df_nb_tmp,
-        serial_parameters,
-        priors$overdispersion,
-        overdispersion_metropolis_sd,
-        serial_max=serial_max,
-        cases_before=cases_before
-      )
-      overdispersion_current <- list_parameter_logp$overdispersion
+      for(step in seq_len(n_parameter_steps)) {
+        list_parameter_logp <- metropolis_step_overdispersion(
+          overdispersion_current,
+          logp_overdispersion,
+          df_nb_tmp,
+          serial_parameters,
+          priors$overdispersion,
+          overdispersion_metropolis_sd,
+          serial_max=serial_max,
+          cases_before=cases_before
+        )
+        overdispersion_current <- list_parameter_logp$overdispersion
+        logp_overdispersion <- list_parameter_logp$logp
+      }
 
       overdipersion_tmp <- dplyr::tibble(
         overdispersion=overdispersion_current,
@@ -1927,7 +1947,8 @@ mcmc <- function(
     condition_on_future_cases=TRUE,
     initial_revision_parameters=NULL,
     revision_metropolis_parameters=list(eta_step=0.5, rho_step=0.5),
-    cases_before=NULL) {
+    cases_before=NULL,
+    n_parameter_steps=1) {
 
   if(nchains==1) {
     res <- mcmc_single(niterations,
@@ -1948,7 +1969,8 @@ mcmc <- function(
                        condition_on_future_cases,
                        initial_revision_parameters,
                        revision_metropolis_parameters,
-                       cases_before=cases_before)
+                       cases_before=cases_before,
+                       n_parameter_steps=n_parameter_steps)
     res$cases$chain <- 1
     res$Rt$chain <- 1
     res$reporting$chain <- 1
@@ -1987,7 +2009,8 @@ mcmc <- function(
                       condition_on_future_cases,
                       initial_revision_parameters,
                       revision_metropolis_parameters,
-                      cases_before=cases_before)
+                      cases_before=cases_before,
+                      n_parameter_steps=n_parameter_steps)
         }
 
         list_of_results <- foreach::foreach(i=1:nchains, .export = "mcmc_single") %dopar% {
@@ -2022,7 +2045,8 @@ mcmc <- function(
                            condition_on_future_cases,
                            initial_revision_parameters,
                            revision_metropolis_parameters,
-                           cases_before=cases_before)
+                           cases_before=cases_before,
+                       n_parameter_steps=n_parameter_steps)
         list_of_results[[i]] <- res
       }
     }

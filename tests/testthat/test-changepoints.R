@@ -695,3 +695,48 @@ test_that("Rt is not overstated at the start of a series when earlier cases are 
   expect_error(f_fit(c(1, -2)))
   expect_error(f_fit(c(1, NA)))
 })
+
+test_that("the negative binomial log-probability is the same calculated at once or day by day", {
+  set.seed(40)
+  s_params <- list(mean=6, sd=4)
+  cases <- rpois(30, 25)
+  Rt <- runif(30, 0.6, 1.8)
+  df <- dplyr::tibble(time_onset=1:30, cases_true=cases, Rt=Rt)
+  # leaving out an onset time forces the calculation day by day
+  f_by_day <- function(df, ...) {
+    total <- 0
+    for(i in 2:nrow(df))
+      total <- total + state_process_logp(
+        df$cases_true[i], rev(df$cases_true[seq_len(i - 1)]), df$Rt[i], s_params,
+        kappa=4, is_negative_binomial=TRUE, serial_max=12)
+    total
+  }
+  expect_equal(state_process_nb_logp_all_onsets(4, df, s_params, serial_max=12),
+               f_by_day(df))
+  df_gap <- df[-10, ]
+  expect_true(is.finite(state_process_nb_logp_all_onsets(4, df_gap, s_params,
+                                                         serial_max=12)))
+  expect_equal(state_process_nb_logp_all_onsets(-1, df, s_params), -Inf)
+  # a day with cases but no earlier cases at all has zero probability
+  df_zero <- dplyr::tibble(time_onset=1:3, cases_true=c(0, 4, 2), Rt=1)
+  expect_equal(state_process_nb_logp_all_onsets(4, df_zero, s_params), -Inf)
+})
+
+test_that("mcmc_single takes several Metropolis steps for parameters if asked", {
+  l <- f_changepoint_data(41, days_total=24, starts=c(1, 13), kappa=5)
+  set.seed(42)
+  res <- f_mcmc_changepoints(l, 4, list(grid=Rt_grid(n=100)),
+                             is_negative_binomial=TRUE, n_parameter_steps=4)
+  expect_equal(nrow(res$overdispersion), 4)
+  expect_true(all(res$overdispersion$overdispersion > 0))
+  expect_error(f_mcmc_changepoints(l, 2, n_parameter_steps=0))
+  # more steps move the overdispersion parameter more often
+  f_moves <- function(n_steps) {
+    set.seed(43)
+    res <- f_mcmc_changepoints(l, 40, list(grid=Rt_grid(n=100)),
+                               is_negative_binomial=TRUE, n_parameter_steps=n_steps,
+                               overdispersion_metropolis_sd=8)
+    mean(diff(res$overdispersion$overdispersion) != 0)
+  }
+  expect_true(f_moves(6) >= f_moves(1))
+})

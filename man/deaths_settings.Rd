@@ -21,10 +21,8 @@ the 'mean' and 'sd' of the delay from onset to a death being reported);
 'delay_prior' (as priors$reporting in \code{mcmc_single});
 'delay_changepoints' (a named list of settings passed to
 \code{reporting_changepoint_settings}, or FALSE for a delay which does not
-change); 'fraction_dated_by_death' (the fraction of fatal cases which
-appear in the reports under their date of death, not their date of onset:
-a single value or one for each onset time. These are taken to be shown as
-dead as soon as they are reported. This is supplied, not estimated.); and
+change); 'dated_by_death' (NULL, or what is supplied about fatal cases
+recorded for their day of death: see \code{dated_by_death_settings}); and
 'n_parameter_steps'. The delay here is that from onset to a death being
 recorded.
 }

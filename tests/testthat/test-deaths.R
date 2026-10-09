@@ -9,11 +9,35 @@ test_that("deaths_settings gives defaults, takes changes and checks them", {
   expect_error(deaths_settings(50, list(unknown=1)))
   expect_error(deaths_settings(50, list(cfr_alpha=0)))
   expect_error(deaths_settings(50, list(initial_cfr=1)))
-  expect_equal(settings$fraction_dated_by_death, rep(0, 50))
-  expect_equal(deaths_settings(3, list(fraction_dated_by_death=c(0.1, 0.2, 0.3)))$
-                 fraction_dated_by_death, c(0.1, 0.2, 0.3))
-  expect_error(deaths_settings(50, list(fraction_dated_by_death=c(0.1, 0.2))))
-  expect_error(deaths_settings(50, list(fraction_dated_by_death=1.2)))
+  expect_null(settings$dated_by_death)
+  expect_true("dated_by_death" %in% names(settings))
+})
+
+test_that("dated_by_death_settings gives the times from onset to death", {
+  expect_null(dated_by_death_settings(10, NULL))
+  expect_null(dated_by_death_settings(10, list(fraction=0, mean=8, sd=4)))
+  dated <- deaths_settings(3, list(dated_by_death=list(
+    fraction=c(0.1, 0.2, 0.3), mean=8, sd=4)))$dated_by_death
+  expect_equal(dated$fraction, c(0.1, 0.2, 0.3))
+  expect_equal(dated$max_lag, ceiling(stats::qgamma(0.999, shape=4, rate=0.5)))
+  expect_equal(sum(dated$lag_probabilities), 1)
+  # a time from onset to death is rounded up, so is at least one day
+  expect_equal(dated$lag_probabilities[2] / dated$lag_probabilities[1],
+               (stats::pgamma(2, 4, 0.5) - stats::pgamma(1, 4, 0.5)) /
+                 stats::pgamma(1, 4, 0.5))
+  expect_null(dated$reporting)
+  expect_equal(dated$n_moves, 12)
+  with_delay <- dated_by_death_settings(5, list(
+    fraction=0.2, mean=8, sd=4, max_lag=6, reporting=list(mean=2, sd=1), n_moves=3))
+  expect_equal(length(with_delay$lag_probabilities), 6)
+  expect_equal(with_delay$reporting, list(mean=2, sd=1))
+  expect_equal(with_delay$n_moves, 3)
+  expect_error(dated_by_death_settings(5, list(fraction=c(0.1, 0.2), mean=8, sd=4)))
+  expect_error(dated_by_death_settings(5, list(fraction=1.2, mean=8, sd=4)))
+  expect_error(dated_by_death_settings(5, list(fraction=0.2)))
+  expect_error(dated_by_death_settings(5, list(fraction=0.2, mean=8, sd=4, other=1)))
+  expect_error(dated_by_death_settings(5, list(fraction=0.2, mean=8, sd=4,
+                                               reporting=list(mean=2))))
 })
 
 test_that("segment_log_marginals_cfr matches numerical integration", {
@@ -64,7 +88,39 @@ test_that("joint_probabilities are those of the two delays", {
                                fraction_dated_by_death=0.3)
   expect_equal(dated$g, 0.3 + 0.7 * (1 - s_recorded))
   expect_equal(dated$p, probabilities$p)
+  expect_equal(dated$p_fatal, probabilities$p)
   expect_equal(dated$q, probabilities$q)
+})
+
+test_that("mixed_probabilities are those of a mixture of the two kinds of fatal case", {
+  days <- c(3, 5, 9, 14)
+  survivals <- joint_survivals(days, 2, list(mean=6, sd=3), list(mean=10, sd=6),
+                               dated_reporting_parameters=list(mean=2, sd=1))
+  s_onset <- exp(survivals$log_reported)
+  s_dated <- exp(survivals$log_dated)
+  s_recorded <- exp(survivals$log_recorded)
+  expect_false(survivals$is_dated_same)
+  expect_equal(s_dated, exp(log_undetected_days(days, 2, list(mean=2, sd=1))))
+  fractions <- c(0, 0.3, 1)
+  probabilities <- mixed_probabilities(survivals, fractions)
+  expect_equal(dim(probabilities$p_fatal), c(3, 4))
+  for(i in 1:3) {
+    fraction <- fractions[i]
+    mixture <- (1 - fraction) * s_onset + fraction * s_dated
+    mixture_before <- c(1, mixture[-4])
+    expect_equal(probabilities$p_fatal[i, ], 1 - mixture / mixture_before)
+    # the probability a fatal case newly reported is dated by death
+    share <- fraction * (c(1, s_dated[-4]) - s_dated) / (mixture_before - mixture)
+    expect_equal(probabilities$g[i, ], share + (1 - share) * (1 - s_recorded))
+  }
+  expect_equal(probabilities$p, 1 - s_onset / c(1, s_onset[-4]))
+  expect_equal(probabilities$p_fatal[1, ], probabilities$p)
+  # cases dated by death are reported sooner, so are more of those reported early
+  share <- (probabilities$g[2, ] - (1 - s_recorded)) / s_recorded
+  expect_true(share[1] > 0.3 & share[4] < 0.3)
+  single <- path_probabilities(survivals, 0.3)
+  expect_equal(single$p_fatal, probabilities$p_fatal[2, ])
+  expect_equal(single$g, probabilities$g[2, ])
 })
 
 test_that("deaths_new_logp is the convolution of two binomials", {
@@ -82,6 +138,9 @@ test_that("deaths_new_logp is the convolution of two binomials", {
 enumerate_fatal_paths <- function(cases, deaths, deaths_true, survivors_true,
                                   probabilities) {
   n_reports <- length(cases)
+  p_fatal <- probabilities$p_fatal
+  if(is.null(p_fatal))
+    p_fatal <- probabilities$p
   grid <- expand.grid(lapply(cases, function(x) 0:x))
   weights <- apply(grid, 1, function(fatal) {
     fatal <- c(0, fatal)
@@ -96,7 +155,7 @@ enumerate_fatal_paths <- function(cases, deaths, deaths_true, survivors_true,
         return(0)
       deaths_new <- deaths_all[j + 1] - deaths_all[j]
       weight <- weight *
-        stats::dbinom(a, deaths_true - fatal[j], probabilities$p[j]) *
+        stats::dbinom(a, deaths_true - fatal[j], p_fatal[j]) *
         stats::dbinom(b, survivors_true - (cases_all[j] - fatal[j]), probabilities$p[j]) *
         sum(stats::dbinom(0:deaths_new, a, probabilities$g[j]) *
               stats::dbinom(deaths_new:0, fatal[j] - deaths_all[j], probabilities$q[j]))
@@ -116,6 +175,12 @@ test_that("fatal_path_forward gives the probability of the reports", {
     forward <- fatal_path_forward(cases, deaths, deaths_true, 3, probabilities)
     expect_equal(forward$logp, log(sum(weights)))
   }
+  # fatal cases reported at a different speed from others
+  probabilities$p_fatal <- c(0.5, 0.2, 0.7)
+  weights <- enumerate_fatal_paths(cases, deaths, 3, 3, probabilities)
+  forward <- fatal_path_forward(cases, deaths, 3, 3, probabilities)
+  expect_equal(forward$logp, log(sum(weights)))
+  probabilities$p_fatal <- NULL
   # impossible: more deaths shown than fatal cases
   expect_equal(fatal_path_forward(cases, deaths, 1, 5, probabilities)$logp, -Inf)
   expect_error(sample_fatal_path(cases, deaths, 1, 5, probabilities))
@@ -148,7 +213,10 @@ test_that("joint_cases_deaths_logp sums to the probability of the split of the r
   probabilities <- list(p=c(0.3, 0.4, 0.5), g=c(0.2, 0.4, 0.6), q=c(0.2, 0.25, 0.33))
   set.seed(3)
   path <- sample_fatal_path(cases, deaths, 3, 3, probabilities)
-  logp <- joint_cases_deaths_logp(path, probabilities$p, 0.4, 5:9)
+  survivals <- list(log_reported=cumsum(log(1 - probabilities$p)),
+                    log_recorded=log(1 - probabilities$g), is_dated_same=TRUE)
+  survivals$log_dated <- survivals$log_reported
+  logp <- joint_cases_deaths_logp(path, survivals, 0.4, 5:9)
   fatal_values <- attr(logp, "deaths_true")
   expect_equal(nrow(logp), 5)
   expect_equal(ncol(logp), length(fatal_values))
@@ -165,6 +233,32 @@ test_that("joint_cases_deaths_logp sums to the probability of the split of the r
   expect_equal(logp[3, 2], f_exact(7, fatal_values[2]))
   # fewer survivors than those reported is impossible
   expect_equal(logp[1, ncol(logp)], -Inf)
+
+  # with fatal cases dated by death: two of the fatal cases of the onset time
+  # are recorded for later days, and one from an earlier onset time for this
+  survivals$log_dated <- cumsum(log(1 - c(0.6, 0.5, 0.5)))
+  survivals$is_dated_same <- FALSE
+  logp <- joint_cases_deaths_logp(path, survivals, 0.4, 5:9, dated_out=2,
+                                  dated_in=1, fraction=0.3)
+  fatal_values <- attr(logp, "deaths_true")
+  expect_equal(fatal_values[1], fatal_reported - 1 + 2)
+  f_exact <- function(cases_true, deaths_true) {
+    fatal_recorded <- deaths_true - 2 + 1
+    probabilities_mixed <- path_probabilities(survivals, 1 / fatal_recorded)
+    stats::dbinom(deaths_true, cases_true, 0.4, log=TRUE) +
+      stats::dbinom(2, deaths_true, 0.3, log=TRUE) +
+      sum(stats::dbinom(path$fatal_new, fatal_recorded - path$fatal_before,
+                        probabilities_mixed$p_fatal, log=TRUE)) +
+      sum(deaths_new_logp(path$deaths_new, path$fatal_new, path$alive_before,
+                          probabilities_mixed$g, probabilities_mixed$q)) +
+      sum(stats::dbinom(path$survivors_new,
+                        cases_true - deaths_true - path$survivors_before,
+                        probabilities$p, log=TRUE))
+  }
+  expect_equal(logp[4, 2], f_exact(8, fatal_values[2]))
+  expect_equal(logp[5, 1], f_exact(9, fatal_values[1]))
+  expect_equal(
+    fatal_reports_logp(path, survivals, c(4, 0), dated_in=1)[2], -Inf)
 })
 
 test_that("simulate_cases_deaths gives reports consistent with its truth", {
@@ -206,6 +300,19 @@ test_that("simulate_cases_deaths gives reports consistent with its truth", {
   expect_true(abs(sum(half$truth$n_dated_by_death) /
                     sum(half$truth$deaths_true) - 0.5) < 0.1)
   expect_true(all(half$snapshots$deaths_reported <= half$snapshots$cases_reported))
+  expect_true(all(half$truth$deaths_onset <= half$truth$cases_onset))
+  # a case dated by death is recorded for a day after its onset
+  expect_equal(sim_dated$truth$deaths_true[1], 0)
+  # with their own short delay these cases are reported sooner
+  f_reported_early <- function(reporting) {
+    sim <- simulate_cases_deaths(
+      cases, 1:120, list(mean=20, sd=5), 1, list(mean=10, sd=5),
+      dated_by_death=list(fraction=1, mean=8, sd=4, reporting=reporting))
+    same_day <- dplyr::filter(sim$snapshots, time_reported == time_onset + 2)
+    sum(same_day$deaths_reported) / sum(sim$truth$deaths_true)
+  }
+  expect_true(f_reported_early(list(mean=1, sd=0.5)) > 0.9)
+  expect_true(f_reported_early(NULL) < 0.01)
 })
 
 test_that("mcmc_single with deaths recovers a case fatality ratio which changes", {

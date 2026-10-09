@@ -9,12 +9,12 @@ dbinom_log_recycled(x, size, prob)
 \arguments{
 \item{x}{a count or vector of counts}
 
-\item{size}{a number of trials or vector of them (recycled against x)}
+\item{size}{a number of trials or vector of them}
 
-\item{prob}{a probability}
+\item{prob}{a probability or vector of them}
 }
 \value{
-a vector of log-probabilities
+a vector of log-probabilities, as long as the longest argument
 }
 \description{
 Binomial log-probability which is -Inf wherever the count is impossible

@@ -5,25 +5,43 @@
 \title{Log-probability of the reports of one onset time for possible true cases
 and true fatal cases}
 \usage{
-joint_cases_deaths_logp(path, p, cfr, cases_true)
+joint_cases_deaths_logp(
+  path,
+  survivals,
+  cfr,
+  cases_true,
+  dated_out = 0,
+  dated_in = 0,
+  fraction = 0
+)
 }
 \arguments{
 \item{path}{as returned by \code{sample_fatal_path}}
 
-\item{p}{as in \code{reports_stream_logp}}
+\item{survivals}{as returned by \code{joint_survivals}}
 
 \item{cfr}{the case fatality ratio of the onset time}
 
 \item{cases_true}{a vector of possible true cases}
+
+\item{dated_out}{the number of the fatal cases of the onset time which are
+dated by death}
+
+\item{dated_in}{the number of them which are dated by death}
+
+\item{fraction}{the probability that a fatal case of the onset time is
+dated by death}
 }
 \value{
 a matrix with a row for each of cases_true and a column for each
-number of fatal cases from that reported to the largest possible, holding
-the log of the joint probability of the fatal cases and the reports
-(-Inf where impossible). Its attribute 'deaths_true' holds the numbers of
-fatal cases to which the columns correspond.
+possible number of fatal cases, holding the log of the joint probability
+of the fatal cases, of dated_out of them being dated by death and of the
+reports (-Inf where impossible). Its attribute 'deaths_true' holds the
+numbers of fatal cases to which the columns correspond.
 }
 \description{
-Log-probability of the reports of one onset time for possible true cases
-and true fatal cases
+The true cases and true fatal cases are those whose onset was on the day.
+Of the fatal cases, dated_out are recorded for a later day (their day of
+death) and so are not among the cases recorded for the day, while dated_in
+fatal cases with earlier onsets are.
 }

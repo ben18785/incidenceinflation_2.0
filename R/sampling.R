@@ -45,7 +45,11 @@ sample_true_cases_single_onset <- function(
       max_excess <- max_excess +
         ifelse(is.null(revision_parameters$max_batch), 30,
                revision_parameters$max_batch)
-    possible_cases <- max(0, max_observed_cases - max_excess):max_cases
+    min_cases <- max(0, max_observed_cases - max_excess)
+    # the function supplied can say that fewer (or no fewer) are possible
+    if(!is.null(attr(f_observation_logp, "min_cases")))
+      min_cases <- attr(f_observation_logp, "min_cases")
+    possible_cases <- min_cases:max_cases
     logps <- conditional_cases_revisions_logp(
       possible_cases, observation_df, cases_history,
       Rt, day_onset, serial_parameters, reporting_parameters,
@@ -114,6 +118,13 @@ max_uncertain_days <- function(p_gamma_cutoff, reporting_parameters) {
 #' which returns a function giving the log-probability of the reports of that
 #' onset time for a vector of possible true case counts. This replaces the
 #' model of reporting otherwise used (see \code{deaths_cases_logp_function}).
+#' If the function returned has an attribute 'min_cases', that is the smallest
+#' true case count considered.
+#' @param cases_offset an optional tibble with columns time_onset and
+#' cases_offset: the amount by which the cases recorded for each onset time
+#' exceed the true cases whose onset was on it (see
+#' \code{deaths_cases_offset}). For onset times taken to be fully reported,
+#' the true cases are the latest reported count less this amount.
 #'
 #' @return a tibble with an extra cases_estimated column
 #' @export
@@ -130,7 +141,8 @@ sample_cases_history <- function(
   revision_parameters=NULL,
   max_erroneous=3,
   cases_before=NULL,
-  f_observation_logp_onset=NULL) {
+  f_observation_logp_onset=NULL,
+  cases_offset=NULL) {
 
   if(!"reporting_piece_index" %in% colnames(observation_onset_df))
     stop("observation_onset_df must contain a column: 'reporting_piece_index'.")
@@ -159,6 +171,12 @@ sample_cases_history <- function(
       # latest count, since counts can be revised downwards
       .data$cases_reported[which.max(.data$time_reported)], NA)) %>%
     dplyr::ungroup()
+  # the cases whose onset was on a day can differ from those recorded for it
+  if(!is.null(cases_offset))
+    observation_history_df$cases_estimated <-
+      observation_history_df$cases_estimated -
+      cases_offset$cases_offset[match(observation_history_df$time_onset,
+                                      cases_offset$time_onset)]
   onset_times <- unique(observation_history_df$time_onset)
   onset_times_uncertain_period <- onset_times[onset_times >= start_uncertain_period]
 
@@ -1257,7 +1275,11 @@ mcmc_single <- function(
         snapshot_with_Rt_index_df[, c("time_onset", "time_reported", "cases_reported")],
         deaths$snapshot[, c("time_onset", "time_reported", "deaths_reported")],
         by=c("time_onset", "time_reported")),
-      initial_cases_true, deaths_options)
+      initial_cases_true, deaths_options, cases_before)
+    # with fatal cases dated by death, the true cases by day of onset differ
+    # from those recorded for each day
+    initial_cases_true <- dplyr::tibble(time_onset=deaths_state$onset_times,
+                                        cases_true=deaths_state$cases_onset)
     deaths_samples <- vector("list", niterations)
     deaths_parameters_samples <- vector("list", niterations)
   }
@@ -1494,6 +1516,20 @@ mcmc_single <- function(
         match(deaths_state$onset_times, deaths_running_df$time_onset), ]
       deaths_state <- deaths_paths_step(deaths_state, deaths_running_df$cases_true,
                                         deaths_running_df, revision_current)
+      # which fatal cases are recorded for their day of death, which moves
+      # true cases between days of onset
+      if(!is.null(deaths_state$dated)) {
+        deaths_Rt_df <- unique(df_running[, c("time_onset", "Rt")])
+        deaths_dated <- deaths_dated_step(
+          deaths_state, deaths_running_df$cases_true,
+          dated_renewal(
+            deaths_Rt_df$Rt[match(deaths_state$onset_times, deaths_Rt_df$time_onset)],
+            overdispersion_current, is_negative_binomial, serial_parameters,
+            serial_max, cases_before))
+        deaths_state <- deaths_dated$state
+        df_running$cases_true <- deaths_dated$cases_true[
+          match(df_running$time_onset, deaths_state$onset_times)]
+      }
     }
 
     # sample incidence
@@ -1524,7 +1560,8 @@ mcmc_single <- function(
       max_erroneous=max_erroneous,
       cases_before=cases_before,
       f_observation_logp_onset=if(is_deaths)
-        function(time) deaths_cases_logp_function(deaths_state, time))
+        function(time) deaths_cases_logp_function(deaths_state, time),
+      cases_offset=if(is_deaths) deaths_cases_offset(deaths_state))
 
     # sample the true fatal cases, the delay from onset to a death being
     # recorded and the case fatality ratio
@@ -1611,7 +1648,9 @@ mcmc_single <- function(
     # recalculated each iteration since it depends on the true cases, which
     # have just been updated
     logp_current_reporting <- NULL
-    if(!maximise) {
+    # not needed with a model of deaths, where the reports of fatal and other
+    # cases are handled separately
+    if(!maximise & !is_deaths) {
       logp_current_reporting <- observation_process_all_times_logp(
         snapshot_with_true_cases_df=df_temp,
         reporting_parameters=reporting_current,

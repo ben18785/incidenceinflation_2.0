@@ -21,7 +21,8 @@ sample_fatal_path(
 
 \item{survivors_true}{the true number of non-fatal cases}
 
-\item{probabilities}{as returned by \code{joint_probabilities}}
+\item{probabilities}{as returned by \code{joint_probabilities}; if it has
+no element 'p_fatal', fatal cases are reported as others are}
 }
 \value{
 a named list of vectors with an element for each report:

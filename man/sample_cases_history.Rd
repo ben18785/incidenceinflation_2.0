@@ -19,7 +19,8 @@ sample_cases_history(
   revision_parameters = NULL,
   max_erroneous = 3,
   cases_before = NULL,
-  f_observation_logp_onset = NULL
+  f_observation_logp_onset = NULL,
+  cases_offset = NULL
 )
 }
 \arguments{
@@ -74,7 +75,15 @@ assumed about how they were reported.}
 \item{f_observation_logp_onset}{an optional function of an onset time
 which returns a function giving the log-probability of the reports of that
 onset time for a vector of possible true case counts. This replaces the
-model of reporting otherwise used (see \code{deaths_cases_logp_function}).}
+model of reporting otherwise used (see \code{deaths_cases_logp_function}).
+If the function returned has an attribute 'min_cases', that is the smallest
+true case count considered.}
+
+\item{cases_offset}{an optional tibble with columns time_onset and
+cases_offset: the amount by which the cases recorded for each onset time
+exceed the true cases whose onset was on it (see
+\code{deaths_cases_offset}). For onset times taken to be fully reported,
+the true cases are the latest reported count less this amount.}
 }
 \value{
 a tibble with an extra cases_estimated column

@@ -9,10 +9,10 @@ deaths_new_logp(deaths_new, fatal_new, fatal_alive, g, q)
 \arguments{
 \item{deaths_new}{the number of deaths newly shown}
 
-\item{fatal_new}{the number of fatal cases newly reported (a vector)}
+\item{fatal_new}{the number of fatal cases newly reported}
 
 \item{fatal_alive}{the number of fatal cases reported earlier whose deaths
-had not been recorded (a vector)}
+had not been recorded}
 
 \item{g}{a probability}
 
@@ -22,8 +22,8 @@ had not been recorded (a vector)}
 a vector of log-probabilities
 }
 \description{
-Deaths newly shown are those of fatal cases newly reported whose death had
-already been recorded (each with probability g) and those of fatal cases
+Deaths newly shown are those of fatal cases newly reported which are shown
+as dead at once (each with probability g) and those of fatal cases
 reported earlier and shown as alive whose death has now been recorded (each
-with probability q).
+with probability q). All arguments can be vectors.
 }

@@ -30,8 +30,9 @@ of each onset time is proposed}
 \item{step_max}{the largest change proposed}
 }
 \value{
-the state with elements 'deaths_true' and 'paths' updated (see
-\code{sample_fatal_path}; each path also holds the probability 'p' used)
+the state with elements 'deaths_true', 'paths' (see
+\code{sample_fatal_path}) and 'survivals' (see \code{joint_survivals})
+updated
 }
 \description{
 Samples how many of the cases in each report are fatal, for every onset time
@@ -43,5 +44,6 @@ cases, so that neither can change while the other is held fixed. The true
 number of fatal cases is therefore first updated with the split of the
 reported cases summed out: a change is proposed and accepted with the
 Metropolis probability, using the probability of the reports from
-\code{fatal_path_forward}. The split is then drawn given the result.
+\code{fatal_path_forward}. The split is then drawn given the result. The
+fatal cases dated by death, into and out of the day, are held fixed.
 }

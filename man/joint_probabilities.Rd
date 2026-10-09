@@ -2,8 +2,8 @@
 % Please edit documentation in R/deaths.R
 \name{joint_probabilities}
 \alias{joint_probabilities}
-\title{Probabilities governing the reports of one onset time in the joint model
-of cases and deaths}
+\title{Probabilities governing the reports of the cases recorded for one day in
+the joint model of cases and deaths}
 \usage{
 joint_probabilities(
   days,
@@ -11,13 +11,14 @@ joint_probabilities(
   reporting_parameters,
   death_parameters,
   revision_parameters = NULL,
-  fraction_dated_by_death = 0
+  fraction_dated_by_death = 0,
+  dated_reporting_parameters = NULL
 )
 }
 \arguments{
 \item{days}{the times of the reports, in increasing order}
 
-\item{day_onset}{the onset time}
+\item{day_onset}{the day for which the cases are recorded}
 
 \item{reporting_parameters}{named list of the 'mean' and 'sd' of the delay
 from onset to a case being reported}
@@ -28,20 +29,25 @@ onset to a death being recorded}
 \item{revision_parameters}{named list which can contain 'tail' and
 'report_multipliers' (see above); or NULL}
 
-\item{fraction_dated_by_death}{the fraction of fatal cases which appear
-under their date of death and so are shown as dead as soon as reported}
+\item{fraction_dated_by_death}{the fraction of the fatal cases recorded for
+the day which are dated by death}
+
+\item{dated_reporting_parameters}{named list of the 'mean' and 'sd' of the
+delay from death to being reported, for fatal cases recorded for their day
+of death; if NULL (the default) this is the delay of other cases counted
+from onset}
 }
 \value{
 a named list of vectors with an element for each report: 'p' (the
-probability a case not yet reported at the report before is reported by
-this one), 'g' (the probability that a fatal case newly reported in this
-report is shown as dead in it: either it is dated by its death, or its
-death has been recorded by this report)
-and 'q' (the probability a death not recorded at the report before is
-recorded by this one). Before the first report nothing has been reported
-or recorded.
+probability a non-fatal case not yet reported at the report before is
+reported by this one), 'p_fatal' (the same for a fatal case), 'g' (the
+probability that a fatal case newly reported in this report is shown as
+dead in it: either it is dated by its death, or its death has been
+recorded by this report) and 'q' (the probability a death not recorded at
+the report before is recorded by this one). Before the first report nothing
+has been reported or recorded.
 }
 \description{
-Probabilities governing the reports of one onset time in the joint model
-of cases and deaths
+Probabilities governing the reports of the cases recorded for one day in
+the joint model of cases and deaths
 }

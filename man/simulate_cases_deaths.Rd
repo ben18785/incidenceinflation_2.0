@@ -37,17 +37,22 @@ recorded runs from onset independently of when the case is reported, or
 "report" if it runs from when the case is reported}
 
 \item{dated_by_death}{an optional named list of 'fraction' (the fraction of
-fatal cases which appear under their date of death) and 'mean' and 'sd' (of
-the gamma-distributed time from onset to death of those cases)}
+fatal cases which are recorded for their day of death), 'mean' and 'sd' (of
+the gamma-distributed time from onset to death of those cases, which is
+rounded up to a whole number of days) and, optionally, 'reporting' (a named
+list of the 'mean' and 'sd' of the delay from the day of death to those
+cases being reported)}
 }
 \value{
 a named list of 'snapshots' (a tibble with columns time_onset,
 time_reported, cases_reported and deaths_reported, where time_onset is the
-day under which cases appear in the reports) and 'truth' (a tibble with a
-row for each such day and columns: time_onset, cases_true and deaths_true
-(the cases and fatal cases which appear under the day), cases_onset (the
-cases whose onset was on the day), cfr, n_dated_by_death, and the mean and
-sd of the delay from the day to being shown as dead)
+day for which cases are recorded) and 'truth' (a tibble with a row for
+each such day and columns: time_onset, cases_true and deaths_true (the
+cases and fatal cases recorded for the day), cases_onset and deaths_onset
+(the cases and fatal cases whose onset was on the day), cfr,
+n_dated_by_death (the fatal cases recorded for the day which are dated by
+death), and the mean and sd of the delay from the day to being shown as
+dead)
 }
 \description{
 Each case is reported after a delay from onset. A case dies with a
@@ -59,8 +64,9 @@ an event with delay d from onset is taken to be in a report made at least
 d - 0.5 days after onset.
 }
 \details{
-Optionally a fraction of fatal cases appear in the reports under their
-date of death, not their date of onset. Such a case is placed on the day
-it died, is reported after the reporting delay counted from that day, and
-is shown as dead as soon as it is reported.
+Optionally a fraction of fatal cases are recorded for their day of death,
+not their day of onset. Such a case is counted on the day it died and is
+shown as dead as soon as it is reported. It is reported after a delay
+counted from that day: one with its own supplied mean and sd or, if none
+is supplied, the reporting delay of other fatal cases.
 }

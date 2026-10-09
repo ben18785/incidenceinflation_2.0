@@ -13,7 +13,8 @@ deaths_cases_logp_function(state, time_onset)
 \item{time_onset}{an onset time}
 }
 \value{
-a function of a vector of possible true cases
+a function of a vector of possible true cases. Its attribute
+'min_cases' is the smallest number of true cases which is possible.
 }
 \description{
 Creates the function giving the log-probability of the reports of an onset

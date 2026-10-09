@@ -10,6 +10,11 @@
 # A report gives, for each onset time, the cases reported and how many of
 # them are shown as dead; how many of the others will die is not observed and
 # is sampled.
+#
+# Optionally some fatal cases are recorded for their day of death, not their
+# day of onset (see deaths-dated.R). The reports then count cases by the day
+# they are recorded for, while transmission and the case fatality ratio are
+# by true day of onset.
 
 #' Default settings for the model of deaths
 #'
@@ -25,10 +30,8 @@
 #' 'delay_prior' (as priors$reporting in \code{mcmc_single});
 #' 'delay_changepoints' (a named list of settings passed to
 #' \code{reporting_changepoint_settings}, or FALSE for a delay which does not
-#' change); 'fraction_dated_by_death' (the fraction of fatal cases which
-#' appear in the reports under their date of death, not their date of onset:
-#' a single value or one for each onset time. These are taken to be shown as
-#' dead as soon as they are reported. This is supplied, not estimated.); and
+#' change); 'dated_by_death' (NULL, or what is supplied about fatal cases
+#' recorded for their day of death: see \code{dated_by_death_settings}); and
 #' 'n_parameter_steps'. The delay here is that from onset to a death being
 #' recorded.
 #' @export
@@ -41,7 +44,7 @@ deaths_settings <- function(n_days, settings=list()) {
     initial_delay=list(mean=14, sd=8),
     delay_prior=list(mean_mu=14, mean_sigma=10, sd_mu=8, sd_sigma=8),
     delay_changepoints=list(min_length=14),
-    fraction_dated_by_death=0,
+    dated_by_death=NULL,
     n_parameter_steps=1)
   unknown <- setdiff(names(settings), names(defaults))
   if(length(unknown) > 0)
@@ -55,12 +58,8 @@ deaths_settings <- function(n_days, settings=list()) {
     stop("The minimum length of a segment must be at least one day.")
   if(defaults$initial_cfr <= 0 | defaults$initial_cfr >= 1)
     stop("The initial case fatality ratio must lie strictly between 0 and 1.")
-  fraction <- defaults$fraction_dated_by_death
-  if(!length(fraction) %in% c(1, n_days))
-    stop("fraction_dated_by_death must be a single value or one for each onset time.")
-  if(any(is.na(fraction)) || any(fraction < 0 | fraction > 1))
-    stop("fraction_dated_by_death must lie between 0 and 1.")
-  defaults$fraction_dated_by_death <- rep_len(fraction, n_days)
+  defaults["dated_by_death"] <- list(
+    dated_by_death_settings(n_days, defaults$dated_by_death))
   is_delay_changes <- !identical(defaults$delay_changepoints, FALSE)
   delay_settings <- if(is_delay_changes) defaults$delay_changepoints else list()
   if(is.null(delay_settings$min_length))
@@ -140,56 +139,157 @@ sample_cfr_changepoints <- function(deaths_true, cases_true, p_change,
   list(starts=starts, cfr=values[segment_indices(starts, n_days)])
 }
 
-#' Probabilities governing the reports of one onset time in the joint model
-#' of cases and deaths
+
+#' Logs of the probabilities that the events of the cases recorded for one
+#' day have not happened by each report
 #'
 #' @param days the times of the reports, in increasing order
-#' @param day_onset the onset time
+#' @param day_onset the day for which the cases are recorded
 #' @param reporting_parameters named list of the 'mean' and 'sd' of the delay
 #' from onset to a case being reported
 #' @param death_parameters named list of the 'mean' and 'sd' of the delay from
 #' onset to a death being recorded
 #' @inheritParams log_undetected_days
-#' @param fraction_dated_by_death the fraction of fatal cases which appear
-#' under their date of death and so are shown as dead as soon as reported
+#' @param dated_reporting_parameters named list of the 'mean' and 'sd' of the
+#' delay from death to being reported, for fatal cases recorded for their day
+#' of death; if NULL (the default) this is the delay of other cases counted
+#' from onset
+#'
+#' @return a named list of vectors with an element for each report:
+#' 'log_reported' (a case has not been reported), 'log_recorded' (the death of
+#' a fatal case has not been recorded) and 'log_dated' (a fatal case recorded
+#' for its day of death has not been reported); and 'is_dated_same' (whether
+#' the last is the same as the first)
+joint_survivals <- function(days, day_onset, reporting_parameters,
+                            death_parameters, revision_parameters=NULL,
+                            dated_reporting_parameters=NULL) {
+  f <- function(parameters)
+    log_undetected_days(days, day_onset, parameters, revision_parameters)
+  log_reported <- f(reporting_parameters)
+  is_dated_same <- is.null(dated_reporting_parameters)
+  list(log_reported=log_reported,
+       log_recorded=f(death_parameters),
+       log_dated=if(is_dated_same) log_reported else f(dated_reporting_parameters),
+       is_dated_same=is_dated_same)
+}
+
+#' Probability that an event which had not happened by the report before has
+#' happened by each report
+#'
+#' @param log_s the log of the probability the event has not happened by each
+#' report
+#'
+#' @return a vector of probabilities
+survival_steps <- function(log_s) {
+  -expm1(pmin(log_s - c(0, log_s[-length(log_s)]), 0))
+}
+
+#' Probabilities governing the reports of the cases recorded for one day,
+#' where a fraction of the fatal cases are recorded for their day of death
+#'
+#' Each fatal case recorded for the day is taken to be dated by its death
+#' with probability 'fraction', independently of the others. The probability
+#' that such a case has not been reported is then a mixture over the two
+#' kinds, and a fatal case newly reported is one of those dated by death with
+#' a probability which depends on the report. A case dated by death is shown
+#' as dead in the first report it appears in; one dated by onset only if its
+#' death has been recorded by then.
+#'
+#' @param survivals as returned by \code{joint_survivals}
+#' @param fraction the fraction of the fatal cases recorded for the day which
+#' are dated by death: a single value or a vector of possible values
+#'
+#' @return a named list of: 'p' and 'q' (vectors with an element for each
+#' report: the probability a non-fatal case not reported at the report before
+#' is reported by this one, and the probability a death not recorded at the
+#' report before is recorded by this one); and 'p_fatal' and 'g' (matrices
+#' with a row for each of 'fraction' and a column for each report: the
+#' probability a fatal case not reported at the report before is reported by
+#' this one, and the probability that a fatal case newly reported in this
+#' report is shown as dead in it)
+mixed_probabilities <- function(survivals, fraction=0) {
+  n <- length(fraction)
+  n_reports <- length(survivals$log_reported)
+  f_rows <- function(x) matrix(x, n, n_reports, byrow=TRUE)
+  p <- survival_steps(survivals$log_reported)
+  p_fatal <- f_rows(p)
+  share <- matrix(fraction, n, n_reports)
+  if(!survivals$is_dated_same && any(fraction > 0)) {
+    log_mixture <- matrix(
+      log_add_exp(outer(log1p(-fraction), survivals$log_reported, "+"),
+                  outer(log(fraction), survivals$log_dated, "+")),
+      n, n_reports)
+    log_mixture_before <- cbind(rep(0, n), log_mixture[, -n_reports, drop=FALSE])
+    p_fatal <- -expm1(pmin(log_mixture - log_mixture_before, 0))
+    log_dated_new <- c(0, survivals$log_dated[-n_reports]) +
+      log(survival_steps(survivals$log_dated))
+    share_new <- exp(outer(log(fraction), log_dated_new, "+") -
+                       (log_mixture_before + log(p_fatal)))
+    # no fatal case of either kind can be newly reported
+    is_undefined <- !is.finite(share_new)
+    share_new[is_undefined] <- share[is_undefined]
+    share <- pmin(share_new, 1)
+  }
+  list(p=p,
+       q=survival_steps(survivals$log_recorded),
+       p_fatal=p_fatal,
+       g=share + (1 - share) * f_rows(-expm1(survivals$log_recorded)))
+}
+
+#' Probabilities governing the reports of the cases recorded for one day in
+#' the joint model of cases and deaths
+#'
+#' @inheritParams joint_survivals
+#' @param fraction_dated_by_death the fraction of the fatal cases recorded for
+#' the day which are dated by death
 #'
 #' @return a named list of vectors with an element for each report: 'p' (the
-#' probability a case not yet reported at the report before is reported by
-#' this one), 'g' (the probability that a fatal case newly reported in this
-#' report is shown as dead in it: either it is dated by its death, or its
-#' death has been recorded by this report)
-#' and 'q' (the probability a death not recorded at the report before is
-#' recorded by this one). Before the first report nothing has been reported
-#' or recorded.
+#' probability a non-fatal case not yet reported at the report before is
+#' reported by this one), 'p_fatal' (the same for a fatal case), 'g' (the
+#' probability that a fatal case newly reported in this report is shown as
+#' dead in it: either it is dated by its death, or its death has been
+#' recorded by this report) and 'q' (the probability a death not recorded at
+#' the report before is recorded by this one). Before the first report nothing
+#' has been reported or recorded.
 joint_probabilities <- function(days, day_onset, reporting_parameters,
                                 death_parameters, revision_parameters=NULL,
-                                fraction_dated_by_death=0) {
-  f <- function(parameters) {
-    log_s <- log_undetected_days(days, day_onset, parameters, revision_parameters)
-    list(log_s=log_s, step=-expm1(pmin(log_s - c(0, log_s[-length(log_s)]), 0)))
-  }
-  reported <- f(reporting_parameters)
-  recorded <- f(death_parameters)
-  list(p=reported$step,
-       g=fraction_dated_by_death +
-         (1 - fraction_dated_by_death) * -expm1(recorded$log_s),
-       q=recorded$step)
+                                fraction_dated_by_death=0,
+                                dated_reporting_parameters=NULL) {
+  path_probabilities(
+    joint_survivals(days, day_onset, reporting_parameters, death_parameters,
+                    revision_parameters, dated_reporting_parameters),
+    fraction_dated_by_death)
+}
+
+#' As \code{mixed_probabilities} for a single fraction, with vectors only
+#'
+#' @inheritParams mixed_probabilities
+#'
+#' @return a named list of vectors 'p', 'p_fatal', 'g' and 'q'
+path_probabilities <- function(survivals, fraction=0) {
+  probabilities <- mixed_probabilities(survivals, fraction)
+  list(p=probabilities$p,
+       p_fatal=as.vector(probabilities$p_fatal),
+       g=as.vector(probabilities$g),
+       q=probabilities$q)
 }
 
 #' Binomial log-probability which is -Inf wherever the count is impossible
 #'
 #' @param x a count or vector of counts
-#' @param size a number of trials or vector of them (recycled against x)
-#' @param prob a probability
+#' @param size a number of trials or vector of them
+#' @param prob a probability or vector of them
 #'
-#' @return a vector of log-probabilities
+#' @return a vector of log-probabilities, as long as the longest argument
 dbinom_log_recycled <- function(x, size, prob) {
-  n <- max(length(x), length(size))
+  n <- max(length(x), length(size), length(prob))
   x <- rep_len(x, n)
   size <- rep_len(size, n)
+  prob <- rep_len(prob, n)
   logp <- rep(-Inf, n)
   is_valid <- size >= 0 & x >= 0 & x <= size
-  logp[is_valid] <- stats::dbinom(x[is_valid], size[is_valid], prob, log=TRUE)
+  logp[is_valid] <- stats::dbinom(x[is_valid], size[is_valid], prob[is_valid],
+                                  log=TRUE)
   logp
 }
 
@@ -208,25 +308,26 @@ log_add_exp <- function(a, b) {
 
 #' Log-probability of the deaths newly shown in a report
 #'
-#' Deaths newly shown are those of fatal cases newly reported whose death had
-#' already been recorded (each with probability g) and those of fatal cases
+#' Deaths newly shown are those of fatal cases newly reported which are shown
+#' as dead at once (each with probability g) and those of fatal cases
 #' reported earlier and shown as alive whose death has now been recorded (each
-#' with probability q).
+#' with probability q). All arguments can be vectors.
 #'
 #' @param deaths_new the number of deaths newly shown
-#' @param fatal_new the number of fatal cases newly reported (a vector)
+#' @param fatal_new the number of fatal cases newly reported
 #' @param fatal_alive the number of fatal cases reported earlier whose deaths
-#' had not been recorded (a vector)
+#' had not been recorded
 #' @param g a probability
 #' @param q a probability
 #'
 #' @return a vector of log-probabilities
 deaths_new_logp <- function(deaths_new, fatal_new, fatal_alive, g, q) {
-  n <- max(length(fatal_new), length(fatal_alive))
-  fatal_new <- rep_len(fatal_new, n)
-  fatal_alive <- rep_len(fatal_alive, n)
+  n <- max(length(deaths_new), length(fatal_new), length(fatal_alive),
+           length(g), length(q))
+  if(n == 0)
+    return(numeric(0))
   logp <- rep(-Inf, n)
-  for(x in 0:min(deaths_new, max(fatal_new)))
+  for(x in 0:min(max(deaths_new), max(fatal_new)))
     logp <- log_add_exp(
       logp,
       dbinom_log_recycled(x, fatal_new, g) +
@@ -247,7 +348,8 @@ deaths_new_logp <- function(deaths_new, fatal_new, fatal_alive, g, q) {
 #' @param deaths_reported the deaths in each report
 #' @param deaths_true the true number of fatal cases
 #' @param survivors_true the true number of non-fatal cases
-#' @param probabilities as returned by \code{joint_probabilities}
+#' @param probabilities as returned by \code{joint_probabilities}; if it has
+#' no element 'p_fatal', fatal cases are reported as others are
 #'
 #' @return a named list of vectors with an element for each report:
 #' 'fatal_new' and 'survivors_new' (the fatal and non-fatal cases newly
@@ -283,6 +385,9 @@ fatal_path_forward <- function(cases_reported, deaths_reported, deaths_true,
     stop("Reported cases and deaths must not fall in the joint model of cases and deaths.")
   if(any(deaths_reported > cases_reported))
     stop("Reported deaths must not exceed reported cases.")
+  p_fatal <- probabilities$p_fatal
+  if(is.null(p_fatal))
+    p_fatal <- probabilities$p
   r_max <- min(max(cases_reported), deaths_true)
   r_values <- 0:r_max
 
@@ -301,7 +406,7 @@ fatal_path_forward <- function(cases_reported, deaths_reported, deaths_true,
       r <- r_values[is_valid]
       for(a in 0:cases_new[j]) {
         log_w[a + 1, is_valid] <-
-          dbinom_log_recycled(a, deaths_true - r, p) +
+          dbinom_log_recycled(a, deaths_true - r, p_fatal[j]) +
           dbinom_log_recycled(cases_new[j] - a,
                           survivors_true - (cases_before[j] - r), p) +
           deaths_new_logp(deaths_new[j], a, r - deaths_before[j],
@@ -381,32 +486,82 @@ reports_stream_logp <- function(counts_new, counts_before, totals, p) {
   logp
 }
 
+#' Log-probability, given how many of the cases in each report are fatal, of
+#' the fatal cases newly reported and the deaths newly shown in each report
+#'
+#' @param path as returned by \code{sample_fatal_path}
+#' @param survivals as returned by \code{joint_survivals}
+#' @param fatal_recorded a vector of possible numbers of fatal cases recorded
+#' for the day
+#' @param dated_in the number of them which are dated by death
+#' @param is_deaths_included if FALSE the deaths newly shown are left out
+#'
+#' @return a vector with a log-probability for each of fatal_recorded
+fatal_reports_logp <- function(path, survivals, fatal_recorded, dated_in=0,
+                               is_deaths_included=TRUE) {
+  n <- length(fatal_recorded)
+  n_reports <- length(path$fatal_new)
+  fraction <- ifelse(fatal_recorded > 0,
+                     pmin(dated_in / pmax(fatal_recorded, 1), 1), 0)
+  probabilities <- mixed_probabilities(survivals, fraction)
+  logp <- rowSums(matrix(
+    dbinom_log_recycled(rep(path$fatal_new, each=n),
+                        as.vector(outer(fatal_recorded, path$fatal_before, "-")),
+                        as.vector(probabilities$p_fatal)),
+    n, n_reports))
+  is_informative <- path$fatal_new > 0 | path$alive_before > 0
+  if(is_deaths_included & any(is_informative))
+    logp <- logp + rowSums(matrix(
+      deaths_new_logp(rep(path$deaths_new[is_informative], each=n),
+                      rep(path$fatal_new[is_informative], each=n),
+                      rep(path$alive_before[is_informative], each=n),
+                      as.vector(probabilities$g[, is_informative]),
+                      rep(probabilities$q[is_informative], each=n)),
+      n, sum(is_informative)))
+  logp[fatal_recorded < dated_in] <- -Inf
+  logp
+}
+
 #' Log-probability of the reports of one onset time for possible true cases
 #' and true fatal cases
 #'
-#' @param path as returned by \code{sample_fatal_path}
-#' @param p as in \code{reports_stream_logp}
+#' The true cases and true fatal cases are those whose onset was on the day.
+#' Of the fatal cases, dated_out are recorded for a later day (their day of
+#' death) and so are not among the cases recorded for the day, while dated_in
+#' fatal cases with earlier onsets are.
+#'
+#' @inheritParams fatal_reports_logp
 #' @param cfr the case fatality ratio of the onset time
 #' @param cases_true a vector of possible true cases
+#' @param dated_out the number of the fatal cases of the onset time which are
+#' dated by death
+#' @param fraction the probability that a fatal case of the onset time is
+#' dated by death
 #'
 #' @return a matrix with a row for each of cases_true and a column for each
-#' number of fatal cases from that reported to the largest possible, holding
-#' the log of the joint probability of the fatal cases and the reports
-#' (-Inf where impossible). Its attribute 'deaths_true' holds the numbers of
-#' fatal cases to which the columns correspond.
-joint_cases_deaths_logp <- function(path, p, cfr, cases_true) {
+#' possible number of fatal cases, holding the log of the joint probability
+#' of the fatal cases, of dated_out of them being dated by death and of the
+#' reports (-Inf where impossible). Its attribute 'deaths_true' holds the
+#' numbers of fatal cases to which the columns correspond.
+joint_cases_deaths_logp <- function(path, survivals, cfr, cases_true,
+                                    dated_out=0, dated_in=0, fraction=0) {
   n_reports <- length(path$fatal_new)
   fatal_reported <- path$fatal_before[n_reports] + path$fatal_new[n_reports]
   survivors_reported <- path$survivors_before[n_reports] +
     path$survivors_new[n_reports]
-  fatal_max <- max(max(cases_true) - survivors_reported, fatal_reported)
-  fatal_values <- fatal_reported:fatal_max
-  survivors_max <- max(max(cases_true) - fatal_reported, survivors_reported)
+  # fatal cases of the onset time which are dated by onset
+  onset_min <- max(fatal_reported - dated_in, 0)
+  onset_max <- max(max(cases_true) - dated_out - survivors_reported, onset_min)
+  fatal_values <- (onset_min:onset_max) + dated_out
+  survivors_max <- max(max(cases_true) - fatal_values[1], survivors_reported)
   survivors_values <- survivors_reported:survivors_max
-  logp_fatal <- reports_stream_logp(path$fatal_new, path$fatal_before,
-                                    fatal_values, p)
+  logp_fatal <- fatal_reports_logp(path, survivals,
+                                   fatal_values - dated_out + dated_in, dated_in,
+                                   is_deaths_included=dated_in > 0) +
+    stats::dbinom(dated_out, fatal_values, fraction, log=TRUE)
   logp_survivors <- reports_stream_logp(path$survivors_new, path$survivors_before,
-                                        survivors_values, p)
+                                        survivors_values,
+                                        survival_steps(survivals$log_reported))
   cases <- matrix(cases_true, length(cases_true), length(fatal_values))
   fatal <- matrix(fatal_values, length(cases_true), length(fatal_values), byrow=TRUE)
   survivors <- cases - fatal
@@ -414,7 +569,7 @@ joint_cases_deaths_logp <- function(path, p, cfr, cases_true) {
   logp <- matrix(-Inf, length(cases_true), length(fatal_values))
   logp[is_possible] <- stats::dbinom(fatal[is_possible], cases[is_possible], cfr,
                                      log=TRUE) +
-    logp_fatal[fatal[is_possible] - fatal_reported + 1] +
+    logp_fatal[fatal[is_possible] - fatal_values[1] + 1] +
     logp_survivors[survivors[is_possible] - survivors_reported + 1]
   attr(logp, "deaths_true") <- fatal_values
   logp
@@ -424,14 +579,20 @@ joint_cases_deaths_logp <- function(path, p, cfr, cases_true) {
 #'
 #' @param snapshot_df a tibble with columns: time_onset, time_reported,
 #' cases_reported and deaths_reported
-#' @param cases_true_df a tibble with columns time_onset and cases_true
+#' @param cases_true_df a tibble with columns time_onset and cases_true: the
+#' cases taken at the start to be recorded for each day
 #' @param settings as returned by \code{deaths_settings}
+#' @inheritParams sample_cases_history
 #'
 #' @return a named list holding the reports of each onset time, the true
 #' fatal cases and case fatality ratio by onset time, and the segments of the
-#' ratio and of the delay from onset to a death being recorded
+#' ratio and of the delay from onset to a death being recorded. Its element
+#' 'cases_onset' holds the true cases by day of onset with which to start,
+#' which differ from those supplied if some fatal cases are dated by death
+#' (see \code{initial_dated_state}).
 #' @importFrom rlang .data
-initial_deaths_state <- function(snapshot_df, cases_true_df, settings) {
+initial_deaths_state <- function(snapshot_df, cases_true_df, settings,
+                                 cases_before=NULL) {
   if(!all(c("time_onset", "time_reported", "cases_reported", "deaths_reported") %in%
           colnames(snapshot_df)))
     stop("The snapshots must contain columns: 'time_onset', 'time_reported', 'cases_reported' and 'deaths_reported'.")
@@ -457,16 +618,21 @@ initial_deaths_state <- function(snapshot_df, cases_true_df, settings) {
     stop("Initial true cases must be at least the cases reported.")
   deaths_true <- pmin(cases_true,
                       pmax(largest, round(settings$initial_cfr * cases_true)))
-  list(
+  state <- list(
     reports=reports,
     onset_times=onset_times,
-    deaths_true=deaths_true,
+    deaths_true=unname(deaths_true),
+    cases_onset=cases_true,
     cfr=rep(settings$initial_cfr, n_days),
     cfr_starts=1,
     p_change=settings$alpha / (settings$alpha + settings$beta),
     recording=initial_reporting_changepoints(settings$initial_delay),
-    fraction_dated_by_death=settings$fraction_dated_by_death,
-    paths=NULL)
+    dated=NULL,
+    paths=NULL,
+    survivals=NULL)
+  if(!is.null(settings$dated_by_death))
+    state <- initial_dated_state(state, settings$dated_by_death, cases_before)
+  state
 }
 
 #' Delay from onset to a death being recorded for each onset time
@@ -477,6 +643,26 @@ initial_deaths_state <- function(snapshot_df, cases_true_df, settings) {
 deaths_delay_by_onset <- function(state) {
   n_days <- length(state$onset_times)
   state$recording$parameters[segment_indices(state$recording$starts, n_days), ]
+}
+
+#' Fatal cases dated by death, by the day of their onset and by the day for
+#' which they are recorded
+#'
+#' @inheritParams deaths_delay_by_onset
+#'
+#' @return a named list of vectors with an element for each day: 'out' (the
+#' fatal cases with onset on the day which are dated by death, and so are
+#' recorded for a later day), 'into' (the fatal cases dated by death which
+#' are recorded for the day), 'fraction' (the probability that a fatal case
+#' with onset on the day is dated by death) and 'fatal_recorded' (the fatal
+#' cases recorded for the day). Without such cases the first three are zero.
+dated_counts <- function(state) {
+  zeros <- rep(0, length(state$onset_times))
+  counts <- list(out=zeros, into=zeros, fraction=zeros)
+  if(!is.null(state$dated))
+    counts <- state$dated[c("out", "into", "fraction")]
+  counts$fatal_recorded <- state$deaths_true - counts$out + counts$into
+  counts
 }
 
 #' Samples how many of the cases in each report are fatal, for every onset time
@@ -497,35 +683,46 @@ deaths_delay_by_onset <- function(state) {
 #' number of fatal cases is therefore first updated with the split of the
 #' reported cases summed out: a change is proposed and accepted with the
 #' Metropolis probability, using the probability of the reports from
-#' \code{fatal_path_forward}. The split is then drawn given the result.
+#' \code{fatal_path_forward}. The split is then drawn given the result. The
+#' fatal cases dated by death, into and out of the day, are held fixed.
 #'
-#' @return the state with elements 'deaths_true' and 'paths' updated (see
-#' \code{sample_fatal_path}; each path also holds the probability 'p' used)
+#' @return the state with elements 'deaths_true', 'paths' (see
+#' \code{sample_fatal_path}) and 'survivals' (see \code{joint_survivals})
+#' updated
 deaths_paths_step <- function(state, cases_true, reporting_by_onset,
                               revision_parameters=NULL, n_proposals=2,
                               step_max=3) {
   delays <- deaths_delay_by_onset(state)
+  dated <- dated_counts(state)
   paths <- vector("list", length(state$onset_times))
+  l_survivals <- vector("list", length(state$onset_times))
   for(k in seq_along(state$onset_times)) {
     reports <- state$reports[[k]]
-    probabilities <- joint_probabilities(
+    survivals <- joint_survivals(
       reports$time_reported, state$onset_times[k],
       list(mean=reporting_by_onset$mean[k], sd=reporting_by_onset$sd[k]),
       list(mean=delays$mean[k], sd=delays$sd[k]), revision_parameters,
-      state$fraction_dated_by_death[k])
-    f_forward <- function(deaths_true)
-      fatal_path_forward(reports$cases_reported, reports$deaths_reported,
-                         deaths_true, cases_true[k] - deaths_true, probabilities)
+      state$dated$reporting)
+    f_forward <- function(deaths_true) {
+      fatal_recorded <- deaths_true - dated$out[k] + dated$into[k]
+      fatal_path_forward(
+        reports$cases_reported, reports$deaths_reported, fatal_recorded,
+        cases_true[k] - deaths_true,
+        path_probabilities(survivals, ifelse(fatal_recorded > 0,
+                                             dated$into[k] / fatal_recorded, 0)))
+    }
     f_logp <- function(deaths_true, forward)
-      forward$logp + stats::dbinom(deaths_true, cases_true[k], state$cfr[k], log=TRUE)
+      forward$logp +
+      stats::dbinom(deaths_true, cases_true[k], state$cfr[k], log=TRUE) +
+      stats::dbinom(dated$out[k], deaths_true, dated$fraction[k], log=TRUE)
     deaths_true <- state$deaths_true[k]
     forward <- f_forward(deaths_true)
     if(!is.finite(forward$logp))
       stop("The reports of cases and deaths are impossible given the true cases and deaths.")
-    largest <- max(reports$deaths_reported)
+    smallest <- dated$out[k] + max(max(reports$deaths_reported) - dated$into[k], 0)
     for(proposal in seq_len(n_proposals)) {
       proposed <- deaths_true + sample(c(-1, 1), 1) * sample.int(step_max, 1)
-      if(proposed < largest | proposed > cases_true[k])
+      if(proposed < smallest | proposed > cases_true[k])
         next
       forward_proposed <- f_forward(proposed)
       log_ratio <- f_logp(proposed, forward_proposed) - f_logp(deaths_true, forward)
@@ -535,11 +732,11 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
       }
     }
     state$deaths_true[k] <- deaths_true
-    path <- fatal_path_backward(forward)
-    path$p <- probabilities$p
-    paths[[k]] <- path
+    paths[[k]] <- fatal_path_backward(forward)
+    l_survivals[[k]] <- survivals
   }
   state$paths <- paths
+  state$survivals <- l_survivals
   state
 }
 
@@ -549,15 +746,24 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
 #' @inheritParams deaths_delay_by_onset
 #' @param time_onset an onset time
 #'
-#' @return a function of a vector of possible true cases
+#' @return a function of a vector of possible true cases. Its attribute
+#' 'min_cases' is the smallest number of true cases which is possible.
 deaths_cases_logp_function <- function(state, time_onset) {
   k <- match(time_onset, state$onset_times)
   path <- state$paths[[k]]
+  survivals <- state$survivals[[k]]
   cfr <- state$cfr[k]
-  function(cases_true) {
-    logp <- joint_cases_deaths_logp(path, path$p, cfr, cases_true)
+  dated <- purrr::map(dated_counts(state), k)
+  f <- function(cases_true) {
+    logp <- joint_cases_deaths_logp(path, survivals, cfr, cases_true,
+                                    dated$out, dated$into, dated$fraction)
     matrixStats::rowLogSumExps(logp)
   }
+  n_reports <- length(path$fatal_new)
+  attr(f, "min_cases") <- dated$out +
+    max(path$fatal_before[n_reports] + path$fatal_new[n_reports] - dated$into, 0) +
+    path$survivors_before[n_reports] + path$survivors_new[n_reports]
+  f
 }
 
 #' Samples the true fatal cases of every onset time given the true cases
@@ -566,9 +772,11 @@ deaths_cases_logp_function <- function(state, time_onset) {
 #'
 #' @return the state with element 'deaths_true' updated
 deaths_true_step <- function(state, cases_true) {
+  dated <- dated_counts(state)
   for(k in seq_along(state$onset_times)) {
-    path <- state$paths[[k]]
-    logp <- joint_cases_deaths_logp(path, path$p, state$cfr[k], cases_true[k])
+    logp <- joint_cases_deaths_logp(state$paths[[k]], state$survivals[[k]],
+                                    state$cfr[k], cases_true[k], dated$out[k],
+                                    dated$into[k], dated$fraction[k])
     values <- attr(logp, "deaths_true")
     logp <- as.vector(logp)
     if(!any(is.finite(logp)))
@@ -593,19 +801,26 @@ deaths_true_step <- function(state, cases_true) {
 deaths_reporting_logp_function <- function(state, cases_true,
                                            revision_parameters=NULL) {
   survivors_true <- cases_true - state$deaths_true
+  dated <- dated_counts(state)
   function(indices, reporting_parameters) {
     if(reporting_parameters$mean <= 0 | reporting_parameters$sd <= 0)
       return(-Inf)
     sum(purrr::map_dbl(indices, function(k) {
       path <- state$paths[[k]]
-      log_s <- log_undetected_days(state$reports[[k]]$time_reported,
-                                   state$onset_times[k], reporting_parameters,
-                                   revision_parameters)
-      p <- -expm1(pmin(log_s - c(0, log_s[-length(log_s)]), 0))
-      reports_stream_logp(path$fatal_new, path$fatal_before,
-                          state$deaths_true[k], p) +
+      survivals <- state$survivals[[k]]
+      survivals$log_reported <- log_undetected_days(
+        state$reports[[k]]$time_reported, state$onset_times[k],
+        reporting_parameters, revision_parameters)
+      if(survivals$is_dated_same)
+        survivals$log_dated <- survivals$log_reported
+      # with a single delay, which fatal cases are shown as dead at once does
+      # not depend on it
+      fatal_reports_logp(
+        path, survivals, dated$fatal_recorded[k], dated$into[k],
+        is_deaths_included=dated$into[k] > 0 & !survivals$is_dated_same) +
         reports_stream_logp(path$survivors_new, path$survivors_before,
-                            survivors_true[k], p)
+                            survivors_true[k],
+                            survival_steps(survivals$log_reported))
     }))
   }
 }
@@ -619,22 +834,25 @@ deaths_reporting_logp_function <- function(state, cases_true,
 #' @return a function of 'indices' and 'reporting_parameters' (here the
 #' parameters of the delay from onset to a death being recorded)
 deaths_recording_logp_function <- function(state, revision_parameters=NULL) {
+  dated <- dated_counts(state)
   function(indices, reporting_parameters) {
     if(reporting_parameters$mean <= 0 | reporting_parameters$sd <= 0)
       return(-Inf)
     sum(purrr::map_dbl(indices, function(k) {
       path <- state$paths[[k]]
-      log_s <- log_undetected_days(state$reports[[k]]$time_reported,
-                                   state$onset_times[k], reporting_parameters,
-                                   revision_parameters)
-      fraction <- state$fraction_dated_by_death[k]
-      g <- fraction + (1 - fraction) * -expm1(log_s)
-      q <- -expm1(pmin(log_s - c(0, log_s[-length(log_s)]), 0))
+      survivals <- state$survivals[[k]]
+      survivals$log_recorded <- log_undetected_days(
+        state$reports[[k]]$time_reported, state$onset_times[k],
+        reporting_parameters, revision_parameters)
+      probabilities <- path_probabilities(
+        survivals, ifelse(dated$fatal_recorded[k] > 0,
+                          dated$into[k] / dated$fatal_recorded[k], 0))
       is_informative <- path$fatal_new > 0 | path$alive_before > 0
-      sum(purrr::map_dbl(which(is_informative), function(j) {
-        deaths_new_logp(path$deaths_new[j], path$fatal_new[j],
-                        path$alive_before[j], g[j], q[j])
-      }))
+      sum(deaths_new_logp(path$deaths_new[is_informative],
+                          path$fatal_new[is_informative],
+                          path$alive_before[is_informative],
+                          probabilities$g[is_informative],
+                          probabilities$q[is_informative]))
     }))
   }
 }
@@ -665,16 +883,20 @@ deaths_parameters_step <- function(state, cases_true, settings,
   state
 }
 
+
 #' The values held in the state of the model of deaths, for storage
 #'
 #' @inheritParams deaths_delay_by_onset
 #' @param iteration the iteration
 #'
 #' @return a named list of two tibbles: 'deaths' (a row for each onset time
-#' with the true fatal cases, the case fatality ratio and the delay from
-#' onset to a death being recorded) and 'deaths_parameters' (a single row)
+#' with the true fatal cases whose onset was on the day, the case fatality
+#' ratio, the delay from onset to a death being recorded, the fatal cases
+#' recorded for the day and how many of those are dated by death) and
+#' 'deaths_parameters' (a single row)
 deaths_draws <- function(state, iteration) {
   delays <- deaths_delay_by_onset(state)
+  dated <- dated_counts(state)
   list(
     deaths=dplyr::tibble(
       iteration=iteration,
@@ -682,7 +904,9 @@ deaths_draws <- function(state, iteration) {
       deaths_true=state$deaths_true,
       cfr=state$cfr,
       delay_mean=delays$mean,
-      delay_sd=delays$sd),
+      delay_sd=delays$sd,
+      deaths_recorded=dated$fatal_recorded,
+      dated_by_death=dated$into),
     deaths_parameters=dplyr::tibble(
       iteration=iteration,
       n_cfr_changes=length(state$cfr_starts) - 1,
@@ -703,10 +927,11 @@ deaths_draws <- function(state, iteration) {
 #' an event with delay d from onset is taken to be in a report made at least
 #' d - 0.5 days after onset.
 #'
-#' Optionally a fraction of fatal cases appear in the reports under their
-#' date of death, not their date of onset. Such a case is placed on the day
-#' it died, is reported after the reporting delay counted from that day, and
-#' is shown as dead as soon as it is reported.
+#' Optionally a fraction of fatal cases are recorded for their day of death,
+#' not their day of onset. Such a case is counted on the day it died and is
+#' shown as dead as soon as it is reported. It is reported after a delay
+#' counted from that day: one with its own supplied mean and sd or, if none
+#' is supplied, the reporting delay of other fatal cases.
 #'
 #' @param cases_true a vector of true cases on onset times 1, 2, ...
 #' @param report_days the times at which reports are made
@@ -722,16 +947,21 @@ deaths_draws <- function(state, iteration) {
 #' recorded runs from onset independently of when the case is reported, or
 #' "report" if it runs from when the case is reported
 #' @param dated_by_death an optional named list of 'fraction' (the fraction of
-#' fatal cases which appear under their date of death) and 'mean' and 'sd' (of
-#' the gamma-distributed time from onset to death of those cases)
+#' fatal cases which are recorded for their day of death), 'mean' and 'sd' (of
+#' the gamma-distributed time from onset to death of those cases, which is
+#' rounded up to a whole number of days) and, optionally, 'reporting' (a named
+#' list of the 'mean' and 'sd' of the delay from the day of death to those
+#' cases being reported)
 #'
 #' @return a named list of 'snapshots' (a tibble with columns time_onset,
 #' time_reported, cases_reported and deaths_reported, where time_onset is the
-#' day under which cases appear in the reports) and 'truth' (a tibble with a
-#' row for each such day and columns: time_onset, cases_true and deaths_true
-#' (the cases and fatal cases which appear under the day), cases_onset (the
-#' cases whose onset was on the day), cfr, n_dated_by_death, and the mean and
-#' sd of the delay from the day to being shown as dead)
+#' day for which cases are recorded) and 'truth' (a tibble with a row for
+#' each such day and columns: time_onset, cases_true and deaths_true (the
+#' cases and fatal cases recorded for the day), cases_onset and deaths_onset
+#' (the cases and fatal cases whose onset was on the day), cfr,
+#' n_dated_by_death (the fatal cases recorded for the day which are dated by
+#' death), and the mean and sd of the delay from the day to being shown as
+#' dead)
 #' @export
 #' @importFrom rlang .data
 simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
@@ -775,11 +1005,17 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
     day[is_dated_by_death] <- onset[is_dated_by_death] +
       ceiling(time_to_death[is_dated_by_death])
   }
-  # delays are counted from the day under which the case appears
+  # delays are counted from the day for which the case is recorded
   delay_reported <- ifelse(
     is_fatal,
     f_delay(fatal_reporting$mean[onset], fatal_reporting$sd[onset]),
     f_delay(reporting$mean[onset], reporting$sd[onset]))
+  if(!is.null(dated_by_death$reporting)) {
+    n_dated <- sum(is_dated_by_death)
+    delay_reported[is_dated_by_death] <- f_delay(
+      rep(dated_by_death$reporting$mean, n_dated),
+      rep(dated_by_death$reporting$sd, n_dated))
+  }
   delay_recorded <- f_delay(death$mean[onset], death$sd[onset])
   if(death_from == "report")
     delay_recorded <- delay_reported + delay_recorded
@@ -799,7 +1035,8 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
           elapsed, ~sum(delay_dead[is_day & is_fatal] <= .))),
       truth=dplyr::tibble(
         time_onset=t, cases_true=sum(is_day), deaths_true=sum(is_day & is_fatal),
-        cases_onset=cases_by_onset[t], cfr=cfr[t],
+        cases_onset=cases_by_onset[t], deaths_onset=sum(onset == t & is_fatal),
+        cfr=cfr[t],
         n_dated_by_death=sum(is_day & is_dated_by_death),
         delay_dead_mean=mean(delay_dead[is_day & is_fatal]),
         delay_dead_sd=stats::sd(delay_dead[is_day & is_fatal])))

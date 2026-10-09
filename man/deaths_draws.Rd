@@ -13,8 +13,10 @@ deaths_draws(state, iteration)
 }
 \value{
 a named list of two tibbles: 'deaths' (a row for each onset time
-with the true fatal cases, the case fatality ratio and the delay from
-onset to a death being recorded) and 'deaths_parameters' (a single row)
+with the true fatal cases whose onset was on the day, the case fatality
+ratio, the delay from onset to a death being recorded, the fatal cases
+recorded for the day and how many of those are dated by death) and
+'deaths_parameters' (a single row)
 }
 \description{
 The values held in the state of the model of deaths, for storage

@@ -4,20 +4,30 @@
 \alias{initial_deaths_state}
 \title{Starting state of the model of deaths}
 \usage{
-initial_deaths_state(snapshot_df, cases_true_df, settings)
+initial_deaths_state(snapshot_df, cases_true_df, settings, cases_before = NULL)
 }
 \arguments{
 \item{snapshot_df}{a tibble with columns: time_onset, time_reported,
 cases_reported and deaths_reported}
 
-\item{cases_true_df}{a tibble with columns time_onset and cases_true}
+\item{cases_true_df}{a tibble with columns time_onset and cases_true: the
+cases taken at the start to be recorded for each day}
 
 \item{settings}{as returned by \code{deaths_settings}}
+
+\item{cases_before}{a vector of known true case counts for the days
+immediately before the first onset time, from the earliest to the latest
+(optional). These enter the renewal equation as the history of cases for
+the first onset times but are not themselves estimated, and nothing is
+assumed about how they were reported.}
 }
 \value{
 a named list holding the reports of each onset time, the true
 fatal cases and case fatality ratio by onset time, and the segments of the
-ratio and of the delay from onset to a death being recorded
+ratio and of the delay from onset to a death being recorded. Its element
+'cases_onset' holds the true cases by day of onset with which to start,
+which differ from those supplied if some fatal cases are dated by death
+(see \code{initial_dated_state}).
 }
 \description{
 Starting state of the model of deaths

@@ -24,7 +24,8 @@ mcmc_single(
   initial_revision_parameters = NULL,
   revision_metropolis_parameters = list(eta_step = 0.5, rho_step = 0.5),
   cases_before = NULL,
-  n_parameter_steps = 1
+  n_parameter_steps = 1,
+  deaths = NULL
 )
 }
 \arguments{
@@ -151,6 +152,19 @@ reporting delay parameters of each segment (if their changes are sampled),
 the revision parameters, the extensions to the model of reporting and the
 overdispersion parameter. These steps are cheap beside the update of the
 true cases, so taking several improves mixing at little cost.}
+
+\item{deaths}{an optional named list which adds a model of deaths among
+cases: 'snapshot' is a tibble with columns time_onset, time_reported and
+deaths_reported (the number of the cases with each onset time shown as
+having died in each report), and 'settings' is an optional named list of
+settings (see \code{deaths_settings}). The true fatal cases of each onset
+time are binomial given the true cases, with a case fatality ratio which
+can change at unknown onset times. A fatal case is shown as dead once it
+has been reported and its death recorded, the latter after its own delay
+from onset, which can also change. The results then include "deaths" (the
+true fatal cases, case fatality ratio and delay for each onset time) and
+"deaths_parameters". This requires priors$reporting_changepoints and does
+not yet allow revisions to reported cases.}
 }
 \value{
 a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters;

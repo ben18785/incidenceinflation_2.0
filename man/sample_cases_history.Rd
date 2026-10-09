@@ -18,7 +18,8 @@ sample_cases_history(
   future_max = 40,
   revision_parameters = NULL,
   max_erroneous = 3,
-  cases_before = NULL
+  cases_before = NULL,
+  f_observation_logp_onset = NULL
 )
 }
 \arguments{
@@ -69,6 +70,11 @@ immediately before the first onset time, from the earliest to the latest
 (optional). These enter the renewal equation as the history of cases for
 the first onset times but are not themselves estimated, and nothing is
 assumed about how they were reported.}
+
+\item{f_observation_logp_onset}{an optional function of an onset time
+which returns a function giving the log-probability of the reports of that
+onset time for a vector of possible true case counts. This replaces the
+model of reporting otherwise used (see \code{deaths_cases_logp_function}).}
 }
 \value{
 a tibble with an extra cases_estimated column

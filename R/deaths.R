@@ -771,8 +771,9 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
   if(!is.null(dated_by_death)) {
     is_dated_by_death <- is_fatal & stats::runif(n) < dated_by_death$fraction
     time_to_death <- f_delay(rep(dated_by_death$mean, n), rep(dated_by_death$sd, n))
+    # rounded up, so that a case dated by its death is at least a day late
     day[is_dated_by_death] <- onset[is_dated_by_death] +
-      round(time_to_death[is_dated_by_death])
+      ceiling(time_to_death[is_dated_by_death])
   }
   # delays are counted from the day under which the case appears
   delay_reported <- ifelse(

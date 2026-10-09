@@ -97,6 +97,16 @@ relaxed_priors <- function() {
 #' @param recording_weekday whether the delay to a death being recorded has
 #' its own effects of the day of the week of each report (by default, if the
 #' reporting delay has them)
+#' @param fatal_delay FALSE (the default) if fatal cases are reported as
+#' others are; TRUE, or a named list of 'probability_same' and 'sd', if their
+#' reporting delay can differ: it is then that of other cases with its mean
+#' and sd multiplied by a ratio whose log is zero with prior probability
+#' probability_same (by default 0.5) and otherwise normal with mean zero and
+#' standard deviation sd (by default 0.5)
+#' @param dated_by_death NULL, or what is supplied about fatal cases which
+#' are recorded for their day of death and not their day of onset (see
+#' \code{dated_by_death_settings}). The true cases estimated are then those
+#' recorded for each day, from which the cases by day of onset follow.
 #' @param priors a named list as returned by \code{relaxed_priors}
 #'
 #' @return a named list of data for the Stan model
@@ -113,6 +123,7 @@ relaxed_stan_data <- function(snapshot_df, serial_parameters, cases_before=NULL,
                               deaths_df=NULL, cfr_max_changes=0,
                               recording_max_changes=0,
                               recording_weekday=!is.null(weekday_first),
+                              fatal_delay=FALSE, dated_by_death=NULL,
                               priors=relaxed_priors()) {
   df <- snapshot_df %>%
     dplyr::arrange(.data$time_onset, .data$time_reported)
@@ -202,6 +213,30 @@ relaxed_stan_data <- function(snapshot_df, serial_parameters, cases_before=NULL,
       dplyr::summarise(is_fall=any(diff(.data$deaths_reported) < 0))
     max_dead <- as.integer(ifelse(falls$is_fall, max_erroneous, 0))
   }
+  # fatal cases reported at a different speed, or recorded for their day of
+  # death
+  is_fatal_delay <- !identical(fatal_delay, FALSE)
+  fatal_delay_settings <- list(probability_same=0.5, sd=0.5)
+  if(is.list(fatal_delay))
+    fatal_delay_settings[names(fatal_delay)] <- fatal_delay
+  dated <- dated_by_death_settings(n_days, dated_by_death)
+  is_dated <- !is.null(dated)
+  if((is_fatal_delay | is_dated) & !is_deaths)
+    stop("deaths_df must be supplied if fatal cases are reported differently or dated by death.")
+  if((is_fatal_delay | is_dated) & !is.null(misdating))
+    stop("Misdating cannot be combined with fatal cases which are reported differently or dated by death.")
+  inflow_cases <- rep(0, n_days)
+  if(is_dated) {
+    # cases with onset before the first day which, if fatal and dated by
+    # death, die on each day: cases_before ends on the day before the first
+    n_before <- length(cases_before)
+    lags <- seq_len(dated$max_lag)
+    inflow_cases <- purrr::map_dbl(seq_len(n_days), function(t) {
+      index <- n_before + t - lags
+      is_earlier <- lags >= t & index >= 1
+      sum(cases_before[index[is_earlier]] * dated$lag_probabilities[is_earlier])
+    })
+  }
   unknown <- setdiff(names(priors), names(relaxed_priors()))
   if(length(unknown) > 0)
     stop(paste0("Unknown priors: ", paste(unknown, collapse=", "), "."))
@@ -248,7 +283,18 @@ relaxed_stan_data <- function(snapshot_df, serial_parameters, cases_before=NULL,
     n_cfr_segments=as.integer(ifelse(is_deaths, cfr_max_changes + 1, 1)),
     n_recording_segments=as.integer(ifelse(is_deaths, recording_max_changes + 1, 1)),
     max_dead=max_dead,
-    is_recording_weekday=as.integer(is_deaths & recording_weekday)),
+    is_recording_weekday=as.integer(is_deaths & recording_weekday),
+    is_fatal_delay=as.integer(is_fatal_delay),
+    fatal_delay_same_prob=fatal_delay_settings$probability_same,
+    fatal_delay_sd=fatal_delay_settings$sd,
+    is_dated=as.integer(is_dated),
+    dated_fraction=if(is_dated) dated$fraction else rep(0, n_days),
+    n_lags=if(is_dated) dated$max_lag else 0L,
+    lag_probs=as.array(if(is_dated) dated$lag_probabilities else numeric(0)),
+    inflow_cases=inflow_cases,
+    is_dated_delay=as.integer(is_dated && !is.null(dated$reporting)),
+    dated_delay_mean=if(is_dated && !is.null(dated$reporting)) dated$reporting$mean else 1,
+    dated_delay_sd=if(is_dated && !is.null(dated$reporting)) dated$reporting$sd else 1),
     priors_all)
 }
 
@@ -299,7 +345,8 @@ relaxed_inits <- function(data) {
       cfr_p_change=as.array(rep(
         1 / data$n_days, data$is_deaths * (data$n_cfr_segments > 1))),
       recording_p_change=as.array(rep(
-        1 / data$n_days, data$is_deaths * (data$n_recording_segments > 1))))
+        1 / data$n_days, data$is_deaths * (data$n_recording_segments > 1))),
+      nu=as.array(rep(-0.1, data$is_deaths * data$is_fatal_delay)))
   }
 }
 
@@ -340,7 +387,8 @@ fit_relaxed <- function(data, method=c("nuts", "pathfinder", "advi",
 #' its mean and sd have a column for each). If deaths are modelled there is
 #' also 'deaths' (iteration, time_onset, deaths_true, cfr, delay_mean and
 #' delay_sd, the last two being of the delay from onset to a death being
-#' recorded).
+#' recorded). If some fatal cases are dated by death, 'cases' holds the true
+#' cases by day of onset and 'cases_recorded' those recorded for each day.
 #' @export
 #' @importFrom rlang .data
 relaxed_draws <- function(fit) {
@@ -359,7 +407,7 @@ relaxed_draws <- function(fit) {
                         "delay_n_changes", "weekday_effect", "report_effect",
                         "wrong_dead", "cfr_p_change", "recording_p_change",
                         "cfr_n_changes", "recording_n_changes",
-                        "weekday_recording_effect")
+                        "weekday_recording_effect", "fatal_delay_ratio")
   names_fit <- unique(sub("\\[.*", "", posterior::variables(fit$draws())))
   parameters <- fit$draws(intersect(names_parameters, names_fit),
                           format="draws_df") %>%
@@ -388,6 +436,13 @@ relaxed_draws <- function(fit) {
       dplyr::left_join(f_long("cfr_day", "cfr"), by=by) %>%
       dplyr::left_join(f_long("recording_mean_day", "delay_mean"), by=by) %>%
       dplyr::left_join(f_long("recording_sd_day", "delay_sd"), by=by)
+  }
+  # where some fatal cases are dated by death, the cases are those by day of
+  # onset and the cases recorded for each day are given too
+  if("cases_onset" %in% names_fit &&
+     ncol(fit$draws("cases_onset", format="draws_matrix")) > 0) {
+    out$cases_recorded <- out$cases
+    out$cases <- f_long("cases_onset", "cases_true")
   }
   out
 }

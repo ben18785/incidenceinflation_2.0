@@ -17,7 +17,8 @@ for each of the other parameters; where the delay differs between periods
 its mean and sd have a column for each). If deaths are modelled there is
 also 'deaths' (iteration, time_onset, deaths_true, cfr, delay_mean and
 delay_sd, the last two being of the delay from onset to a death being
-recorded).
+recorded). If some fatal cases are dated by death, 'cases' holds the true
+cases by day of onset and 'cases_recorded' those recorded for each day.
 }
 \description{
 Draws from a fit of the relaxed model, in the form of those of \code{mcmc}

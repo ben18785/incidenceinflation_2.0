@@ -26,6 +26,8 @@ relaxed_stan_data(
   cfr_max_changes = 0,
   recording_max_changes = 0,
   recording_weekday = !is.null(weekday_first),
+  fatal_delay = FALSE,
+  dated_by_death = NULL,
   priors = relaxed_priors()
 )
 }
@@ -113,6 +115,18 @@ more than each.}
 \item{recording_weekday}{whether the delay to a death being recorded has
 its own effects of the day of the week of each report (by default, if the
 reporting delay has them)}
+
+\item{fatal_delay}{FALSE (the default) if fatal cases are reported as
+others are; TRUE, or a named list of 'probability_same' and 'sd', if their
+reporting delay can differ: it is then that of other cases with its mean
+and sd multiplied by a ratio whose log is zero with prior probability
+probability_same (by default 0.5) and otherwise normal with mean zero and
+standard deviation sd (by default 0.5)}
+
+\item{dated_by_death}{NULL, or what is supplied about fatal cases which
+are recorded for their day of death and not their day of onset (see
+\code{dated_by_death_settings}). The true cases estimated are then those
+recorded for each day, from which the cases by day of onset follow.}
 
 \item{priors}{a named list as returned by \code{relaxed_priors}}
 }

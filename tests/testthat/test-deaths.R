@@ -9,6 +9,11 @@ test_that("deaths_settings gives defaults, takes changes and checks them", {
   expect_error(deaths_settings(50, list(unknown=1)))
   expect_error(deaths_settings(50, list(cfr_alpha=0)))
   expect_error(deaths_settings(50, list(initial_cfr=1)))
+  expect_equal(settings$fraction_dated_by_death, rep(0, 50))
+  expect_equal(deaths_settings(3, list(fraction_dated_by_death=c(0.1, 0.2, 0.3)))$
+                 fraction_dated_by_death, c(0.1, 0.2, 0.3))
+  expect_error(deaths_settings(50, list(fraction_dated_by_death=c(0.1, 0.2))))
+  expect_error(deaths_settings(50, list(fraction_dated_by_death=1.2)))
 })
 
 test_that("segment_log_marginals_cfr matches numerical integration", {
@@ -54,6 +59,12 @@ test_that("joint_probabilities are those of the two delays", {
   expect_equal(probabilities$p, 1 - s_reported / c(1, s_reported[-3]))
   expect_equal(probabilities$g, 1 - s_recorded)
   expect_equal(probabilities$q, 1 - s_recorded / c(1, s_recorded[-3]))
+  # fatal cases dated by their death are shown as dead once reported
+  dated <- joint_probabilities(days, 2, list(mean=5, sd=3), list(mean=10, sd=6),
+                               fraction_dated_by_death=0.3)
+  expect_equal(dated$g, 0.3 + 0.7 * (1 - s_recorded))
+  expect_equal(dated$p, probabilities$p)
+  expect_equal(dated$q, probabilities$q)
 })
 
 test_that("deaths_new_logp is the convolution of two binomials", {
@@ -182,6 +193,19 @@ test_that("simulate_cases_deaths gives reports consistent with its truth", {
   expect_true(mean(sim_report$truth$delay_dead_mean) > mean(sim$truth$delay_dead_mean))
   expect_error(simulate_cases_deaths(cases, 1:80, list(mean=5, sd=3), c(0.1, 0.2),
                                      list(mean=10, sd=5)))
+  # fatal cases dated by their death appear later and are dead once reported
+  sim_dated <- simulate_cases_deaths(
+    cases, 1:120, list(mean=5, sd=3), 0.3, list(mean=10, sd=5),
+    dated_by_death=list(fraction=1, mean=8, sd=4))
+  expect_equal(sum(sim_dated$truth$n_dated_by_death), sum(sim_dated$truth$deaths_true))
+  expect_true(sum(sim_dated$truth$cases_true[1:3]) < sum(cases[1:3]))
+  expect_true(all(sim_dated$truth$cases_onset == cases))
+  half <- simulate_cases_deaths(
+    cases, 1:120, list(mean=5, sd=3), 0.3, list(mean=10, sd=5),
+    dated_by_death=list(fraction=0.5, mean=8, sd=4))
+  expect_true(abs(sum(half$truth$n_dated_by_death) /
+                    sum(half$truth$deaths_true) - 0.5) < 0.1)
+  expect_true(all(half$snapshots$deaths_reported <= half$snapshots$cases_reported))
 })
 
 test_that("mcmc_single with deaths recovers a case fatality ratio which changes", {

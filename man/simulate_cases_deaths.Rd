@@ -11,7 +11,8 @@ simulate_cases_deaths(
   cfr,
   death_parameters,
   fatal_reporting_parameters = NULL,
-  death_from = c("onset", "report")
+  death_from = c("onset", "report"),
+  dated_by_death = NULL
 )
 }
 \arguments{
@@ -34,12 +35,19 @@ same form as reporting_parameters}
 \item{death_from}{"onset" (the default) if the delay to a death being
 recorded runs from onset independently of when the case is reported, or
 "report" if it runs from when the case is reported}
+
+\item{dated_by_death}{an optional named list of 'fraction' (the fraction of
+fatal cases which appear under their date of death) and 'mean' and 'sd' (of
+the gamma-distributed time from onset to death of those cases)}
 }
 \value{
 a named list of 'snapshots' (a tibble with columns time_onset,
-time_reported, cases_reported and deaths_reported) and 'truth' (a tibble
-with columns time_onset, cases_true, deaths_true, cfr, and the mean and sd
-of the delay from onset to being shown as dead among the cases simulated)
+time_reported, cases_reported and deaths_reported, where time_onset is the
+day under which cases appear in the reports) and 'truth' (a tibble with a
+row for each such day and columns: time_onset, cases_true and deaths_true
+(the cases and fatal cases which appear under the day), cases_onset (the
+cases whose onset was on the day), cfr, n_dated_by_death, and the mean and
+sd of the delay from the day to being shown as dead)
 }
 \description{
 Each case is reported after a delay from onset. A case dies with a
@@ -49,4 +57,10 @@ dead in a report once it has been reported and its death recorded, so that
 reported deaths never exceed reported cases. As elsewhere in the package,
 an event with delay d from onset is taken to be in a report made at least
 d - 0.5 days after onset.
+}
+\details{
+Optionally a fraction of fatal cases appear in the reports under their
+date of death, not their date of onset. Such a case is placed on the day
+it died, is reported after the reporting delay counted from that day, and
+is shown as dead as soon as it is reported.
 }

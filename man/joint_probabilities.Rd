@@ -10,7 +10,8 @@ joint_probabilities(
   day_onset,
   reporting_parameters,
   death_parameters,
-  revision_parameters = NULL
+  revision_parameters = NULL,
+  fraction_dated_by_death = 0
 )
 }
 \arguments{
@@ -26,11 +27,16 @@ onset to a death being recorded}
 
 \item{revision_parameters}{named list which can contain 'tail' and
 'report_multipliers' (see above); or NULL}
+
+\item{fraction_dated_by_death}{the fraction of fatal cases which appear
+under their date of death and so are shown as dead as soon as reported}
 }
 \value{
 a named list of vectors with an element for each report: 'p' (the
 probability a case not yet reported at the report before is reported by
-this one), 'g' (the probability a death has been recorded by this report)
+this one), 'g' (the probability that a fatal case newly reported in this
+report is shown as dead in it: either it is dated by its death, or its
+death has been recorded by this report)
 and 'q' (the probability a death not recorded at the report before is
 recorded by this one). Before the first report nothing has been reported
 or recorded.

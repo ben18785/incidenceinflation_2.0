@@ -25,8 +25,12 @@
 #' 'delay_prior' (as priors$reporting in \code{mcmc_single});
 #' 'delay_changepoints' (a named list of settings passed to
 #' \code{reporting_changepoint_settings}, or FALSE for a delay which does not
-#' change); and 'n_parameter_steps'. The delay here is that from onset to a
-#' death being recorded.
+#' change); 'fraction_dated_by_death' (the fraction of fatal cases which
+#' appear in the reports under their date of death, not their date of onset:
+#' a single value or one for each onset time. These are taken to be shown as
+#' dead as soon as they are reported. This is supplied, not estimated.); and
+#' 'n_parameter_steps'. The delay here is that from onset to a death being
+#' recorded.
 #' @export
 deaths_settings <- function(n_days, settings=list()) {
   defaults <- list(
@@ -37,6 +41,7 @@ deaths_settings <- function(n_days, settings=list()) {
     initial_delay=list(mean=14, sd=8),
     delay_prior=list(mean_mu=14, mean_sigma=10, sd_mu=8, sd_sigma=8),
     delay_changepoints=list(min_length=14),
+    fraction_dated_by_death=0,
     n_parameter_steps=1)
   unknown <- setdiff(names(settings), names(defaults))
   if(length(unknown) > 0)
@@ -50,6 +55,12 @@ deaths_settings <- function(n_days, settings=list()) {
     stop("The minimum length of a segment must be at least one day.")
   if(defaults$initial_cfr <= 0 | defaults$initial_cfr >= 1)
     stop("The initial case fatality ratio must lie strictly between 0 and 1.")
+  fraction <- defaults$fraction_dated_by_death
+  if(!length(fraction) %in% c(1, n_days))
+    stop("fraction_dated_by_death must be a single value or one for each onset time.")
+  if(any(is.na(fraction)) || any(fraction < 0 | fraction > 1))
+    stop("fraction_dated_by_death must lie between 0 and 1.")
+  defaults$fraction_dated_by_death <- rep_len(fraction, n_days)
   is_delay_changes <- !identical(defaults$delay_changepoints, FALSE)
   delay_settings <- if(is_delay_changes) defaults$delay_changepoints else list()
   if(is.null(delay_settings$min_length))
@@ -139,22 +150,30 @@ sample_cfr_changepoints <- function(deaths_true, cases_true, p_change,
 #' @param death_parameters named list of the 'mean' and 'sd' of the delay from
 #' onset to a death being recorded
 #' @inheritParams log_undetected_days
+#' @param fraction_dated_by_death the fraction of fatal cases which appear
+#' under their date of death and so are shown as dead as soon as reported
 #'
 #' @return a named list of vectors with an element for each report: 'p' (the
 #' probability a case not yet reported at the report before is reported by
-#' this one), 'g' (the probability a death has been recorded by this report)
+#' this one), 'g' (the probability that a fatal case newly reported in this
+#' report is shown as dead in it: either it is dated by its death, or its
+#' death has been recorded by this report)
 #' and 'q' (the probability a death not recorded at the report before is
 #' recorded by this one). Before the first report nothing has been reported
 #' or recorded.
 joint_probabilities <- function(days, day_onset, reporting_parameters,
-                                death_parameters, revision_parameters=NULL) {
+                                death_parameters, revision_parameters=NULL,
+                                fraction_dated_by_death=0) {
   f <- function(parameters) {
     log_s <- log_undetected_days(days, day_onset, parameters, revision_parameters)
     list(log_s=log_s, step=-expm1(pmin(log_s - c(0, log_s[-length(log_s)]), 0)))
   }
   reported <- f(reporting_parameters)
   recorded <- f(death_parameters)
-  list(p=reported$step, g=-expm1(recorded$log_s), q=recorded$step)
+  list(p=reported$step,
+       g=fraction_dated_by_death +
+         (1 - fraction_dated_by_death) * -expm1(recorded$log_s),
+       q=recorded$step)
 }
 
 #' Binomial log-probability which is -Inf wherever the count is impossible
@@ -446,6 +465,7 @@ initial_deaths_state <- function(snapshot_df, cases_true_df, settings) {
     cfr_starts=1,
     p_change=settings$alpha / (settings$alpha + settings$beta),
     recording=initial_reporting_changepoints(settings$initial_delay),
+    fraction_dated_by_death=settings$fraction_dated_by_death,
     paths=NULL)
 }
 
@@ -491,7 +511,8 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
     probabilities <- joint_probabilities(
       reports$time_reported, state$onset_times[k],
       list(mean=reporting_by_onset$mean[k], sd=reporting_by_onset$sd[k]),
-      list(mean=delays$mean[k], sd=delays$sd[k]), revision_parameters)
+      list(mean=delays$mean[k], sd=delays$sd[k]), revision_parameters,
+      state$fraction_dated_by_death[k])
     f_forward <- function(deaths_true)
       fatal_path_forward(reports$cases_reported, reports$deaths_reported,
                          deaths_true, cases_true[k] - deaths_true, probabilities)
@@ -606,7 +627,8 @@ deaths_recording_logp_function <- function(state, revision_parameters=NULL) {
       log_s <- log_undetected_days(state$reports[[k]]$time_reported,
                                    state$onset_times[k], reporting_parameters,
                                    revision_parameters)
-      g <- -expm1(log_s)
+      fraction <- state$fraction_dated_by_death[k]
+      g <- fraction + (1 - fraction) * -expm1(log_s)
       q <- -expm1(pmin(log_s - c(0, log_s[-length(log_s)]), 0))
       is_informative <- path$fatal_new > 0 | path$alive_before > 0
       sum(purrr::map_dbl(which(is_informative), function(j) {
@@ -681,6 +703,11 @@ deaths_draws <- function(state, iteration) {
 #' an event with delay d from onset is taken to be in a report made at least
 #' d - 0.5 days after onset.
 #'
+#' Optionally a fraction of fatal cases appear in the reports under their
+#' date of death, not their date of onset. Such a case is placed on the day
+#' it died, is reported after the reporting delay counted from that day, and
+#' is shown as dead as soon as it is reported.
+#'
 #' @param cases_true a vector of true cases on onset times 1, 2, ...
 #' @param report_days the times at which reports are made
 #' @param reporting_parameters the delay from onset to a case being reported:
@@ -694,17 +721,24 @@ deaths_draws <- function(state, iteration) {
 #' @param death_from "onset" (the default) if the delay to a death being
 #' recorded runs from onset independently of when the case is reported, or
 #' "report" if it runs from when the case is reported
+#' @param dated_by_death an optional named list of 'fraction' (the fraction of
+#' fatal cases which appear under their date of death) and 'mean' and 'sd' (of
+#' the gamma-distributed time from onset to death of those cases)
 #'
 #' @return a named list of 'snapshots' (a tibble with columns time_onset,
-#' time_reported, cases_reported and deaths_reported) and 'truth' (a tibble
-#' with columns time_onset, cases_true, deaths_true, cfr, and the mean and sd
-#' of the delay from onset to being shown as dead among the cases simulated)
+#' time_reported, cases_reported and deaths_reported, where time_onset is the
+#' day under which cases appear in the reports) and 'truth' (a tibble with a
+#' row for each such day and columns: time_onset, cases_true and deaths_true
+#' (the cases and fatal cases which appear under the day), cases_onset (the
+#' cases whose onset was on the day), cfr, n_dated_by_death, and the mean and
+#' sd of the delay from the day to being shown as dead)
 #' @export
 #' @importFrom rlang .data
 simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
                                   cfr, death_parameters,
                                   fatal_reporting_parameters=NULL,
-                                  death_from=c("onset", "report")) {
+                                  death_from=c("onset", "report"),
+                                  dated_by_death=NULL) {
   death_from <- match.arg(death_from)
   n_days <- length(cases_true)
   f_expand <- function(parameters) {
@@ -724,32 +758,50 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
     cfr <- rep(cfr, n_days)
   if(length(cfr) != n_days)
     stop("There must be a case fatality ratio for each onset time.")
-  f_delay <- function(n, mean, sd)
-    stats::rgamma(n, shape=mean^2 / sd^2, rate=mean / sd^2)
+  f_delay <- function(mean, sd)
+    stats::rgamma(length(mean), shape=mean^2 / sd^2, rate=mean / sd^2)
+
+  # one row for each case
+  cases_by_onset <- cases_true
+  onset <- rep(seq_len(n_days), cases_true)
+  n <- length(onset)
+  is_fatal <- stats::runif(n) < cfr[onset]
+  is_dated_by_death <- rep(FALSE, n)
+  day <- onset
+  if(!is.null(dated_by_death)) {
+    is_dated_by_death <- is_fatal & stats::runif(n) < dated_by_death$fraction
+    time_to_death <- f_delay(rep(dated_by_death$mean, n), rep(dated_by_death$sd, n))
+    day[is_dated_by_death] <- onset[is_dated_by_death] +
+      round(time_to_death[is_dated_by_death])
+  }
+  # delays are counted from the day under which the case appears
+  delay_reported <- ifelse(
+    is_fatal,
+    f_delay(fatal_reporting$mean[onset], fatal_reporting$sd[onset]),
+    f_delay(reporting$mean[onset], reporting$sd[onset]))
+  delay_recorded <- f_delay(death$mean[onset], death$sd[onset])
+  if(death_from == "report")
+    delay_recorded <- delay_reported + delay_recorded
+  delay_dead <- ifelse(is_dated_by_death, delay_reported,
+                       pmax(delay_reported, delay_recorded))
 
   results <- purrr::map(seq_len(n_days), function(t) {
-    n <- cases_true[t]
-    is_fatal <- stats::runif(n) < cfr[t]
-    delay_reported <- ifelse(
-      is_fatal,
-      f_delay(n, fatal_reporting$mean[t], fatal_reporting$sd[t]),
-      f_delay(n, reporting$mean[t], reporting$sd[t]))
-    delay_recorded <- f_delay(n, death$mean[t], death$sd[t])
-    if(death_from == "report")
-      delay_recorded <- delay_reported + delay_recorded
-    delay_dead <- pmax(delay_reported, delay_recorded)
+    is_day <- day == t
     days <- report_days[report_days >= t]
     elapsed <- days - t + 0.5
     list(
       snapshots=dplyr::tibble(
         time_onset=t,
         time_reported=days,
-        cases_reported=purrr::map_dbl(elapsed, ~sum(delay_reported <= .)),
-        deaths_reported=purrr::map_dbl(elapsed, ~sum(delay_dead[is_fatal] <= .))),
+        cases_reported=purrr::map_dbl(elapsed, ~sum(delay_reported[is_day] <= .)),
+        deaths_reported=purrr::map_dbl(
+          elapsed, ~sum(delay_dead[is_day & is_fatal] <= .))),
       truth=dplyr::tibble(
-        time_onset=t, cases_true=n, deaths_true=sum(is_fatal), cfr=cfr[t],
-        delay_dead_mean=mean(delay_dead[is_fatal]),
-        delay_dead_sd=stats::sd(delay_dead[is_fatal])))
+        time_onset=t, cases_true=sum(is_day), deaths_true=sum(is_day & is_fatal),
+        cases_onset=cases_by_onset[t], cfr=cfr[t],
+        n_dated_by_death=sum(is_day & is_dated_by_death),
+        delay_dead_mean=mean(delay_dead[is_day & is_fatal]),
+        delay_dead_sd=stats::sd(delay_dead[is_day & is_fatal])))
   })
   list(snapshots=purrr::map_dfr(results, "snapshots"),
        truth=purrr::map_dfr(results, "truth"))

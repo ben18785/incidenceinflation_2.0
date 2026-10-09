@@ -1193,6 +1193,12 @@ metropolis_step_revisions <- function(
 #' true fatal cases, case fatality ratio and delay for each onset time) and
 #' "deaths_parameters". This requires priors$reporting_changepoints and does
 #' not yet allow revisions to reported cases.
+#' @param progress_file an optional path of a file to which progress is
+#' written (the number of iterations completed and the time taken), so that
+#' a chain run in the background or in parallel can be followed. The file is
+#' overwritten each time.
+#' @param progress_every the number of iterations between each time progress
+#' is written. Defaults to 50.
 #' @return a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters;
 #' and "revisions" if initial_revision_parameters is supplied
 #' @importFrom rlang .data
@@ -1216,7 +1222,13 @@ mcmc_single <- function(
   revision_metropolis_parameters=list(eta_step=0.5, rho_step=0.5),
   cases_before=NULL,
   n_parameter_steps=1,
-  deaths=NULL) {
+  deaths=NULL,
+  progress_file=NULL,
+  progress_every=50) {
+
+  if(!is.null(progress_file) && progress_every < 1)
+    stop("progress_every must be at least one.")
+  time_started <- Sys.time()
 
   if(n_parameter_steps < 1)
     stop("n_parameter_steps must be at least one.")
@@ -1854,6 +1866,12 @@ mcmc_single <- function(
       cases_history_samples <- cases_history_samples %>%
         dplyr::bind_rows(cases_history_df)
     }
+
+    if(!is.null(progress_file) &&
+       (i %% progress_every == 0 | i == niterations))
+      writeLines(sprintf(
+        "%d of %d iterations, %.1f minutes", i, niterations,
+        as.numeric(Sys.time() - time_started, units="mins")), progress_file)
 
     if(print_to_screen) {
       end[i] <- Sys.time()

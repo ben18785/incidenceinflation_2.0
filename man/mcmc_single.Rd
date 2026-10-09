@@ -25,7 +25,9 @@ mcmc_single(
   revision_metropolis_parameters = list(eta_step = 0.5, rho_step = 0.5),
   cases_before = NULL,
   n_parameter_steps = 1,
-  deaths = NULL
+  deaths = NULL,
+  progress_file = NULL,
+  progress_every = 50
 )
 }
 \arguments{
@@ -165,6 +167,14 @@ from onset, which can also change. The results then include "deaths" (the
 true fatal cases, case fatality ratio and delay for each onset time) and
 "deaths_parameters". This requires priors$reporting_changepoints and does
 not yet allow revisions to reported cases.}
+
+\item{progress_file}{an optional path of a file to which progress is
+written (the number of iterations completed and the time taken), so that
+a chain run in the background or in parallel can be followed. The file is
+overwritten each time.}
+
+\item{progress_every}{the number of iterations between each time progress
+is written. Defaults to 50.}
 }
 \value{
 a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters;

@@ -246,7 +246,10 @@ test_that("mcmc_single with deaths recovers a case fatality ratio which changes"
                                delay_prior=list(mean_mu=6, mean_sigma=5,
                                                 sd_mu=4, sd_sigma=4),
                                initial_delay=list(mean=8, sd=5)))
-  fit <- f_fit(deaths=deaths)
+  progress_file <- tempfile()
+  fit <- f_fit(deaths=deaths, progress_file=progress_file, progress_every=10)
+  expect_true(grepl("^30 of 30 iterations", readLines(progress_file)))
+  expect_error(f_fit(deaths=deaths, progress_file=progress_file, progress_every=0))
   expect_true(all(c("deaths", "deaths_parameters") %in% names(fit)))
   expect_equal(nrow(fit$deaths), 30 * n_days)
   expect_equal(nrow(fit$deaths_parameters), 30)

@@ -22,6 +22,10 @@ relaxed_stan_data(
   misdating = NULL,
   Rt_max_changes = 0,
   delay_max_changes = 0,
+  deaths_df = NULL,
+  cfr_max_changes = 0,
+  recording_max_changes = 0,
+  recording_weekday = !is.null(weekday_first),
   priors = relaxed_priors()
 )
 }
@@ -89,6 +93,26 @@ without a minimum length of segment. The default, zero, switches this off.}
 reporting delay; reporting_piece_index is then ignored. Each change allowed
 adds about as much computation as the whole model of reporting without
 changes. This cannot be combined with misdating.}
+
+\item{deaths_df}{NULL, or a tibble with columns time_onset, time_reported
+and deaths_reported (the number of the cases in each report which are
+shown as dead), with a row for each row of snapshot_df. The deaths are then
+modelled too: a case dies with a probability (the case fatality ratio) and
+its death is recorded after a delay from onset which is independent of the
+reporting delay. Fatal cases are taken to be reported as others are, and
+all to be recorded for their day of onset.}
+
+\item{cfr_max_changes}{the largest number of changes in the case fatality
+ratio, which are at unknown onset times (as Rt_max_changes)}
+
+\item{recording_max_changes}{the same for the mean and sd of the delay
+from onset to a death being recorded. The changes in the two are summed
+over together, so the computation for deaths grows with the product of one
+more than each.}
+
+\item{recording_weekday}{whether the delay to a death being recorded has
+its own effects of the day of the week of each report (by default, if the
+reporting delay has them)}
 
 \item{priors}{a named list as returned by \code{relaxed_priors}}
 }

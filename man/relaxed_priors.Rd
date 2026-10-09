@@ -21,7 +21,11 @@ of the logs of the effects of reports; the parameters of the beta prior
 on the probability that a case is misdated; and the parameters of the beta
 prior on the probability that each onset time starts a new segment, where
 changes are at unknown times (the second defaults to the number of onset
-times, as in \code{changepoints_logp_prior})
+times, as in \code{changepoints_logp_prior}); and, where deaths are
+modelled, the parameters of the beta prior on the case fatality ratio, the
+means and sds of the gamma priors on the mean and sd of the delay from
+onset to a death being recorded, and the parameters of the beta prior on
+the probability that a wrong record is shown as dead
 }
 \description{
 Default priors of the relaxed model

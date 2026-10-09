@@ -18,7 +18,11 @@
 #' on the probability that a case is misdated; and the parameters of the beta
 #' prior on the probability that each onset time starts a new segment, where
 #' changes are at unknown times (the second defaults to the number of onset
-#' times, as in \code{changepoints_logp_prior})
+#' times, as in \code{changepoints_logp_prior}); and, where deaths are
+#' modelled, the parameters of the beta prior on the case fatality ratio, the
+#' means and sds of the gamma priors on the mean and sd of the delay from
+#' onset to a death being recorded, and the parameters of the beta prior on
+#' the probability that a wrong record is shown as dead
 #' @export
 relaxed_priors <- function() {
   list(delay_mean_mu=7, delay_mean_sigma=10, delay_sd_mu=5, delay_sd_sigma=5,
@@ -28,7 +32,11 @@ relaxed_priors <- function() {
        tail_weight_alpha=1, tail_weight_beta=3, tail_mean_mu=15, tail_mean_sigma=10,
        report_sd_shape=3, report_sd_scale=0.2,
        pi_alpha=1, pi_beta=9,
-       change_alpha=1, change_beta=NA)
+       change_alpha=1, change_beta=NA,
+       cfr_alpha=1, cfr_beta=1,
+       recording_mean_mu=14, recording_mean_sigma=10,
+       recording_sd_mu=8, recording_sd_sigma=8,
+       wrong_dead_alpha=1, wrong_dead_beta=1)
 }
 
 #' Prepares the data for the relaxed model
@@ -73,6 +81,22 @@ relaxed_priors <- function() {
 #' reporting delay; reporting_piece_index is then ignored. Each change allowed
 #' adds about as much computation as the whole model of reporting without
 #' changes. This cannot be combined with misdating.
+#' @param deaths_df NULL, or a tibble with columns time_onset, time_reported
+#' and deaths_reported (the number of the cases in each report which are
+#' shown as dead), with a row for each row of snapshot_df. The deaths are then
+#' modelled too: a case dies with a probability (the case fatality ratio) and
+#' its death is recorded after a delay from onset which is independent of the
+#' reporting delay. Fatal cases are taken to be reported as others are, and
+#' all to be recorded for their day of onset.
+#' @param cfr_max_changes the largest number of changes in the case fatality
+#' ratio, which are at unknown onset times (as Rt_max_changes)
+#' @param recording_max_changes the same for the mean and sd of the delay
+#' from onset to a death being recorded. The changes in the two are summed
+#' over together, so the computation for deaths grows with the product of one
+#' more than each.
+#' @param recording_weekday whether the delay to a death being recorded has
+#' its own effects of the day of the week of each report (by default, if the
+#' reporting delay has them)
 #' @param priors a named list as returned by \code{relaxed_priors}
 #'
 #' @return a named list of data for the Stan model
@@ -86,6 +110,9 @@ relaxed_stan_data <- function(snapshot_df, serial_parameters, cases_before=NULL,
                               is_negative_binomial=TRUE, tail=FALSE,
                               report_effects=FALSE, misdating=NULL,
                               Rt_max_changes=0, delay_max_changes=0,
+                              deaths_df=NULL, cfr_max_changes=0,
+                              recording_max_changes=0,
+                              recording_weekday=!is.null(weekday_first),
                               priors=relaxed_priors()) {
   df <- snapshot_df %>%
     dplyr::arrange(.data$time_onset, .data$time_reported)
@@ -151,6 +178,30 @@ relaxed_stan_data <- function(snapshot_df, serial_parameters, cases_before=NULL,
       stop("Changes in the delay at unknown times cannot be combined with misdating.")
     delay_period <- as.integer(pmin(seq_len(n_days), delay_max_changes + 1))
   }
+  # deaths among the reported cases
+  is_deaths <- !is.null(deaths_df)
+  obs_deaths <- integer(0)
+  max_dead <- rep(0L, n_days)
+  if(is_deaths) {
+    if(!all(c("time_onset", "time_reported", "deaths_reported") %in% colnames(deaths_df)))
+      stop("deaths_df must contain columns: time_onset, time_reported and deaths_reported.")
+    if(cfr_max_changes < 0 | recording_max_changes < 0)
+      stop("The maximum number of changes cannot be negative.")
+    joined <- dplyr::left_join(
+      df[, c("time_onset", "time_reported", "cases_reported")],
+      deaths_df[, c("time_onset", "time_reported", "deaths_reported")],
+      by=c("time_onset", "time_reported"))
+    if(any(is.na(joined$deaths_reported)))
+      stop("There must be reported deaths for each report of each onset time.")
+    if(any(joined$deaths_reported > joined$cases_reported))
+      stop("Reported deaths must not exceed reported cases.")
+    obs_deaths <- as.integer(joined$deaths_reported)
+    # wrong records shown as dead are allowed for where a count of deaths falls
+    falls <- joined %>%
+      dplyr::group_by(.data$time_onset) %>%
+      dplyr::summarise(is_fall=any(diff(.data$deaths_reported) < 0))
+    max_dead <- as.integer(ifelse(falls$is_fall, max_erroneous, 0))
+  }
   unknown <- setdiff(names(priors), names(relaxed_priors()))
   if(length(unknown) > 0)
     stop(paste0("Unknown priors: ", paste(unknown, collapse=", "), "."))
@@ -191,7 +242,13 @@ relaxed_stan_data <- function(snapshot_df, serial_parameters, cases_before=NULL,
     is_misdating=as.integer(!is.null(misdating)),
     n_shifts=length(shifts),
     shifts=as.array(shifts),
-    shift_probs=as.array(shift_probs)),
+    shift_probs=as.array(shift_probs),
+    is_deaths=as.integer(is_deaths),
+    obs_deaths=as.array(obs_deaths),
+    n_cfr_segments=as.integer(ifelse(is_deaths, cfr_max_changes + 1, 1)),
+    n_recording_segments=as.integer(ifelse(is_deaths, recording_max_changes + 1, 1)),
+    max_dead=max_dead,
+    is_recording_weekday=as.integer(is_deaths & recording_weekday)),
     priors_all)
 }
 
@@ -231,7 +288,18 @@ relaxed_inits <- function(data) {
       tail_mean=as.array(rep(15, data$is_tail)),
       report_raw=as.array(rep(0, data$is_report_effects * data$n_reports)),
       report_sd=as.array(rep(0.2, data$is_report_effects)),
-      pi_misdated=as.array(rep(0.05, data$is_misdating)))
+      pi_misdated=as.array(rep(0.05, data$is_misdating)),
+      cfr=as.array(stats::runif(data$is_deaths * data$n_cfr_segments, 0.3, 0.5)),
+      recording_mean=as.array(stats::runif(
+        data$is_deaths * data$n_recording_segments, 10, 14)),
+      recording_sd=as.array(stats::runif(
+        data$is_deaths * data$n_recording_segments, 5, 8)),
+      log_weekday_recording=rep(0, 7),
+      wrong_dead=as.array(rep(0.5, data$is_deaths)),
+      cfr_p_change=as.array(rep(
+        1 / data$n_days, data$is_deaths * (data$n_cfr_segments > 1))),
+      recording_p_change=as.array(rep(
+        1 / data$n_days, data$is_deaths * (data$n_recording_segments > 1))))
   }
 }
 
@@ -269,7 +337,10 @@ fit_relaxed <- function(data, method=c("nuts", "pathfinder", "advi",
 #' cases_true), 'Rt' (iteration, time_onset, Rt), 'delay' (iteration,
 #' time_onset, mean, sd) and 'parameters' (a column
 #' for each of the other parameters; where the delay differs between periods
-#' its mean and sd have a column for each)
+#' its mean and sd have a column for each). If deaths are modelled there is
+#' also 'deaths' (iteration, time_onset, deaths_true, cfr, delay_mean and
+#' delay_sd, the last two being of the delay from onset to a death being
+#' recorded).
 #' @export
 #' @importFrom rlang .data
 relaxed_draws <- function(fit) {
@@ -285,7 +356,10 @@ relaxed_draws <- function(fit) {
   names_parameters <- c("delay_mean", "delay_sd", "eta", "rho", "kappa", "Rt_step",
                         "tail_weight", "tail_mean", "report_sd", "pi_misdated",
                         "Rt_p_change", "delay_p_change", "Rt_n_changes",
-                        "delay_n_changes", "weekday_effect", "report_effect")
+                        "delay_n_changes", "weekday_effect", "report_effect",
+                        "wrong_dead", "cfr_p_change", "recording_p_change",
+                        "cfr_n_changes", "recording_n_changes",
+                        "weekday_recording_effect")
   names_fit <- unique(sub("\\[.*", "", posterior::variables(fit$draws())))
   parameters <- fit$draws(intersect(names_parameters, names_fit),
                           format="draws_df") %>%
@@ -295,15 +369,25 @@ relaxed_draws <- function(fit) {
   # those of which there is only one are named without an index
   for(name in c("delay_mean", "delay_sd", "kappa", "Rt_step", "tail_weight",
                 "tail_mean", "report_sd", "pi_misdated", "Rt_p_change",
-                "delay_p_change")) {
+                "delay_p_change", "wrong_dead", "cfr_p_change",
+                "recording_p_change")) {
     indexed <- grep(paste0("^", name, "\\["), colnames(parameters), value=TRUE)
     if(length(indexed) == 1)
       colnames(parameters)[colnames(parameters) == indexed] <- name
   }
-  list(cases=f_long("cases_true", "cases_true"),
-       Rt=f_long("Rt", "Rt"),
-       delay=dplyr::left_join(f_long("delay_mean_day", "mean"),
-                              f_long("delay_sd_day", "sd"),
-                              by=c("iteration", "time_onset")),
-       parameters=parameters)
+  out <- list(cases=f_long("cases_true", "cases_true"),
+              Rt=f_long("Rt", "Rt"),
+              delay=dplyr::left_join(f_long("delay_mean_day", "mean"),
+                                     f_long("delay_sd_day", "sd"),
+                                     by=c("iteration", "time_onset")),
+              parameters=parameters)
+  # deaths, if they are modelled
+  if("cfr_day" %in% names_fit && ncol(fit$draws("cfr_day", format="draws_matrix")) > 0) {
+    by <- c("iteration", "time_onset")
+    out$deaths <- f_long("deaths_true", "deaths_true") %>%
+      dplyr::left_join(f_long("cfr_day", "cfr"), by=by) %>%
+      dplyr::left_join(f_long("recording_mean_day", "delay_mean"), by=by) %>%
+      dplyr::left_join(f_long("recording_sd_day", "delay_sd"), by=by)
+  }
+  out
 }

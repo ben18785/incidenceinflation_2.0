@@ -643,6 +643,84 @@ joint_path_backward <- function(forward) {
     wrong_entered_dead=wrong_dead - f_before(wrong_dead) + drawn[, 5])
 }
 
+#' Filters forwards over the reports of the cases recorded for one day,
+#' following the fatal cases dated by onset and by death separately
+#'
+#' This is the exact form of the model for fatal cases recorded for their day
+#' of death: the number of them among the cases recorded for the day is a
+#' fixed number, not a probability for each fatal case.
+#'
+#' @inheritParams joint_path_forward
+#' @param fatal_onset the number of fatal cases recorded for the day which
+#' are dated by onset
+#' @param fatal_dated the number which are dated by death
+#' @param survivals as returned by \code{joint_survivals}
+#'
+#' @return as \code{joint_path_forward}
+joint_path_exact_forward <- function(cases_reported, deaths_reported, fatal_onset,
+                                     fatal_dated, survivors_true, survivals,
+                                     wrong=NULL) {
+  n_reports <- length(cases_reported)
+  if(any(deaths_reported > cases_reported))
+    stop("Reported deaths must not exceed reported cases.")
+  if(is.null(wrong))
+    wrong <- list(lambda=rep(0, n_reports), w=rep(0, n_reports), delta=0,
+                  max_erroneous=0)
+  probabilities <- path_probabilities(survivals, 0)
+  arguments <- list(
+    cases=as.numeric(cases_reported), deaths=as.numeric(deaths_reported),
+    fatal=as.integer(fatal_onset), dated=as.integer(fatal_dated),
+    survivors=as.integer(survivors_true),
+    p=probabilities$p, p_fatal=probabilities$p_fatal,
+    p_dated=survival_steps(survivals$log_dated),
+    g=probabilities$g, q=probabilities$q,
+    lambda=as.numeric(wrong$lambda), w=as.numeric(wrong$w), delta=wrong$delta,
+    max_erroneous=as.integer(wrong$max_erroneous))
+  if(fatal_onset < 0 | fatal_dated < 0 | survivors_true < 0)
+    return(list(logp=-Inf, alpha=NULL, arguments=arguments))
+  forward <- do.call(joint_path_exact_forward_cpp, arguments)
+  forward$arguments <- arguments
+  forward
+}
+
+#' Samples backwards over the reports of the cases recorded for one day,
+#' following the fatal cases dated by onset and by death separately
+#'
+#' @param forward as returned by \code{joint_path_exact_forward}
+#'
+#' @return as \code{joint_path_backward}, where the fatal cases and the
+#' deaths are those dated by onset, with vectors 'dated_new' and
+#' 'dated_before' added for the fatal cases dated by death (those newly
+#' reported in each report and those reported by the report before), and
+#' 'is_exact' (TRUE)
+joint_path_exact_backward <- function(forward) {
+  arguments <- forward$arguments
+  drawn <- do.call(joint_path_exact_backward_cpp,
+                   c(list(alpha=forward$alpha), arguments))
+  f_before <- function(x) c(0, x[-length(x)])
+  fatal <- drawn[, 1]
+  dated <- drawn[, 2]
+  wrong_alive <- drawn[, 3]
+  wrong_dead <- drawn[, 4]
+  wrong <- wrong_alive + wrong_dead
+  survivors <- arguments$cases - fatal - dated - wrong
+  deaths <- arguments$deaths - wrong_dead - dated
+  list(
+    fatal_new=fatal - f_before(fatal),
+    survivors_new=survivors - f_before(survivors),
+    fatal_before=f_before(fatal),
+    survivors_before=f_before(survivors),
+    alive_before=f_before(fatal) - f_before(deaths),
+    deaths_new=deaths - f_before(deaths),
+    wrong_before=f_before(wrong),
+    wrong_removed=drawn[, 5] + drawn[, 6],
+    wrong_entered_alive=wrong_alive - f_before(wrong_alive) + drawn[, 5],
+    wrong_entered_dead=wrong_dead - f_before(wrong_dead) + drawn[, 6],
+    dated_new=dated - f_before(dated),
+    dated_before=f_before(dated),
+    is_exact=TRUE)
+}
+
 #' Log-probability, given how many of the cases in each report are fatal, of
 #' the fatal cases newly reported and the deaths newly shown in each report
 #'
@@ -658,6 +736,21 @@ fatal_reports_logp <- function(path, survivals, fatal_recorded, dated_in=0,
                                is_deaths_included=TRUE) {
   n <- length(fatal_recorded)
   n_reports <- length(path$fatal_new)
+  if(isTRUE(path$is_exact)) {
+    # the two kinds of fatal case are followed separately
+    probabilities <- path_probabilities(survivals, 0)
+    logp <- reports_stream_logp(path$fatal_new, path$fatal_before,
+                                fatal_recorded - dated_in, probabilities$p_fatal) +
+      sum(dbinom_log_recycled(path$dated_new, dated_in - path$dated_before,
+                              survival_steps(survivals$log_dated)))
+    is_informative <- path$fatal_new > 0 | path$alive_before > 0
+    if(is_deaths_included)
+      logp <- logp + sum(deaths_new_logp(
+        path$deaths_new[is_informative], path$fatal_new[is_informative],
+        path$alive_before[is_informative], probabilities$g[is_informative],
+        probabilities$q[is_informative]))
+    return(logp)
+  }
   fraction <- ifelse(fatal_recorded > 0,
                      pmin(dated_in / pmax(fatal_recorded, 1), 1), 0)
   probabilities <- mixed_probabilities(survivals, fraction)
@@ -710,8 +803,9 @@ joint_cases_deaths_logp <- function(path, survivals, cfr, cases_true,
   fatal_reported <- path$fatal_before[n_reports] + path$fatal_new[n_reports]
   survivors_reported <- path$survivors_before[n_reports] +
     path$survivors_new[n_reports]
-  # fatal cases of the onset time which are dated by onset
-  onset_min <- max(fatal_reported - dated_in, 0)
+  # fatal cases of the onset time which are dated by onset: in the exact
+  # form the path counts these alone
+  onset_min <- max(fatal_reported - ifelse(isTRUE(path$is_exact), 0, dated_in), 0)
   onset_max <- max(max(cases_true) - dated_out - survivors_reported, onset_min)
   fatal_values <- (onset_min:onset_max) + dated_out
   survivors_max <- max(max(cases_true) - fatal_values[1], survivors_reported)
@@ -893,10 +987,12 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
   delays <- deaths_delay_by_onset(state)
   dated <- dated_counts(state)
   is_wrong <- is_wrong_records(revision_parameters)
+  is_exact <- isTRUE(state$dated$exact)
   n_days <- length(state$onset_times)
   paths <- vector("list", n_days)
   l_survivals <- vector("list", n_days)
   l_units <- vector("list", n_days)
+  l_wrong <- vector("list", n_days)
   for(k in seq_len(n_days)) {
     reports <- state$reports[[k]]
     reporting_parameters <- delay_of_onset(reporting_by_onset, k)
@@ -915,6 +1011,11 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
     }
     f_forward <- function(deaths_true) {
       fatal_recorded <- deaths_true - dated$out[k] + dated$into[k]
+      if(is_exact)
+        return(joint_path_exact_forward(
+          reports$cases_reported, reports$deaths_reported,
+          deaths_true - dated$out[k], dated$into[k], cases_true[k] - deaths_true,
+          survivals, wrong))
       joint_path_forward(
         reports$cases_reported, reports$deaths_reported, fatal_recorded,
         cases_true[k] - deaths_true,
@@ -942,12 +1043,16 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
       }
     }
     state$deaths_true[k] <- deaths_true
-    paths[[k]] <- joint_path_backward(forward)
+    paths[[k]] <- if(is_exact) joint_path_exact_backward(forward)
+    else joint_path_backward(forward)
     l_survivals[[k]] <- survivals
+    l_wrong[k] <- list(wrong)
   }
   state$paths <- paths
   state$survivals <- l_survivals
   state$wrong_units <- if(is_wrong) l_units
+  # what the wrong records of each onset time were given, for the exact form
+  state$wrong <- l_wrong
   state
 }
 
@@ -999,7 +1104,8 @@ deaths_cases_logp_function <- function(state, time_onset,
   }
   n_reports <- length(path$fatal_new)
   attr(f, "min_cases") <- dated$out +
-    max(path$fatal_before[n_reports] + path$fatal_new[n_reports] - dated$into, 0) +
+    max(path$fatal_before[n_reports] + path$fatal_new[n_reports] -
+          ifelse(isTRUE(path$is_exact), 0, dated$into), 0) +
     path$survivors_before[n_reports] + path$survivors_new[n_reports]
   f
 }
@@ -1081,7 +1187,8 @@ deaths_reporting_day_logp <- function(state, k, cases_true, reporting_parameters
   # not depend on it
   logp <- fatal_reports_logp(
     path, survivals, dated$fatal_recorded, dated$into,
-    is_deaths_included=dated$into > 0 & !survivals$is_dated_same)
+    is_deaths_included=dated$into > 0 & !survivals$is_dated_same &
+      !isTRUE(path$is_exact))
   if(is_fatal_only)
     return(logp)
   logp <- logp + reports_stream_logp(
@@ -1155,7 +1262,7 @@ deaths_recording_day_logp <- function(state, k, death_parameters,
     state$reports[[k]]$time_reported, state$onset_times[k], death_parameters,
     recording_effects)
   probabilities <- path_probabilities(
-    survivals, ifelse(dated$fatal_recorded > 0,
+    survivals, ifelse(dated$fatal_recorded > 0 & !isTRUE(path$is_exact),
                       dated$into / dated$fatal_recorded, 0))
   is_informative <- path$fatal_new > 0 | path$alive_before > 0
   sum(deaths_new_logp(path$deaths_new[is_informative],

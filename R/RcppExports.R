@@ -48,6 +48,39 @@ joint_path_backward_cpp <- function(alpha, cases, deaths, fatal, survivors, p, p
     .Call(`_incidenceinflation_joint_path_backward_cpp`, alpha, cases, deaths, fatal, survivors, p, p_fatal, g, q, lambda, w, delta, max_erroneous)
 }
 
+#' Filters forwards over the reports of the cases recorded for one day,
+#' following fatal cases dated by onset and by death separately
+#'
+#' @inheritParams joint_path_forward_cpp
+#' @param fatal the number of fatal cases recorded for the day which are
+#' dated by onset
+#' @param dated the number which are dated by death
+#' @param p_fatal for each report, the probability a fatal case dated by
+#' onset which was not reported by the report before is reported by it
+#' @param p_dated the same for a fatal case dated by death
+#' @param g for each report, the probability a fatal case dated by onset
+#' which is newly reported in it is shown as dead in it
+#'
+#' @return as \code{joint_path_forward_cpp}
+joint_path_exact_forward_cpp <- function(cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous) {
+    .Call(`_incidenceinflation_joint_path_exact_forward_cpp`, cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous)
+}
+
+#' Samples backwards over the reports of the cases recorded for one day,
+#' following fatal cases dated by onset and by death separately
+#'
+#' @inheritParams joint_path_exact_forward_cpp
+#' @param alpha as returned by \code{joint_path_exact_forward_cpp} for the
+#' same arguments
+#'
+#' @return a matrix with a row for each report and columns: the fatal cases
+#' dated by onset reported by it, those dated by death reported by it, the
+#' wrong records present which are shown as alive and as dead, and the wrong
+#' records of each kind removed since the report before
+joint_path_exact_backward_cpp <- function(alpha, cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous) {
+    .Call(`_incidenceinflation_joint_path_exact_backward_cpp`, alpha, cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous)
+}
+
 #' Forward recursion for observation process allowing downward revisions
 #'
 #' Calculates the log-probability of the reported cases for a single onset

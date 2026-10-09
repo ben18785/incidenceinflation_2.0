@@ -61,7 +61,7 @@ test_that("relaxed_stan_data lays out the deaths for the model", {
 
 test_that("the likelihood of deaths in the relaxed model is exact without wrong records", {
   f_skip_without_stan()
-  model <- relaxed_model(compile_standalone=TRUE)
+  model <- relaxed_model(compile_standalone=TRUE, force_recompile=TRUE)
   model$expose_functions(global=FALSE)
   f <- model$functions
   days <- c(3L, 4L, 6L, 7L, 10L)

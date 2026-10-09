@@ -19,7 +19,10 @@ percentile), 'reporting' (a named list of the 'mean' and 'sd' of the delay
 from the day of death to those cases being reported; if absent this is the
 reporting delay of other cases, counted from the day of death) and
 'n_moves' (the number of changes proposed in each iteration, by default
-four for each onset time)}
+four for each onset time, or one in the exact form) and 'exact' (if TRUE,
+the fatal cases dated by onset and by death among those reported are
+followed separately, which is exact and slower; by default each fatal
+case recorded for a day is taken to be dated by death with a probability)}
 }
 \value{
 NULL if no fatal cases are dated by death; otherwise the list with

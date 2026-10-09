@@ -24,7 +24,10 @@
 #' from the day of death to those cases being reported; if absent this is the
 #' reporting delay of other cases, counted from the day of death) and
 #' 'n_moves' (the number of changes proposed in each iteration, by default
-#' four for each onset time)
+#' four for each onset time, or one in the exact form) and 'exact' (if TRUE,
+#' the fatal cases dated by onset and by death among those reported are
+#' followed separately, which is exact and slower; by default each fatal
+#' case recorded for a day is taken to be dated by death with a probability)
 #'
 #' @return NULL if no fatal cases are dated by death; otherwise the list with
 #' 'fraction' given for each onset time, defaults filled in and
@@ -34,7 +37,8 @@ dated_by_death_settings <- function(n_days, dated) {
   if(is.null(dated))
     return(NULL)
   unknown <- setdiff(names(dated),
-                     c("fraction", "mean", "sd", "max_lag", "reporting", "n_moves"))
+                     c("fraction", "mean", "sd", "max_lag", "reporting", "n_moves",
+                       "exact"))
   if(length(unknown) > 0)
     stop(paste0("Unknown settings for dated_by_death: ",
                 paste(unknown, collapse=", "), "."))
@@ -60,15 +64,17 @@ dated_by_death_settings <- function(n_days, dated) {
       reporting$mean <= 0 || reporting$sd <= 0))
     stop("The delay from death to being reported must have a positive mean and sd.")
   lag_probabilities <- diff(stats::pgamma(0:max_lag, shape=shape, rate=rate))
+  is_exact <- isTRUE(dated$exact)
   n_moves <- dated$n_moves
   if(is.null(n_moves))
-    n_moves <- 4 * n_days
+    n_moves <- ifelse(is_exact, 1, 4) * n_days
   list(fraction=rep_len(fraction, n_days),
        mean=dated$mean, sd=dated$sd,
        max_lag=max_lag,
        lag_probabilities=lag_probabilities / sum(lag_probabilities),
        reporting=reporting,
-       n_moves=n_moves)
+       n_moves=n_moves,
+       exact=is_exact)
 }
 
 #' Adds fatal cases dated by death to the starting state of the model of
@@ -258,11 +264,31 @@ dated_logp <- function(state, cases_true, cohorts=seq_along(state$onset_times),
       logp <- logp + stats::dpois(
         dated$inflow[t],
         dated$inflow_weight[t] * state$cfr[1] * dated$fraction[1], log=TRUE)
-    logp <- logp + fatal_reports_logp(
-      state$paths[[t]], state$survivals[[t]],
-      state$deaths_true[t] - dated$out[t] + dated$into[t], dated$into[t])
+    # in the exact form a change of kind is impossible given how many of each
+    # kind are in each report, so that is summed out
+    if(dated$exact)
+      logp <- logp + dated_exact_forward(state, cases_true, t)$logp
+    else
+      logp <- logp + fatal_reports_logp(
+        state$paths[[t]], state$survivals[[t]],
+        state$deaths_true[t] - dated$out[t] + dated$into[t], dated$into[t])
   }
   logp
+}
+
+#' Filters forwards over the reports of one onset time in the exact form, at
+#' the current numbers of fatal cases of each kind
+#'
+#' @inheritParams dated_logp
+#' @param t the onset time, counted from one
+#'
+#' @return as \code{joint_path_exact_forward}
+dated_exact_forward <- function(state, cases_true, t) {
+  reports <- state$reports[[t]]
+  joint_path_exact_forward(
+    reports$cases_reported, reports$deaths_reported,
+    state$deaths_true[t] - state$dated$out[t], state$dated$into[t],
+    cases_true[t] - state$deaths_true[t], state$survivals[[t]], state$wrong[[t]])
 }
 
 #' Applies a change to the fatal cases dated by death
@@ -389,6 +415,12 @@ deaths_dated_step <- function(state, cases_true, renewal) {
       state <- proposed$state
       cases_true <- proposed$cases_true
       logp_renewal <- logp_renewal_proposed
+      # in the exact form, how many of each kind are in each report is drawn
+      # again for the onset time whose numbers changed
+      if(dated$exact)
+        for(t in proposed$days)
+          state$paths[[t]] <- joint_path_exact_backward(
+            dated_exact_forward(state, cases_true, t))
     }
   }
   list(state=state, cases_true=cases_true)

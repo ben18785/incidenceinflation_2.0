@@ -55,6 +55,55 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// joint_path_exact_forward_cpp
+List joint_path_exact_forward_cpp(NumericVector cases, NumericVector deaths, int fatal, int dated, int survivors, NumericVector p, NumericVector p_fatal, NumericVector p_dated, NumericVector g, NumericVector q, NumericVector lambda, NumericVector w, double delta, int max_erroneous);
+RcppExport SEXP _incidenceinflation_joint_path_exact_forward_cpp(SEXP casesSEXP, SEXP deathsSEXP, SEXP fatalSEXP, SEXP datedSEXP, SEXP survivorsSEXP, SEXP pSEXP, SEXP p_fatalSEXP, SEXP p_datedSEXP, SEXP gSEXP, SEXP qSEXP, SEXP lambdaSEXP, SEXP wSEXP, SEXP deltaSEXP, SEXP max_erroneousSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericVector >::type cases(casesSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type deaths(deathsSEXP);
+    Rcpp::traits::input_parameter< int >::type fatal(fatalSEXP);
+    Rcpp::traits::input_parameter< int >::type dated(datedSEXP);
+    Rcpp::traits::input_parameter< int >::type survivors(survivorsSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type p(pSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type p_fatal(p_fatalSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type p_dated(p_datedSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type g(gSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type q(qSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type lambda(lambdaSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type w(wSEXP);
+    Rcpp::traits::input_parameter< double >::type delta(deltaSEXP);
+    Rcpp::traits::input_parameter< int >::type max_erroneous(max_erroneousSEXP);
+    rcpp_result_gen = Rcpp::wrap(joint_path_exact_forward_cpp(cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous));
+    return rcpp_result_gen;
+END_RCPP
+}
+// joint_path_exact_backward_cpp
+NumericMatrix joint_path_exact_backward_cpp(NumericVector alpha, NumericVector cases, NumericVector deaths, int fatal, int dated, int survivors, NumericVector p, NumericVector p_fatal, NumericVector p_dated, NumericVector g, NumericVector q, NumericVector lambda, NumericVector w, double delta, int max_erroneous);
+RcppExport SEXP _incidenceinflation_joint_path_exact_backward_cpp(SEXP alphaSEXP, SEXP casesSEXP, SEXP deathsSEXP, SEXP fatalSEXP, SEXP datedSEXP, SEXP survivorsSEXP, SEXP pSEXP, SEXP p_fatalSEXP, SEXP p_datedSEXP, SEXP gSEXP, SEXP qSEXP, SEXP lambdaSEXP, SEXP wSEXP, SEXP deltaSEXP, SEXP max_erroneousSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericVector >::type alpha(alphaSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type cases(casesSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type deaths(deathsSEXP);
+    Rcpp::traits::input_parameter< int >::type fatal(fatalSEXP);
+    Rcpp::traits::input_parameter< int >::type dated(datedSEXP);
+    Rcpp::traits::input_parameter< int >::type survivors(survivorsSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type p(pSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type p_fatal(p_fatalSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type p_dated(p_datedSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type g(gSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type q(qSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type lambda(lambdaSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type w(wSEXP);
+    Rcpp::traits::input_parameter< double >::type delta(deltaSEXP);
+    Rcpp::traits::input_parameter< int >::type max_erroneous(max_erroneousSEXP);
+    rcpp_result_gen = Rcpp::wrap(joint_path_exact_backward_cpp(alpha, cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous));
+    return rcpp_result_gen;
+END_RCPP
+}
 // revisions_logp_cpp
 NumericVector revisions_logp_cpp(NumericVector cases_true, NumericVector observation_cases, NumericVector p_detect, NumericVector p_newly_detected, NumericVector p_withdrawn, double eta, NumericMatrix mean_entered_extra, NumericMatrix log_alpha_initial, int max_erroneous, double phi, int period_detected, int max_batch);
 RcppExport SEXP _incidenceinflation_revisions_logp_cpp(SEXP cases_trueSEXP, SEXP observation_casesSEXP, SEXP p_detectSEXP, SEXP p_newly_detectedSEXP, SEXP p_withdrawnSEXP, SEXP etaSEXP, SEXP mean_entered_extraSEXP, SEXP log_alpha_initialSEXP, SEXP max_erroneousSEXP, SEXP phiSEXP, SEXP period_detectedSEXP, SEXP max_batchSEXP) {
@@ -81,6 +130,8 @@ END_RCPP
 static const R_CallMethodDef CallEntries[] = {
     {"_incidenceinflation_joint_path_forward_cpp", (DL_FUNC) &_incidenceinflation_joint_path_forward_cpp, 12},
     {"_incidenceinflation_joint_path_backward_cpp", (DL_FUNC) &_incidenceinflation_joint_path_backward_cpp, 13},
+    {"_incidenceinflation_joint_path_exact_forward_cpp", (DL_FUNC) &_incidenceinflation_joint_path_exact_forward_cpp, 14},
+    {"_incidenceinflation_joint_path_exact_backward_cpp", (DL_FUNC) &_incidenceinflation_joint_path_exact_backward_cpp, 15},
     {"_incidenceinflation_revisions_logp_cpp", (DL_FUNC) &_incidenceinflation_revisions_logp_cpp, 12},
     {NULL, NULL, 0}
 };

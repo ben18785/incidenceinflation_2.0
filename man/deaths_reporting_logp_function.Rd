@@ -12,8 +12,10 @@ deaths_reporting_logp_function(state, cases_true, revision_parameters = NULL)
 
 \item{cases_true}{a vector of the true cases of each onset time}
 
-\item{revision_parameters}{named list which can contain 'tail' and
-'report_multipliers' (see above); or NULL}
+\item{revision_parameters}{NULL, or a named list which can contain 'eta'
+and 'rho' (if wrong records are allowed for: see
+\code{observation_process_revisions_logp}) and anything which alters the
+reporting delay (see \code{log_undetected_days})}
 }
 \value{
 a function of 'indices' and 'reporting_parameters' (see

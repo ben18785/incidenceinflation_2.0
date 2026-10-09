@@ -5,7 +5,7 @@
 \title{Updates the delay from onset to a death being recorded and the case
 fatality ratio, with the onset times at which each changes}
 \usage{
-deaths_parameters_step(state, cases_true, settings, revision_parameters = NULL)
+deaths_parameters_step(state, cases_true, settings)
 }
 \arguments{
 \item{state}{as returned by \code{initial_deaths_state}}
@@ -13,14 +13,11 @@ deaths_parameters_step(state, cases_true, settings, revision_parameters = NULL)
 \item{cases_true}{a vector of the true cases of each onset time}
 
 \item{settings}{as returned by \code{deaths_settings}}
-
-\item{revision_parameters}{named list which can contain 'tail' and
-'report_multipliers' (see above); or NULL}
 }
 \value{
 the updated state
 }
 \description{
-Updates the delay from onset to a death being recorded and the case
-fatality ratio, with the onset times at which each changes
+The effects of the day of the week on the delay to a death being recorded
+are updated too, if there are any.
 }

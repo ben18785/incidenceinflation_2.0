@@ -2,13 +2,15 @@
 % Please edit documentation in R/deaths.R
 \name{deaths_paths_step}
 \alias{deaths_paths_step}
-\title{Samples how many of the cases in each report are fatal, for every onset time}
+\title{Samples how many of the cases in each report are fatal, and how many are
+wrong records, for every onset time}
 \usage{
 deaths_paths_step(
   state,
   cases_true,
   reporting_by_onset,
   revision_parameters = NULL,
+  max_erroneous = 3,
   n_proposals = 2,
   step_max = 3
 )
@@ -21,8 +23,13 @@ deaths_paths_step(
 \item{reporting_by_onset}{a tibble with columns 'mean' and 'sd' and a row
 for each onset time: the delay from onset to a case being reported}
 
-\item{revision_parameters}{named list which can contain 'tail' and
-'report_multipliers' (see above); or NULL}
+\item{revision_parameters}{NULL, or a named list which can contain 'eta'
+and 'rho' (if wrong records are allowed for: see
+\code{observation_process_revisions_logp}) and anything which alters the
+reporting delay (see \code{log_undetected_days})}
+
+\item{max_erroneous}{maximum number of erroneous records that can be held
+for a single onset day at any one time}
 
 \item{n_proposals}{the number of times a change in the true fatal cases
 of each onset time is proposed}
@@ -31,11 +38,12 @@ of each onset time is proposed}
 }
 \value{
 the state with elements 'deaths_true', 'paths' (see
-\code{sample_fatal_path}) and 'survivals' (see \code{joint_survivals})
-updated
+\code{joint_path_backward}), 'survivals' (see \code{joint_survivals}) and
+'wrong_units' (see \code{wrong_entry_units}) updated
 }
 \description{
-Samples how many of the cases in each report are fatal, for every onset time
+Samples how many of the cases in each report are fatal, and how many are
+wrong records, for every onset time
 }
 \details{
 Once all the cases of an onset time have been reported, the
@@ -44,6 +52,6 @@ cases, so that neither can change while the other is held fixed. The true
 number of fatal cases is therefore first updated with the split of the
 reported cases summed out: a change is proposed and accepted with the
 Metropolis probability, using the probability of the reports from
-\code{fatal_path_forward}. The split is then drawn given the result. The
+\code{joint_path_forward}. The split is then drawn given the result. The
 fatal cases dated by death, into and out of the day, are held fixed.
 }

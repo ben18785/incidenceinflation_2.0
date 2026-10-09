@@ -22,9 +22,20 @@ the 'mean' and 'sd' of the delay from onset to a death being reported);
 'delay_changepoints' (a named list of settings passed to
 \code{reporting_changepoint_settings}, or FALSE for a delay which does not
 change); 'dated_by_death' (NULL, or what is supplied about fatal cases
-recorded for their day of death: see \code{dated_by_death_settings}); and
-'n_parameter_steps'. The delay here is that from onset to a death being
-recorded.
+recorded for their day of death: see \code{dated_by_death_settings});
+'fatal_delay' (FALSE if fatal cases are reported as others are; otherwise
+a named list of 'probability_same', the prior probability that they are,
+'sd', the standard deviation of the normal prior for the log of the ratio
+of the two delays if they are not, 'step', the standard deviation of the
+changes proposed in it, and 'n_steps'); 'recording_weekday' (whether the
+delay to a death being recorded has its own effects of the day of the
+week: by default it does if the reporting delay has them);
+'wrong_dead_alpha' and 'wrong_dead_beta' (parameters of the beta prior for
+the probability a wrong record is shown as dead); 'weekday_sd' and
+'weekday_step' (the standard deviation of the prior for the log of each
+effect of the day of the week, and of the changes proposed in it); and
+'n_parameter_steps'.
+The delay here is that from onset to a death being recorded.
 }
 \description{
 Default settings for the model of deaths

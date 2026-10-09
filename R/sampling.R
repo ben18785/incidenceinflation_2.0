@@ -1209,8 +1209,9 @@ metropolis_step_revisions <- function(
 #' has been reported and its death recorded, the latter after its own delay
 #' from onset, which can also change. The results then include "deaths" (the
 #' true fatal cases, case fatality ratio and delay for each onset time) and
-#' "deaths_parameters". This requires priors$reporting_changepoints and does
-#' not yet allow revisions to reported cases.
+#' "deaths_parameters". Wrong records (initial_revision_parameters with 'eta'
+#' and 'rho') and effects of the day of the week ('weekday') are allowed for.
+#' This requires priors$reporting_changepoints.
 #' @param progress_file an optional path of a file to which progress is
 #' written (the number of iterations completed and the time taken), so that
 #' a chain run in the background or in parallel can be followed. The file is
@@ -1259,8 +1260,9 @@ mcmc_single <- function(
       stop("deaths must contain 'snapshot': a tibble of reported deaths.")
     if(!"reporting_changepoints" %in% names(priors))
       stop("With a model of deaths, priors$reporting_changepoints must be supplied (changes in the reporting delay can be switched off by setting its n_partition_moves to zero).")
-    if(!is.null(initial_revision_parameters))
-      stop("Revisions to reported cases are not yet allowed with a model of deaths.")
+    if(any(c("tail", "report_effects", "pi", "batches") %in%
+           names(initial_revision_parameters)) | "batches" %in% names(priors))
+      stop("With a model of deaths, wrong records and effects of the day of the week are allowed for, but not a heavier tail, random effects of reports, misdating or batches.")
     if(!condition_on_future_cases)
       stop("condition_on_future_cases must be TRUE with a model of deaths.")
     deaths_n_days <- length(unique(snapshot_with_Rt_index_df$time_onset))
@@ -1385,6 +1387,23 @@ mcmc_single <- function(
         priors_reporting$report_sd_scale / (priors_reporting$report_sd_shape - 1))
     }
     revision_current <- update_report_multipliers(revision_current)
+  }
+  # the delay to a death being recorded has its own effects of the day of
+  # the week
+  if(is_deaths) {
+    if(is.null(deaths_options$recording_weekday))
+      deaths_options$recording_weekday <- is_weekday
+    if(isTRUE(deaths_options$recording_weekday))
+      deaths_state$recording_effects <- initial_recording_effects(
+        snapshot_with_Rt_index_df$time_reported,
+        ifelse(is.null(initial_revision_parameters$weekday_first), 1,
+               initial_revision_parameters$weekday_first))
+    if(is_reporting_extensions) {
+      if(is.null(deaths$settings$weekday_sd))
+        deaths_options$weekday_sd <- priors_reporting$weekday_sd
+      if(is.null(deaths$settings$weekday_step))
+        deaths_options$weekday_step <- steps_reporting$weekday_step
+    }
   }
 
   # batches of erroneous records
@@ -1515,7 +1534,8 @@ mcmc_single <- function(
       deaths_running_df <- deaths_running_df[
         match(deaths_state$onset_times, deaths_running_df$time_onset), ]
       deaths_state <- deaths_paths_step(deaths_state, deaths_running_df$cases_true,
-                                        deaths_running_df, revision_current)
+                                        deaths_running_df, revision_current,
+                                        max_erroneous)
       # which fatal cases are recorded for their day of death, which moves
       # true cases between days of onset
       if(!is.null(deaths_state$dated)) {
@@ -1560,7 +1580,8 @@ mcmc_single <- function(
       max_erroneous=max_erroneous,
       cases_before=cases_before,
       f_observation_logp_onset=if(is_deaths)
-        function(time) deaths_cases_logp_function(deaths_state, time),
+        function(time) deaths_cases_logp_function(deaths_state, time,
+                                                  revision_current),
       cases_offset=if(is_deaths) deaths_cases_offset(deaths_state))
 
     # sample the true fatal cases, the delay from onset to a death being
@@ -1570,11 +1591,37 @@ mcmc_single <- function(
       deaths_cases_true <- cases_by_onset_df$cases_estimated[
         match(deaths_state$onset_times, cases_by_onset_df$time_onset)]
       deaths_state <- deaths_true_step(deaths_state, deaths_cases_true)
+      # what acts on the reporting delay or on wrong records, then what acts
+      # on the delay to a death being recorded
+      deaths_effects <- deaths_reporting_effects_step(
+        deaths_state, deaths_cases_true, deaths_running_df, revision_current,
+        deaths_options, priors$revisions,
+        ifelse(is.null(revision_metropolis_parameters$rho_step), 0.5,
+               revision_metropolis_parameters$rho_step))
+      deaths_state <- deaths_effects$state
+      revision_current <- deaths_effects$revision_parameters
       deaths_state <- deaths_parameters_step(deaths_state, deaths_cases_true,
-                                             deaths_options, revision_current)
+                                             deaths_options)
+      deaths_state <- deaths_refresh_survivals(deaths_state, deaths_running_df,
+                                               revision_current)
       deaths_tmp <- deaths_draws(deaths_state, i)
       deaths_samples[[i]] <- deaths_tmp$deaths
       deaths_parameters_samples[[i]] <- deaths_tmp$deaths_parameters
+      if(is_revisions) {
+        revision_tmp <- dplyr::tibble(eta=revision_current$eta,
+                                      rho=revision_current$rho, pi=0, iteration=i)
+        revision_samples <- if(i == 1) revision_tmp
+        else dplyr::bind_rows(revision_samples, revision_tmp)
+      }
+      if(is_reporting_extensions) {
+        reporting_effects_tmp <- dplyr::tibble(iteration=i, tail_weight=NA,
+                                               tail_mean=NA, report_sd=NA)
+        for(weekday in names(revision_current$weekday_log_effects))
+          reporting_effects_tmp[[paste0("weekday_", weekday)]] <-
+            exp(revision_current$weekday_log_effects[[weekday]])
+        reporting_effects_samples <- if(i == 1) reporting_effects_tmp
+        else dplyr::bind_rows(reporting_effects_samples, reporting_effects_tmp)
+      }
     }
 
     # sample Rt
@@ -1715,8 +1762,8 @@ mcmc_single <- function(
       reporting_current <- reporting_temp
     }
 
-    # sample revision parameters
-    if(is_revisions) {
+    # sample revision parameters (with a model of deaths, done above)
+    if(is_revisions & !is_deaths) {
       # log-probability of observations at reporting parameters just sampled
       logp_observation <- list_reporting_logp$logp -
         prior_reporting_parameters(reporting_current, priors$reporting)
@@ -1749,7 +1796,7 @@ mcmc_single <- function(
     }
 
     # sample the extensions to the model of reporting
-    if(is_reporting_extensions) {
+    if(is_reporting_extensions & !is_deaths) {
       # log-probability of observations at the values just sampled
       logl_reporting <- list_revision_logp$logp -
         prior_revision_parameters(revision_current, priors$revisions) -

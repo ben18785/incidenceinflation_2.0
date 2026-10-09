@@ -12,7 +12,8 @@ joint_cases_deaths_logp(
   cases_true,
   dated_out = 0,
   dated_in = 0,
-  fraction = 0
+  fraction = 0,
+  wrong_mean = NULL
 )
 }
 \arguments{
@@ -31,6 +32,10 @@ dated by death}
 
 \item{fraction}{the probability that a fatal case of the onset time is
 dated by death}
+
+\item{wrong_mean}{NULL if there are no wrong records; otherwise, for each
+report, the expected number of wrong records entered since the report
+before for each genuine case recorded for the day}
 }
 \value{
 a matrix with a row for each of cases_true and a column for each

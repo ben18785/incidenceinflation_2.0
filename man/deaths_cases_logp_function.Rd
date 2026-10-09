@@ -5,12 +5,17 @@
 \title{Creates the function giving the log-probability of the reports of an onset
 time for possible true cases, with the true fatal cases summed out}
 \usage{
-deaths_cases_logp_function(state, time_onset)
+deaths_cases_logp_function(state, time_onset, revision_parameters = NULL)
 }
 \arguments{
 \item{state}{as returned by \code{initial_deaths_state}}
 
 \item{time_onset}{an onset time}
+
+\item{revision_parameters}{NULL, or a named list which can contain 'eta'
+and 'rho' (if wrong records are allowed for: see
+\code{observation_process_revisions_logp}) and anything which alters the
+reporting delay (see \code{log_undetected_days})}
 }
 \value{
 a function of a vector of possible true cases. Its attribute

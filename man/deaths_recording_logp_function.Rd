@@ -6,13 +6,10 @@
 for sets of onset times which share a delay from onset to a death being
 recorded}
 \usage{
-deaths_recording_logp_function(state, revision_parameters = NULL)
+deaths_recording_logp_function(state)
 }
 \arguments{
 \item{state}{as returned by \code{initial_deaths_state}}
-
-\item{revision_parameters}{named list which can contain 'tail' and
-'report_multipliers' (see above); or NULL}
 }
 \value{
 a function of 'indices' and 'reporting_parameters' (here the

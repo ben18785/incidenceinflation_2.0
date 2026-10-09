@@ -12,7 +12,8 @@ simulate_cases_deaths(
   death_parameters,
   fatal_reporting_parameters = NULL,
   death_from = c("onset", "report"),
-  dated_by_death = NULL
+  dated_by_death = NULL,
+  wrong = NULL
 )
 }
 \arguments{
@@ -42,6 +43,13 @@ the gamma-distributed time from onset to death of those cases, which is
 rounded up to a whole number of days) and, optionally, 'reporting' (a named
 list of the 'mean' and 'sd' of the delay from the day of death to those
 cases being reported)}
+
+\item{wrong}{an optional named list of 'eta', 'rho' and 'delta', which adds
+wrong records to the reports. On each day after the day for which cases
+are recorded, a Poisson number of wrong records is entered, with mean eta
+times the cases recorded for the day times the probability a case is first
+reported on that day. Each is shown as dead with probability delta and is
+removed with probability rho on each later day.}
 }
 \value{
 a named list of 'snapshots' (a tibble with columns time_onset,

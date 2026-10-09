@@ -16,7 +16,10 @@ a named list of two tibbles: 'deaths' (a row for each onset time
 with the true fatal cases whose onset was on the day, the case fatality
 ratio, the delay from onset to a death being recorded, the fatal cases
 recorded for the day and how many of those are dated by death) and
-'deaths_parameters' (a single row)
+'deaths_parameters' (a single row, which includes 'fatal_delay_ratio', the
+ratio of the reporting delay of fatal cases to that of others,
+'wrong_dead', the probability a wrong record is shown as dead, and the
+effect of each day of the week on the delay to a death being recorded)
 }
 \description{
 The values held in the state of the model of deaths, for storage

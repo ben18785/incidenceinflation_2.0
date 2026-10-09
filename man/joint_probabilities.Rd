@@ -12,7 +12,9 @@ joint_probabilities(
   death_parameters,
   revision_parameters = NULL,
   fraction_dated_by_death = 0,
-  dated_reporting_parameters = NULL
+  dated_reporting_parameters = NULL,
+  recording_effects = NULL,
+  nu = 0
 )
 }
 \arguments{
@@ -34,8 +36,15 @@ the day which are dated by death}
 
 \item{dated_reporting_parameters}{named list of the 'mean' and 'sd' of the
 delay from death to being reported, for fatal cases recorded for their day
-of death; if NULL (the default) this is the delay of other cases counted
-from onset}
+of death; if NULL (the default) this is the delay of other fatal cases
+counted from onset}
+
+\item{recording_effects}{a named list which can contain
+'report_multipliers' for the delay to a death being recorded, as
+revision_parameters can for the reporting delay; or NULL}
+
+\item{nu}{the log of the ratio of the reporting delay of fatal cases to
+that of others (both its mean and its sd)}
 }
 \value{
 a named list of vectors with an element for each report: 'p' (the

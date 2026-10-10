@@ -15,6 +15,7 @@ NULL if no fatal cases are dated by death; otherwise a tibble with
 columns time_onset and cases_offset
 }
 \description{
-The amount by which the cases recorded for each day exceed the true cases
-whose onset was on it
+In the exact form, a fatal case dated by death which is recorded for a day
+but is not yet in the reports is left out, so that an onset time taken to
+be fully reported keeps any such case.
 }

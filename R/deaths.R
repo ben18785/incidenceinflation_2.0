@@ -606,6 +606,10 @@ joint_path_forward <- function(cases_reported, deaths_reported, deaths_true,
   if(deaths_true < 0 | survivors_true < 0)
     return(list(logp=-Inf, alpha=NULL, arguments=arguments))
   forward <- do.call(joint_path_forward_cpp, arguments)
+  # states of negligible probability are dropped for speed; if that leaves
+  # nothing, none are dropped
+  if(!is.finite(forward$logp))
+    forward <- do.call(joint_path_forward_cpp, c(arguments, list(negligible=0)))
   forward$arguments <- arguments
   forward
 }
@@ -679,6 +683,10 @@ joint_path_exact_forward <- function(cases_reported, deaths_reported, fatal_onse
   if(fatal_onset < 0 | fatal_dated < 0 | survivors_true < 0)
     return(list(logp=-Inf, alpha=NULL, arguments=arguments))
   forward <- do.call(joint_path_exact_forward_cpp, arguments)
+  # states of negligible probability are dropped for speed; if that leaves
+  # nothing, none are dropped
+  if(!is.finite(forward$logp))
+    forward <- do.call(joint_path_exact_forward_cpp, c(arguments, list(negligible=0)))
   forward$arguments <- arguments
   forward
 }

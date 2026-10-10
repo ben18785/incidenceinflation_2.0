@@ -162,8 +162,7 @@ public:
   }
 
   // filters forwards; returns the log-probability of the reports
-  double forward(std::vector<double>& alpha) {
-    const double negligible = 1e-12;
+  double forward(std::vector<double>& alpha, double negligible) {
     alpha.assign((n_reports + 1) * n_states(), 0.0);
     alpha[index(0, 0, 0, 0)] = 1.0;
     double logp = 0.0;
@@ -248,11 +247,11 @@ List joint_path_exact_forward_cpp(NumericVector cases, NumericVector deaths,
                                   NumericVector p_dated, NumericVector g,
                                   NumericVector q, NumericVector lambda,
                                   NumericVector w, double delta,
-                                  int max_erroneous) {
+                                  int max_erroneous, double negligible = 1e-12) {
   JointPathExact path(cases, deaths, fatal, dated, survivors, p, p_fatal,
                       p_dated, g, q, lambda, w, delta, max_erroneous);
   std::vector<double> alpha;
-  double logp = path.forward(alpha);
+  double logp = path.forward(alpha, negligible);
   return List::create(Named("logp") = logp, Named("alpha") = wrap(alpha));
 }
 

@@ -17,7 +17,8 @@ joint_path_forward_cpp(
   lambda,
   w,
   delta,
-  max_erroneous
+  max_erroneous,
+  negligible = 1e-12
 )
 }
 \arguments{
@@ -50,6 +51,9 @@ report before has been removed}
 \item{delta}{the probability a wrong record is shown as dead}
 
 \item{max_erroneous}{the largest number of wrong records present at once}
+
+\item{negligible}{states whose probability given the reports so far is
+less than this multiple of that of the most probable state are dropped}
 }
 \value{
 a named list of 'logp' (the log-probability of the reports) and

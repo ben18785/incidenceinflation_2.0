@@ -130,7 +130,10 @@ initial_dated_state <- function(state, dated, cases_before=NULL) {
   lags <- matrix(0, n_days, max_lag)
   inflow <- rep(0, n_days)
   for(t in seq_len(n_days)) {
-    n_dated <- round(dated$fraction[t] * fatal_recorded[t])
+    # a case dated by death is shown as dead once reported, so to start with
+    # there are no more of them than the deaths in the latest report
+    n_dated <- min(round(dated$fraction[t] * fatal_recorded[t]),
+                   utils::tail(state$reports[[t]]$deaths_reported, 1))
     weights <- h * (seq_len(max_lag) < t)
     weight_inflow <- (inflow_weight[t] > 0) * sum(h[seq_len(max_lag) >= t])
     if(n_dated == 0 | sum(weights) + weight_inflow == 0)
@@ -429,6 +432,10 @@ deaths_dated_step <- function(state, cases_true, renewal) {
 #' The amount by which the cases recorded for each day exceed the true cases
 #' whose onset was on it
 #'
+#' In the exact form, a fatal case dated by death which is recorded for a day
+#' but is not yet in the reports is left out, so that an onset time taken to
+#' be fully reported keeps any such case.
+#'
 #' @inheritParams deaths_delay_by_onset
 #'
 #' @return NULL if no fatal cases are dated by death; otherwise a tibble with
@@ -436,6 +443,9 @@ deaths_dated_step <- function(state, cases_true, renewal) {
 deaths_cases_offset <- function(state) {
   if(is.null(state$dated))
     return(NULL)
+  into <- state$dated$into
+  if(state$dated$exact & !is.null(state$paths))
+    into <- purrr::map_dbl(state$paths, ~sum(.$dated_new))
   dplyr::tibble(time_onset=state$onset_times,
-                cases_offset=state$dated$into - state$dated$out)
+                cases_offset=into - state$dated$out)
 }

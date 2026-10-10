@@ -141,8 +141,7 @@ public:
   }
 
   // filters forwards; returns the log-probability of the reports
-  double forward(std::vector<double>& alpha) {
-    const double negligible = 1e-12;
+  double forward(std::vector<double>& alpha, double negligible) {
     alpha.assign((n_reports + 1) * n_wrong * (r_max + 1), 0.0);
     alpha[index(0, 0, 0)] = 1.0;
     double logp = 0.0;
@@ -235,6 +234,8 @@ public:
 //' report before has been removed
 //' @param delta the probability a wrong record is shown as dead
 //' @param max_erroneous the largest number of wrong records present at once
+//' @param negligible states whose probability given the reports so far is
+//' less than this multiple of that of the most probable state are dropped
 //'
 //' @return a named list of 'logp' (the log-probability of the reports) and
 //' 'alpha' (the probabilities of the states at each report given the reports
@@ -244,11 +245,12 @@ List joint_path_forward_cpp(NumericVector cases, NumericVector deaths,
                             int fatal, int survivors, NumericVector p,
                             NumericVector p_fatal, NumericVector g,
                             NumericVector q, NumericVector lambda,
-                            NumericVector w, double delta, int max_erroneous) {
+                            NumericVector w, double delta, int max_erroneous,
+                            double negligible = 1e-12) {
   JointPath path(cases, deaths, fatal, survivors, p, p_fatal, g, q, lambda, w,
                  delta, max_erroneous);
   std::vector<double> alpha;
-  double logp = path.forward(alpha);
+  double logp = path.forward(alpha, negligible);
   return List::create(Named("logp") = logp, Named("alpha") = wrap(alpha));
 }
 

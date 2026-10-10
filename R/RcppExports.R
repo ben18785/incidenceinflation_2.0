@@ -27,12 +27,14 @@
 #' report before has been removed
 #' @param delta the probability a wrong record is shown as dead
 #' @param max_erroneous the largest number of wrong records present at once
+#' @param negligible states whose probability given the reports so far is
+#' less than this multiple of that of the most probable state are dropped
 #'
 #' @return a named list of 'logp' (the log-probability of the reports) and
 #' 'alpha' (the probabilities of the states at each report given the reports
 #' up to it)
-joint_path_forward_cpp <- function(cases, deaths, fatal, survivors, p, p_fatal, g, q, lambda, w, delta, max_erroneous) {
-    .Call(`_incidenceinflation_joint_path_forward_cpp`, cases, deaths, fatal, survivors, p, p_fatal, g, q, lambda, w, delta, max_erroneous)
+joint_path_forward_cpp <- function(cases, deaths, fatal, survivors, p, p_fatal, g, q, lambda, w, delta, max_erroneous, negligible = 1e-12) {
+    .Call(`_incidenceinflation_joint_path_forward_cpp`, cases, deaths, fatal, survivors, p, p_fatal, g, q, lambda, w, delta, max_erroneous, negligible)
 }
 
 #' Samples backwards over the reports of the cases recorded for one day
@@ -62,8 +64,8 @@ joint_path_backward_cpp <- function(alpha, cases, deaths, fatal, survivors, p, p
 #' which is newly reported in it is shown as dead in it
 #'
 #' @return as \code{joint_path_forward_cpp}
-joint_path_exact_forward_cpp <- function(cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous) {
-    .Call(`_incidenceinflation_joint_path_exact_forward_cpp`, cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous)
+joint_path_exact_forward_cpp <- function(cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous, negligible = 1e-12) {
+    .Call(`_incidenceinflation_joint_path_exact_forward_cpp`, cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous, negligible)
 }
 
 #' Samples backwards over the reports of the cases recorded for one day,

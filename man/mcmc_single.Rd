@@ -165,7 +165,12 @@ can change at unknown onset times. A fatal case is shown as dead once it
 has been reported and its death recorded, the latter after its own delay
 from onset, which can also change. The results then include "deaths" (the
 true fatal cases, case fatality ratio and delay for each onset time) and
-"deaths_parameters". Wrong records (initial_revision_parameters with 'eta'
+"deaths_parameters". The list can also contain 'uncorrected': a tibble
+with columns time_onset, time_reported, cases_reported and deaths_reported
+holding reports made before a report which corrected the records of those
+onset times (see \code{split_corrected_reports}); these inform the delays
+and the parameters of wrong records only, fatal cases dated by death being
+ignored in them, and the results then include "deaths_uncorrected". Wrong records (initial_revision_parameters with 'eta'
 and 'rho') and effects of the day of the week ('weekday') are allowed for.
 This requires priors$reporting_changepoints.}
 

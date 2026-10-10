@@ -916,6 +916,9 @@ initial_deaths_state <- function(snapshot_df, cases_true_df, settings,
 #'
 #' @return a tibble with columns 'mean' and 'sd' and a row for each onset time
 deaths_delay_by_onset <- function(state) {
+  # the uncorrected series hold the delays of their onset times
+  if(!is.null(state$delays))
+    return(state$delays)
   n_days <- length(state$onset_times)
   state$recording$parameters[segment_indices(state$recording$starts, n_days), ]
 }
@@ -1084,6 +1087,12 @@ deaths_refresh_survivals <- function(state, reporting_by_onset,
       state$wrong_units[[k]] <- wrong_entry_units(
         days, state$onset_times[k], reporting_parameters, revision_parameters)
   }
+  if(!is.null(state$uncorrected)) {
+    sub <- deaths_refresh_survivals(uncorrected_state(state),
+                                    uncorrected_reporting(state, reporting_by_onset),
+                                    revision_parameters)
+    state$uncorrected[c("survivals", "wrong_units")] <- sub[c("survivals", "wrong_units")]
+  }
   state
 }
 
@@ -1224,10 +1233,17 @@ deaths_reporting_day_logp <- function(state, k, cases_true, reporting_parameters
 deaths_reporting_logp <- function(state, cases_true, reporting_by_onset,
                                   revision_parameters=NULL, nu=state$nu,
                                   is_fatal_only=FALSE) {
-  sum(purrr::map_dbl(seq_along(state$onset_times), function(k)
+  logp <- sum(purrr::map_dbl(seq_along(state$onset_times), function(k)
     deaths_reporting_day_logp(state, k, cases_true,
                               delay_of_onset(reporting_by_onset, k),
                               revision_parameters, nu, is_fatal_only)))
+  if(!is.null(state$uncorrected)) {
+    sub <- uncorrected_state(state, nu)
+    logp <- logp + deaths_reporting_logp(
+      sub, sub$cases_true, uncorrected_reporting(state, reporting_by_onset),
+      revision_parameters, nu, is_fatal_only)
+  }
+  logp
 }
 
 #' Creates a function giving the log-probability of the cases newly reported
@@ -1243,12 +1259,16 @@ deaths_reporting_logp <- function(state, cases_true, reporting_by_onset,
 #' \code{reporting_logp_function})
 deaths_reporting_logp_function <- function(state, cases_true,
                                            revision_parameters=NULL) {
+  sub <- uncorrected_state(state)
   function(indices, reporting_parameters) {
     if(reporting_parameters$mean <= 0 | reporting_parameters$sd <= 0)
       return(-Inf)
     sum(purrr::map_dbl(indices, function(k)
       deaths_reporting_day_logp(state, k, cases_true, reporting_parameters,
-                                revision_parameters)))
+                                revision_parameters))) +
+      sum(purrr::map_dbl(which(sub$day %in% indices), function(k)
+        deaths_reporting_day_logp(sub, k, sub$cases_true, reporting_parameters,
+                                  revision_parameters)))
   }
 }
 
@@ -1289,11 +1309,14 @@ deaths_recording_day_logp <- function(state, k, death_parameters,
 #' @return a function of 'indices' and 'reporting_parameters' (here the
 #' parameters of the delay from onset to a death being recorded)
 deaths_recording_logp_function <- function(state) {
+  sub <- uncorrected_state(state)
   function(indices, reporting_parameters) {
     if(reporting_parameters$mean <= 0 | reporting_parameters$sd <= 0)
       return(-Inf)
     sum(purrr::map_dbl(indices, function(k)
-      deaths_recording_day_logp(state, k, reporting_parameters)))
+      deaths_recording_day_logp(state, k, reporting_parameters))) +
+      sum(purrr::map_dbl(which(sub$day %in% indices), function(k)
+        deaths_recording_day_logp(sub, k, reporting_parameters)))
   }
 }
 
@@ -1409,6 +1432,15 @@ deaths_draws <- function(state, iteration) {
 #' times the cases recorded for the day times the probability a case is first
 #' reported on that day. Each is shown as dead with probability delta and is
 #' removed with probability rho on each later day.
+#' @param correction an optional named list describing a report which
+#' corrects the records of some onset times: 'time_reported' (the day of that
+#' report), 'onset_times' (the onset times corrected) and any of 'wrong' (the
+#' expected number of records which should not be there, for each case; they
+#' are reported, and die, like cases of the onset time, and are removed by the
+#' correction), 'missing' (the probability a case is absent from every report
+#' before the correction) and 'misdated' (the probability a case is recorded,
+#' before the correction, for another of the onset times corrected, up to
+#' three days away). The truth returned is not altered by these.
 #'
 #' @return a named list of 'snapshots' (a tibble with columns time_onset,
 #' time_reported, cases_reported and deaths_reported, where time_onset is the
@@ -1425,7 +1457,8 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
                                   cfr, death_parameters,
                                   fatal_reporting_parameters=NULL,
                                   death_from=c("onset", "report"),
-                                  dated_by_death=NULL, wrong=NULL) {
+                                  dated_by_death=NULL, wrong=NULL,
+                                  correction=NULL) {
   death_from <- match.arg(death_from)
   n_days <- length(cases_true)
   f_expand <- function(parameters) {
@@ -1451,8 +1484,18 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
   # one row for each case
   cases_by_onset <- cases_true
   onset <- rep(seq_len(n_days), cases_true)
+  # records which should not be there, removed by a report which corrects
+  # the records: these behave like the cases of the onset time they are
+  # recorded for until then, and have no onset time of their own
+  n_genuine <- length(onset)
+  source <- onset
+  if(!is.null(correction$wrong))
+    source <- c(onset, rep(correction$onset_times, stats::rpois(
+      length(correction$onset_times),
+      correction$wrong * cases_true[correction$onset_times])))
+  onset <- c(onset, rep(0, length(source) - n_genuine))
   n <- length(onset)
-  is_fatal <- stats::runif(n) < cfr[onset]
+  is_fatal <- stats::runif(n) < cfr[source]
   is_dated_by_death <- rep(FALSE, n)
   day <- onset
   if(!is.null(dated_by_death)) {
@@ -1465,24 +1508,53 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
   # delays are counted from the day for which the case is recorded
   delay_reported <- ifelse(
     is_fatal,
-    f_delay(fatal_reporting$mean[onset], fatal_reporting$sd[onset]),
-    f_delay(reporting$mean[onset], reporting$sd[onset]))
+    f_delay(fatal_reporting$mean[source], fatal_reporting$sd[source]),
+    f_delay(reporting$mean[source], reporting$sd[source]))
   if(!is.null(dated_by_death$reporting)) {
     n_dated <- sum(is_dated_by_death)
     delay_reported[is_dated_by_death] <- f_delay(
       rep(dated_by_death$reporting$mean, n_dated),
       rep(dated_by_death$reporting$sd, n_dated))
   }
-  delay_recorded <- f_delay(death$mean[onset], death$sd[onset])
+  delay_recorded <- f_delay(death$mean[source], death$sd[source])
   if(death_from == "report")
     delay_recorded <- delay_reported + delay_recorded
   delay_dead <- ifelse(is_dated_by_death, delay_reported,
                        pmax(delay_reported, delay_recorded))
 
+  # the day each record is recorded for before a report which corrects the
+  # records (zero if it is absent until then); delays are counted from the day
+  # it is recorded for afterwards
+  day_before <- day
+  if(!is.null(correction)) {
+    is_extra <- seq_len(n) > n_genuine
+    day_before[is_extra] <- source[is_extra]
+    day[is_extra] <- 0
+    is_corrected <- !is_extra & day %in% correction$onset_times
+    f_chosen <- function(probability)
+      is_corrected & stats::runif(n) < ifelse(is.null(probability), 0, probability)
+    is_misdated <- f_chosen(correction$misdated)
+    shifted <- day + sample(c(-3:-1, 1:3), n, replace=TRUE)
+    is_misdated <- is_misdated & shifted %in% correction$onset_times
+    day_before[is_misdated] <- shifted[is_misdated]
+    day_before[f_chosen(correction$missing)] <- 0
+  }
+  day_counted <- ifelse(day > 0, day, day_before)
+
   results <- purrr::map(seq_len(n_days), function(t) {
     is_day <- day == t
     days <- report_days[report_days >= t]
     elapsed <- days - t + 0.5
+    # the records counted for the day in each report which have been reported
+    # by then, of all records or of those with a property
+    f_count <- function(delay, is_kind) {
+      is_before <- !is.null(correction) && t %in% correction$onset_times
+      purrr::map_dbl(days, function(d) {
+        is_counted <- if(is_before && d < correction$time_reported) day_before == t
+        else is_day
+        sum(is_counted & is_kind & day_counted + delay <= d + 0.5)
+      })
+    }
     wrong_alive <- rep(0, length(days))
     wrong_dead <- rep(0, length(days))
     if(!is.null(wrong) && max(days) > t) {
@@ -1505,10 +1577,8 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
       snapshots=dplyr::tibble(
         time_onset=t,
         time_reported=days,
-        cases_reported=purrr::map_dbl(elapsed, ~sum(delay_reported[is_day] <= .)) +
-          wrong_alive + wrong_dead,
-        deaths_reported=purrr::map_dbl(
-          elapsed, ~sum(delay_dead[is_day & is_fatal] <= .)) + wrong_dead),
+        cases_reported=f_count(delay_reported, TRUE) + wrong_alive + wrong_dead,
+        deaths_reported=f_count(delay_dead, is_fatal) + wrong_dead),
       truth=dplyr::tibble(
         time_onset=t, cases_true=sum(is_day), deaths_true=sum(is_day & is_fatal),
         cases_onset=cases_by_onset[t], deaths_onset=sum(onset == t & is_fatal),

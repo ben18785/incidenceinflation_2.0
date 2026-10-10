@@ -66,6 +66,7 @@ deaths_recording_weekday_step <- function(state, settings) {
   if(is.null(effects))
     return(state)
   delays <- deaths_delay_by_onset(state)
+  sub <- uncorrected_state(state)
   f_effects <- function(log_effects) {
     effects$weekday_log_effects <- log_effects
     update_report_multipliers(effects)
@@ -73,7 +74,9 @@ deaths_recording_weekday_step <- function(state, settings) {
   f_logl <- function(log_effects) {
     proposed <- f_effects(log_effects)
     sum(purrr::map_dbl(seq_along(state$onset_times), function(k)
-      deaths_recording_day_logp(state, k, delay_of_onset(delays, k), proposed)))
+      deaths_recording_day_logp(state, k, delay_of_onset(delays, k), proposed))) +
+      sum(purrr::map_dbl(seq_along(sub$onset_times), function(k)
+        deaths_recording_day_logp(sub, k, delay_of_onset(sub$delays, k), proposed)))
   }
   current <- list(log_effects=effects$weekday_log_effects)
   current$logl <- f_logl(current$log_effects)
@@ -176,17 +179,27 @@ deaths_wrong_step <- function(state, cases_true, reporting_by_onset,
                               rho_step=0.5) {
   if(!is_wrong_records(revision_parameters))
     return(list(state=state, revision_parameters=revision_parameters))
-  n_days <- length(state$onset_times)
   dated <- dated_counts(state)
   cases_recorded <- cases_true - dated$out + dated$into
-  f_total <- function(name) sum(purrr::map_dbl(state$paths, ~sum(.[[name]])))
+  # the uncorrected series are further series of reports with wrong records
+  sub <- uncorrected_state(state)
+  paths <- c(state$paths, sub$paths)
+  reports <- c(state$reports, sub$reports)
+  onset_times <- c(state$onset_times, sub$onset_times)
+  wrong_units <- c(state$wrong_units, sub$wrong_units)
+  cases_recorded <- c(cases_recorded, sub$cases_true)
+  reporting_by_onset <- rbind(
+    as.data.frame(reporting_by_onset[, c("mean", "sd")]),
+    as.data.frame(reporting_by_onset[sub$day, c("mean", "sd")]))
+  n_days <- length(onset_times)
+  f_total <- function(name) sum(purrr::map_dbl(paths, ~sum(.[[name]])))
   entered_alive <- f_total("wrong_entered_alive")
   entered_dead <- f_total("wrong_entered_dead")
   state$delta <- stats::rbeta(1, settings$wrong_dead_alpha + entered_dead,
                               settings$wrong_dead_beta + entered_alive)
 
   exposure <- sum(cases_recorded *
-                    purrr::map_dbl(state$wrong_units, ~sum(.$unit)))
+                    purrr::map_dbl(wrong_units, ~sum(.$unit)))
   revision_parameters$eta <- stats::rgamma(
     1,
     shape=prior_parameters$eta_mu^2 / prior_parameters$eta_sigma^2 +
@@ -199,9 +212,9 @@ deaths_wrong_step <- function(state, cases_true, reporting_by_onset,
     proposed <- revision_parameters
     proposed$rho <- rho
     logl <- sum(purrr::map_dbl(seq_len(n_days), function(k) {
-      path <- state$paths[[k]]
-      units <- wrong_entry_units(state$reports[[k]]$time_reported,
-                                 state$onset_times[k],
+      path <- paths[[k]]
+      units <- wrong_entry_units(reports[[k]]$time_reported,
+                                 onset_times[k],
                                  delay_of_onset(reporting_by_onset, k), proposed)
       sum(dbinom_log_recycled(path$wrong_removed, path$wrong_before, units$w)) +
         stats::dpois(path$wrong_entered_alive[1] + path$wrong_entered_dead[1],

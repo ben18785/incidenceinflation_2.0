@@ -13,7 +13,8 @@ simulate_cases_deaths(
   fatal_reporting_parameters = NULL,
   death_from = c("onset", "report"),
   dated_by_death = NULL,
-  wrong = NULL
+  wrong = NULL,
+  correction = NULL
 )
 }
 \arguments{
@@ -50,6 +51,16 @@ are recorded, a Poisson number of wrong records is entered, with mean eta
 times the cases recorded for the day times the probability a case is first
 reported on that day. Each is shown as dead with probability delta and is
 removed with probability rho on each later day.}
+
+\item{correction}{an optional named list describing a report which
+corrects the records of some onset times: 'time_reported' (the day of that
+report), 'onset_times' (the onset times corrected) and any of 'wrong' (the
+expected number of records which should not be there, for each case; they
+are reported, and die, like cases of the onset time, and are removed by the
+correction), 'missing' (the probability a case is absent from every report
+before the correction) and 'misdated' (the probability a case is recorded,
+before the correction, for another of the onset times corrected, up to
+three days away). The truth returned is not altered by these.}
 }
 \value{
 a named list of 'snapshots' (a tibble with columns time_onset,

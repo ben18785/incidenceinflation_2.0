@@ -1209,7 +1209,12 @@ metropolis_step_revisions <- function(
 #' has been reported and its death recorded, the latter after its own delay
 #' from onset, which can also change. The results then include "deaths" (the
 #' true fatal cases, case fatality ratio and delay for each onset time) and
-#' "deaths_parameters". Wrong records (initial_revision_parameters with 'eta'
+#' "deaths_parameters". The list can also contain 'uncorrected': a tibble
+#' with columns time_onset, time_reported, cases_reported and deaths_reported
+#' holding reports made before a report which corrected the records of those
+#' onset times (see \code{split_corrected_reports}); these inform the delays
+#' and the parameters of wrong records only, fatal cases dated by death being
+#' ignored in them, and the results then include "deaths_uncorrected". Wrong records (initial_revision_parameters with 'eta'
 #' and 'rho') and effects of the day of the week ('weekday') are allowed for.
 #' This requires priors$reporting_changepoints.
 #' @param progress_file an optional path of a file to which progress is
@@ -1282,6 +1287,12 @@ mcmc_single <- function(
     # from those recorded for each day
     initial_cases_true <- dplyr::tibble(time_onset=deaths_state$onset_times,
                                         cases_true=deaths_state$cases_onset)
+    is_uncorrected <- !is.null(deaths$uncorrected)
+    if(is_uncorrected) {
+      deaths_state$uncorrected <- initial_uncorrected(deaths$uncorrected,
+                                                      deaths_state, deaths_options)
+      uncorrected_samples <- vector("list", niterations)
+    }
     deaths_samples <- vector("list", niterations)
     deaths_parameters_samples <- vector("list", niterations)
   }
@@ -1536,6 +1547,10 @@ mcmc_single <- function(
       deaths_state <- deaths_paths_step(deaths_state, deaths_running_df$cases_true,
                                         deaths_running_df, revision_current,
                                         max_erroneous)
+      # the reports made before a correction, for the onset times corrected
+      deaths_state <- deaths_uncorrected_step(deaths_state, deaths_running_df,
+                                              revision_current, max_erroneous,
+                                              max_cases)
       # which fatal cases are recorded for their day of death, which moves
       # true cases between days of onset
       if(!is.null(deaths_state$dated)) {
@@ -1607,6 +1622,8 @@ mcmc_single <- function(
       deaths_tmp <- deaths_draws(deaths_state, i)
       deaths_samples[[i]] <- deaths_tmp$deaths
       deaths_parameters_samples[[i]] <- deaths_tmp$deaths_parameters
+      if(is_uncorrected)
+        uncorrected_samples[[i]] <- uncorrected_draws(deaths_state, i)
       if(is_revisions) {
         revision_tmp <- dplyr::tibble(eta=revision_current$eta,
                                       rho=revision_current$rho, pi=0, iteration=i)
@@ -2023,6 +2040,8 @@ mcmc_single <- function(
   if(is_deaths) {
     list_results$deaths <- dplyr::bind_rows(deaths_samples)
     list_results$deaths_parameters <- dplyr::bind_rows(deaths_parameters_samples)
+    if(is_uncorrected)
+      list_results$deaths_uncorrected <- dplyr::bind_rows(uncorrected_samples)
   }
 
   list_results

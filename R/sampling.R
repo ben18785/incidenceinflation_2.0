@@ -1265,9 +1265,9 @@ mcmc_single <- function(
       stop("deaths must contain 'snapshot': a tibble of reported deaths.")
     if(!"reporting_changepoints" %in% names(priors))
       stop("With a model of deaths, priors$reporting_changepoints must be supplied (changes in the reporting delay can be switched off by setting its n_partition_moves to zero).")
-    if(any(c("tail", "report_effects", "pi", "batches") %in%
+    if(any(c("report_effects", "pi", "batches") %in%
            names(initial_revision_parameters)) | "batches" %in% names(priors))
-      stop("With a model of deaths, wrong records and effects of the day of the week are allowed for, but not a heavier tail, random effects of reports, misdating or batches.")
+      stop("With a model of deaths, wrong records, a heavier tail of the reporting delay and effects of the day of the week are allowed for, but not random effects of reports, misdating or batches.")
     if(!condition_on_future_cases)
       stop("condition_on_future_cases must be TRUE with a model of deaths.")
     deaths_n_days <- length(unique(snapshot_with_Rt_index_df$time_onset))
@@ -1414,6 +1414,8 @@ mcmc_single <- function(
         deaths_options$weekday_sd <- priors_reporting$weekday_sd
       if(is.null(deaths$settings$weekday_step))
         deaths_options$weekday_step <- steps_reporting$weekday_step
+      deaths_options$tail_prior <- priors_reporting
+      deaths_options$tail_steps <- steps_reporting
     }
   }
 
@@ -1631,8 +1633,10 @@ mcmc_single <- function(
         else dplyr::bind_rows(revision_samples, revision_tmp)
       }
       if(is_reporting_extensions) {
-        reporting_effects_tmp <- dplyr::tibble(iteration=i, tail_weight=NA,
-                                               tail_mean=NA, report_sd=NA)
+        reporting_effects_tmp <- dplyr::tibble(
+          iteration=i,
+          tail_weight=ifelse(is_tail, revision_current$tail$weight, NA),
+          tail_mean=ifelse(is_tail, revision_current$tail$mean, NA), report_sd=NA)
         for(weekday in names(revision_current$weekday_log_effects))
           reporting_effects_tmp[[paste0("weekday_", weekday)]] <-
             exp(revision_current$weekday_log_effects[[weekday]])

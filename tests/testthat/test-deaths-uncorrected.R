@@ -49,7 +49,7 @@ test_that("split_corrected_reports splits the reports of the onset times correct
   expect_equal(min(parts$corrected$time_reported[parts$corrected$time_onset == 16]), 20)
 })
 
-fit_corrected <- function(simulated, niterations, is_uncorrected=TRUE) {
+fit_corrected <- function(simulated, niterations, is_uncorrected=TRUE, tail=NULL) {
   parts <- split_corrected_reports(simulated$snapshots, simulated$time_corrected,
                                    simulated$corrected)
   snapshots <- parts$corrected
@@ -73,7 +73,9 @@ fit_corrected <- function(simulated, niterations, is_uncorrected=TRUE) {
     initial_Rt=dplyr::tibble(Rt_index=1, Rt=1),
     reporting_metropolis_parameters=list(mean_step=0.3, sd_step=0.25),
     print_to_screen=FALSE,
-    initial_revision_parameters=list(eta=0.01, rho=0.3, weekday=TRUE, weekday_first=1),
+    initial_revision_parameters=c(
+      list(eta=0.01, rho=0.3, weekday=TRUE, weekday_first=1),
+      if(!is.null(tail)) list(tail=tail)),
     deaths=c(list(snapshot=snapshots %>%
                     dplyr::select(time_onset, time_reported, deaths_reported),
                   settings=list(delay_changepoints=list(min_length=14,
@@ -156,4 +158,19 @@ test_that("the cases of an uncorrected series are not tied to the case fatality 
   reported <- purrr::map_dbl(state$uncorrected$reports, ~max(.$cases_reported))
   expect_true(all(state$uncorrected$cases_true >= reported))
   expect_true(all(state$uncorrected$cases_true <= 150))
+})
+
+test_that("a heavier tail of the reporting delay is allowed for and updated", {
+  simulated <- simulate_corrected(seed=5)
+  # a case added to an onset time long after every other case was reported
+  rows <- simulated$snapshots$time_onset == 3 & simulated$snapshots$time_reported >= 36
+  simulated$snapshots$cases_reported[rows] <- simulated$snapshots$cases_reported[rows] + 1
+  set.seed(8)
+  fit <- fit_corrected(simulated, 12, tail=list(weight=0.05, mean=20))
+  effects <- fit$reporting_effects
+  expect_true(all(effects$tail_weight > 0 & effects$tail_weight < 1))
+  expect_true(all(effects$tail_mean > 0))
+  expect_gt(length(unique(effects$tail_weight)), 2)
+  expect_true(all(fit$cases$cases_true[fit$cases$time_onset == 3] >=
+                    max(simulated$snapshots$cases_reported[rows])))
 })

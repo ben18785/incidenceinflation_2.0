@@ -269,12 +269,61 @@ deaths_reporting_weekday_step <- function(state, cases_true, reporting_by_onset,
   f_parameters(current$log_effects)
 }
 
+#' Updates the heavier tail of the reporting delay in the joint model of
+#' cases and deaths
+#'
+#' A proportion 'weight' of cases, fatal or not, have a delay which is
+#' exponential with mean 'mean' (see \code{log_undetected_days}). The weight
+#' has a beta prior and the mean a gamma prior; proposals are made on the
+#' logit and log scales, as in \code{metropolis_step_tail}.
+#'
+#' @inheritParams deaths_paths_step
+#' @param settings as returned by \code{deaths_settings}, with elements
+#' 'tail_prior' (a named list of 'tail_weight_alpha', 'tail_weight_beta',
+#' 'tail_mean_mu' and 'tail_mean_sigma') and 'tail_steps' (a named list of
+#' 'tail_weight_step' and 'tail_mean_step') added
+#'
+#' @return the revision parameters with element 'tail' updated
+deaths_tail_step <- function(state, cases_true, reporting_by_onset,
+                             revision_parameters, settings) {
+  if(is.null(revision_parameters$tail))
+    return(revision_parameters)
+  prior <- settings$tail_prior
+  f_logp <- function(tail) {
+    proposed <- revision_parameters
+    proposed$tail <- tail
+    deaths_reporting_logp(state, cases_true, reporting_by_onset, proposed) +
+      stats::dbeta(tail$weight, prior$tail_weight_alpha, prior$tail_weight_beta,
+                   log=TRUE) +
+      dgamma_mean_sd(tail$mean, prior$tail_mean_mu, prior$tail_mean_sigma,
+                     log=TRUE) +
+      # Jacobian of the transformation to the logit and log scales
+      log(tail$weight) + log(1 - tail$weight) + log(tail$mean)
+  }
+  tail <- revision_parameters$tail
+  logp <- f_logp(tail)
+  for(step in seq_len(settings$n_parameter_steps)) {
+    proposed <- list(
+      weight=stats::plogis(stats::rnorm(1, stats::qlogis(tail$weight),
+                                        settings$tail_steps$tail_weight_step)),
+      mean=exp(stats::rnorm(1, log(tail$mean),
+                            settings$tail_steps$tail_mean_step)))
+    logp_proposed <- f_logp(proposed)
+    if(is.finite(logp_proposed) && log(stats::runif(1)) < logp_proposed - logp) {
+      tail <- proposed
+      logp <- logp_proposed
+    }
+  }
+  revision_parameters$tail <- tail
+  revision_parameters
+}
+
 #' Updates everything which acts on the reporting delay or on wrong records
 #' in the joint model of cases and deaths, other than the reporting delay
 #' itself
 #'
 #' These are the parameters governing wrong records, the effects of the day
-#' of the week on the reporting delay and the ratio of the reporting delay of
+#' of the week on the reporting delay, its heavier tail and the ratio of the reporting delay of
 #' fatal cases to that of others. What is held about the delays of each onset
 #' time is then recalculated.
 #'
@@ -292,6 +341,8 @@ deaths_reporting_effects_step <- function(state, cases_true, reporting_by_onset,
   state <- updated$state
   revision_parameters <- deaths_reporting_weekday_step(
     state, cases_true, reporting_by_onset, updated$revision_parameters, settings)
+  revision_parameters <- deaths_tail_step(state, cases_true, reporting_by_onset,
+                                          revision_parameters, settings)
   state <- deaths_fatal_delay_step(state, cases_true, reporting_by_onset,
                                    revision_parameters, settings$fatal_delay)
   list(state=deaths_refresh_survivals(state, reporting_by_onset,

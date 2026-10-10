@@ -286,5 +286,5 @@ test_that("mcmc_single runs with wrong records, effects of the day of the week a
   both <- dplyr::left_join(fit$deaths, fit$cases, by=c("iteration", "time_onset"))
   expect_true(all(both$deaths_true <= both$cases_true))
   # what is not allowed for alongside deaths
-  expect_error(f_fit(list(eta=0.05, rho=0.3, tail=list(weight=0.1, mean=20))))
+  expect_error(f_fit(list(eta=0.05, rho=0.3, pi=0.1)))
 })

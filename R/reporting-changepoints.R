@@ -102,6 +102,47 @@ n_splits <- function(length, min_length=1) {
   max(length - 2 * min_length + 1, 0)
 }
 
+#' Fewest days allowed in the earlier part of a segment which is split
+#'
+#' The first segment may be required to be longer than the others, so that
+#' no change is placed among early onset times which say little about the
+#' delay.
+#'
+#' @param start the onset time on which the segment starts
+#' @param settings a named list as returned by
+#' \code{reporting_changepoint_settings}
+#'
+#' @return a number of days
+min_length_earlier <- function(start, settings) {
+  if(start == 1)
+    max(settings$min_length, settings$first_length)
+  else
+    settings$min_length
+}
+
+#' Number of ways of splitting a segment in two, given where it starts
+#'
+#' @inheritParams min_length_earlier
+#' @param end the onset time on which the segment ends
+#'
+#' @return a count
+n_splits_segment <- function(start, end, settings) {
+  max(end - start + 1 - min_length_earlier(start, settings) -
+        settings$min_length + 1, 0)
+}
+
+#' Whether segments are a valid partition, with the first long enough
+#'
+#' @inheritParams is_valid_partition
+#' @inheritParams min_length_earlier
+#'
+#' @return TRUE or FALSE
+is_valid_reporting_partition <- function(starts, n_days, settings) {
+  if(!is_valid_partition(starts, n_days, settings$min_length))
+    return(FALSE)
+  length(starts) == 1 || starts[2] > settings$first_length
+}
+
 #' An initial state for sampling reporting delays whose changes are unknown
 #'
 #' @param reporting_parameters a named list of 'mean' and 'sd' for a single
@@ -136,7 +177,9 @@ initial_reporting_changepoints <- function(reporting_parameters, starts=1,
 #' @return a named list of: 'alpha' and 'beta' (parameters of the beta prior
 #' on the probability of a change on each day, see
 #' \code{changepoints_logp_prior}); 'min_length' (the minimum number of onset
-#' times in a segment); 'spread_sd' (see \code{reporting_centre_logp_prior});
+#' times in a segment); 'first_length' (the minimum number of onset times in
+#' the first segment if there is more than one: no change is placed on or
+#' before this onset time; by default 'min_length'); 'spread_sd' (see \code{reporting_centre_logp_prior});
 #' 'mean_step' and 'sd_step' (step sizes for the parameters of a segment);
 #' 'birth_sd' (the sd of the log of the ratio of the parameters proposed for a
 #' new segment to those of the segment it is split from); 'shift_max' (the
@@ -144,20 +187,29 @@ initial_reporting_changepoints <- function(reporting_parameters, starts=1,
 #' (the step size and number of updates of the centre and spread);
 #' 'n_partition_moves' (the number of times in each sweep that a split or
 #' merge, and then a shift, is proposed); 'n_segment_steps' (the number of
-#' times in each sweep that the parameters of each segment are updated)
+#' times in each sweep that the parameters of each segment are updated);
+#' 'drift' (NULL, or a number of days: the delay then drifts, see
+#' \code{sample_reporting_drift})
 reporting_changepoint_settings <- function(n_days, settings=list()) {
-  defaults <- list(alpha=1, beta=n_days, min_length=7, spread_sd=0.5,
+  defaults <- list(alpha=1, beta=n_days, min_length=7, first_length=NULL,
+                   spread_sd=0.5,
                    mean_step=0.25, sd_step=0.1, birth_sd=0.3, shift_max=3,
                    hyper_step=0.3, n_hyper_steps=5, n_partition_moves=5,
-                   n_segment_steps=1)
+                   n_segment_steps=1, drift=NULL)
   unknown <- setdiff(names(settings), names(defaults))
   if(length(unknown) > 0)
     stop(paste0("Unknown settings: ", paste(unknown, collapse=", "), "."))
   defaults[names(settings)] <- settings
+  if(!is.null(defaults$drift) && defaults$drift < 1)
+    stop("The number of days between steps of a drifting delay must be at least one.")
   if(defaults$alpha <= 0 | defaults$beta <= 0)
     stop("The parameters of the prior on the probability of a change must be positive.")
   if(defaults$min_length < 1)
     stop("The minimum length of a segment must be at least one day.")
+  if(is.null(defaults$first_length))
+    defaults$first_length <- defaults$min_length
+  if(defaults$first_length < defaults$min_length)
+    stop("The minimum length of the first segment must be at least that of the others.")
   defaults
 }
 
@@ -208,10 +260,11 @@ reporting_birth_step <- function(state, f_logp, n_days, settings) {
   ends <- c(starts[-1] - 1, n_days)
   n_segments <- length(starts)
   j <- sample.int(n_segments, 1)
-  n_ways <- n_splits(ends[j] - starts[j] + 1, settings$min_length)
+  n_ways <- n_splits_segment(starts[j], ends[j], settings)
   if(n_ways < 1)
     return(state)
-  start_new <- starts[j] + settings$min_length - 1 + sample.int(n_ways, 1)
+  start_new <- starts[j] + min_length_earlier(starts[j], settings) - 1 +
+    sample.int(n_ways, 1)
   current <- state$parameters[j, ]
   proposed <- dplyr::tibble(
     mean=stats::rlnorm(1, log(current$mean), settings$birth_sd),
@@ -277,7 +330,7 @@ reporting_death_step <- function(state, f_logp, n_days, settings) {
   logl_merged <- f_logp(starts[j_dropped]:ends[j_dropped], as.list(kept))
   log_q <- stats::dlnorm(dropped$mean, log(kept$mean), settings$birth_sd, log=TRUE) +
     stats::dlnorm(dropped$sd, log(kept$sd), settings$birth_sd, log=TRUE)
-  n_ways <- n_splits(ends[i + 1] - starts[i] + 1, settings$min_length)
+  n_ways <- n_splits_segment(starts[i], ends[i + 1], settings)
   log_r <- logl_merged - state$logl[j_dropped] +
     changepoints_logp_prior(n_changes - 1, n_days, settings$alpha, settings$beta) -
     changepoints_logp_prior(n_changes, n_days, settings$alpha, settings$beta) -
@@ -307,7 +360,7 @@ reporting_shift_step <- function(state, f_logp, n_days, settings) {
   shift <- sample(c(-1, 1), 1) * sample.int(settings$shift_max, 1)
   starts_proposed <- starts
   starts_proposed[i + 1] <- starts[i + 1] + shift
-  if(!is_valid_partition(starts_proposed, n_days, settings$min_length))
+  if(!is_valid_reporting_partition(starts_proposed, n_days, settings))
     return(state)
   if(shift > 0) {
     # days pass from the later segment to the earlier one
@@ -389,7 +442,10 @@ reporting_centre_step <- function(state, prior_parameters, settings) {
 #' @export
 sample_reporting_changepoints <- function(state, f_logp, n_days,
                                           prior_parameters, settings) {
-  if(!is_valid_partition(state$starts, n_days, settings$min_length))
+  if(!is.null(settings$drift))
+    return(sample_reporting_drift(state, f_logp, n_days, prior_parameters,
+                                  settings))
+  if(!is_valid_reporting_partition(state$starts, n_days, settings))
     stop("The segments are not a valid partition of the onset times.")
   ends <- c(state$starts[-1] - 1, n_days)
   # recalculated on each call since the true cases will have been updated
@@ -407,6 +463,185 @@ sample_reporting_changepoints <- function(state, f_logp, n_days,
     state <- reporting_shift_step(state, f_logp, n_days, settings)
   }
   reporting_centre_step(state, prior_parameters, settings)
+}
+
+#' Onset times on which the segments of a drifting delay start
+#'
+#' The first segment has first_length onset times (or 'drift' if that is
+#' more) and each later one has 'drift', apart from the last, which takes
+#' any remainder: a remainder of fewer than half of 'drift' onset times is
+#' joined to the segment before.
+#'
+#' @inheritParams reporting_segments_step
+#'
+#' @return a vector of onset times
+reporting_drift_starts <- function(n_days, settings) {
+  first <- max(settings$first_length, settings$drift)
+  if(first >= n_days)
+    return(1)
+  later <- seq(first + 1, n_days, by=settings$drift)
+  n_later <- length(later)
+  if(n_days - later[n_later] + 1 < settings$drift / 2)
+    later <- later[-n_later]
+  c(1, later)
+}
+
+#' Log-prior density of the parameters of the segments of a drifting delay
+#'
+#' The mean and the sd of the delay in the first segment have the gamma
+#' priors otherwise used for the reporting parameters. The logs of the mean
+#' and of the sd then each follow a random walk from one segment to the
+#' next, whose steps are normal with sd 'spread'; the spread has a
+#' half-normal prior.
+#'
+#' @param parameters a tibble with columns 'mean' and 'sd' and a row for
+#' each segment
+#' @param spread the sd of the steps of the logs of the parameters
+#' @inheritParams reporting_centre_logp_prior
+#'
+#' @return a log-density
+reporting_drift_logp_prior <- function(parameters, spread, prior_parameters,
+                                       spread_sd) {
+  if(any(parameters$mean <= 0) | any(parameters$sd <= 0) | spread <= 0)
+    return(-Inf)
+  dgamma_mean_sd(parameters$mean[1], prior_parameters$mean_mu,
+                 prior_parameters$mean_sigma, log=TRUE) +
+    dgamma_mean_sd(parameters$sd[1], prior_parameters$sd_mu,
+                   prior_parameters$sd_sigma, log=TRUE) +
+    sum(stats::dnorm(diff(log(parameters$mean)), 0, spread, log=TRUE)) +
+    sum(stats::dnorm(diff(log(parameters$sd)), 0, spread, log=TRUE)) -
+    sum(log(parameters$mean[-1])) - sum(log(parameters$sd[-1])) +
+    stats::dnorm(spread, 0, spread_sd, log=TRUE)
+}
+
+#' Samples a reporting delay which drifts over onset times
+#'
+#' Onset times are divided into fixed segments (see
+#' \code{reporting_drift_starts}), within each of which the mean and sd of
+#' the delay are constant; from one segment to the next their logs take a
+#' random-walk step (see \code{reporting_drift_logp_prior}). No changes are
+#' proposed or removed. One sweep of Metropolis moves is made: the parameters
+#' of each segment are updated in turn, 'n_segment_steps' times; the mean and
+#' sd of all segments are scaled together; and the spread is updated, alone
+#' and together with the steps between segments. Proposals for the
+#' parameters of a segment are on the scale of their logs, with sds
+#' 'mean_step' and 'sd_step'. The
+#' element 'centre' of the state is not part of this model and is set to the
+#' geometric means of the parameters of the segments.
+#'
+#' @inheritParams sample_reporting_changepoints
+#'
+#' @return the updated state, with an element 'logl' giving the observation
+#' process log-probability of each segment
+sample_reporting_drift <- function(state, f_logp, n_days, prior_parameters,
+                                   settings) {
+  starts <- reporting_drift_starts(n_days, settings)
+  if(!identical(as.numeric(state$starts), as.numeric(starts))) {
+    # the first call: the parameters of the segments given are carried over
+    state$parameters <- dplyr::tibble(
+      mean=piecewise_values(state$starts, state$parameters$mean, n_days)[starts],
+      sd=piecewise_values(state$starts, state$parameters$sd, n_days)[starts])
+    state$starts <- starts
+    state$spread <- min(state$spread, 0.1)
+    # steps of the size of the spread: with no steps at all the spread
+    # would shrink to zero before the segments had moved apart
+    n_steps <- length(starts) - 1
+    state$parameters$mean <- state$parameters$mean *
+      exp(c(0, cumsum(stats::rnorm(n_steps, 0, state$spread))))
+    state$parameters$sd <- state$parameters$sd *
+      exp(c(0, cumsum(stats::rnorm(n_steps, 0, state$spread))))
+  }
+  n_segments <- length(starts)
+  ends <- c(starts[-1] - 1, n_days)
+  f_prior <- function(parameters, spread)
+    reporting_drift_logp_prior(parameters, spread, prior_parameters,
+                               settings$spread_sd)
+  # recalculated on each call since the true cases will have been updated
+  state$logl <- purrr::map_dbl(seq_len(n_segments), function(j) {
+    f_logp(starts[j]:ends[j], as.list(state$parameters[j, ]))
+  })
+  logp_prior <- f_prior(state$parameters, state$spread)
+
+  for(i in seq_len(settings$n_segment_steps)) {
+    for(j in seq_len(n_segments)) {
+      proposed <- state$parameters
+      proposed$mean[j] <- proposed$mean[j] * exp(stats::rnorm(1, 0, settings$mean_step))
+      proposed$sd[j] <- proposed$sd[j] * exp(stats::rnorm(1, 0, settings$sd_step))
+      logp_prior_proposed <- f_prior(proposed, state$spread)
+      logl_proposed <- f_logp(starts[j]:ends[j], as.list(proposed[j, ]))
+      # the last terms are the Jacobian of taking logs
+      log_r <- logl_proposed - state$logl[j] + logp_prior_proposed - logp_prior +
+        log(proposed$mean[j]) + log(proposed$sd[j]) -
+        log(state$parameters$mean[j]) - log(state$parameters$sd[j])
+      if(!is.na(log_r) && log(stats::runif(1)) < log_r) {
+        state$parameters <- proposed
+        state$logl[j] <- logl_proposed
+        logp_prior <- logp_prior_proposed
+      }
+    }
+    # all segments together: the mean, then the sd, scaled by a common factor
+    for(column in c("mean", "sd")) {
+      factor <- exp(stats::rnorm(1, 0, settings$hyper_step / 3))
+      proposed <- state$parameters
+      proposed[[column]] <- proposed[[column]] * factor
+      logp_prior_proposed <- f_prior(proposed, state$spread)
+      if(!is.finite(logp_prior_proposed))
+        next
+      logl_proposed <- purrr::map_dbl(seq_len(n_segments), function(j) {
+        f_logp(starts[j]:ends[j], as.list(proposed[j, ]))
+      })
+      log_r <- sum(logl_proposed) - sum(state$logl) + logp_prior_proposed -
+        logp_prior + n_segments * log(factor)
+      if(!is.na(log_r) && log(stats::runif(1)) < log_r) {
+        state$parameters <- proposed
+        state$logl <- logl_proposed
+        logp_prior <- logp_prior_proposed
+      }
+    }
+  }
+  f_log_scale <- function(parameters)
+    sum(log(parameters$mean[-1])) + sum(log(parameters$sd[-1]))
+  for(i in seq_len(settings$n_hyper_steps)) {
+    spread <- state$spread * exp(stats::rnorm(1, 0, settings$hyper_step))
+    logp_prior_proposed <- f_prior(state$parameters, spread)
+    log_r <- logp_prior_proposed - logp_prior + log(spread) - log(state$spread)
+    if(!is.na(log_r) && log(stats::runif(1)) < log_r) {
+      state$spread <- spread
+      logp_prior <- logp_prior_proposed
+    }
+    if(n_segments < 2)
+      next
+    # the spread and the steps between segments scaled together, keeping the
+    # first segment: without this the spread cannot leave values near zero
+    factor <- exp(stats::rnorm(1, 0, settings$hyper_step))
+    proposed <- state$parameters
+    proposed$mean <- exp(log(proposed$mean[1]) +
+                           c(0, cumsum(factor * diff(log(proposed$mean)))))
+    proposed$sd <- exp(log(proposed$sd[1]) +
+                         c(0, cumsum(factor * diff(log(proposed$sd)))))
+    spread <- state$spread * factor
+    logp_prior_proposed <- f_prior(proposed, spread)
+    if(!is.finite(logp_prior_proposed))
+      next
+    logl_proposed <- purrr::map_dbl(seq_len(n_segments), function(j) {
+      f_logp(starts[j]:ends[j], as.list(proposed[j, ]))
+    })
+    # densities on the scale of the logs, and the Jacobian of scaling the
+    # 2 (n_segments - 1) steps and the spread
+    log_r <- sum(logl_proposed) - sum(state$logl) +
+      logp_prior_proposed + f_log_scale(proposed) -
+      logp_prior - f_log_scale(state$parameters) +
+      (2 * (n_segments - 1) + 1) * log(factor)
+    if(!is.na(log_r) && log(stats::runif(1)) < log_r) {
+      state$parameters <- proposed
+      state$logl <- logl_proposed
+      state$spread <- spread
+      logp_prior <- logp_prior_proposed
+    }
+  }
+  state$centre <- list(mean=exp(mean(log(state$parameters$mean))),
+                       sd=exp(mean(log(state$parameters$sd))))
+  state
 }
 
 #' Reporting delay parameters for each onset time given those of segments

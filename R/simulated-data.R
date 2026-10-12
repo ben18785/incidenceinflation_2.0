@@ -17,7 +17,7 @@ undetected_prob <- function(t_1, t_onset, reporting_parameters){
     stop("t_1 must equal or exceed t_onset")
   delay_mean <- reporting_parameters$mean
   delay_sd <- reporting_parameters$sd
-  1 - pgamma_mean_sd(t_1 - t_onset, delay_mean, delay_sd)
+  exp(delay_log_survival(t_1 - t_onset, delay_mean, delay_sd))
 }
 
 #' Probability a case is detected by a later time given it was unobserved
@@ -55,10 +55,7 @@ detected_after_unobserved_prob <- function(day_2, day_1, day_onset,
 log_undetected_prob <- function(days, t_onset, reporting_parameters) {
   delay_mean <- reporting_parameters$mean
   delay_sd <- reporting_parameters$sd
-  stats::pgamma(days - t_onset,
-                shape=delay_mean^2 / delay_sd^2,
-                rate=delay_mean / delay_sd^2,
-                lower.tail=FALSE, log.p=TRUE)
+  delay_log_survival(days - t_onset, delay_mean, delay_sd)
 }
 
 #' Cases arising on a given day which are reported between two subsequent days

@@ -79,6 +79,53 @@ qgamma_mean_sd <- function(x, mu, sigma) {
   stats::qgamma(x, shape, rate)
 }
 
+#' Family of the distribution of reporting delays
+#'
+#' The delay from onset to a case being reported (or a death being recorded)
+#' is gamma unless the option 'incidenceinflation.delay_family' is set to
+#' "lognormal", when it is log-normal with the same mean and standard
+#' deviation. The serial interval is always gamma.
+#'
+#' @return "gamma" or "lognormal"
+delay_family <- function() {
+  family <- getOption("incidenceinflation.delay_family", "gamma")
+  if(!family %in% c("gamma", "lognormal"))
+    stop("The option incidenceinflation.delay_family must be gamma or lognormal.")
+  family
+}
+
+#' Log of the probability a reporting delay exceeds a value
+#'
+#' @param x a value to be evaluated at
+#' @param mu a mean
+#' @param sigma a standard deviation
+#'
+#' @return a log-probability
+delay_log_survival <- function(x, mu, sigma) {
+  if(delay_family() == "lognormal") {
+    sdlog <- sqrt(log1p(sigma^2 / mu^2))
+    return(stats::plnorm(x, log(mu) - sdlog^2 / 2, sdlog,
+                         lower.tail=FALSE, log.p=TRUE))
+  }
+  stats::pgamma(x, shape=mu^2 / sigma^2, rate=mu / sigma^2,
+                lower.tail=FALSE, log.p=TRUE)
+}
+
+#' Reporting delay exceeded with a given probability
+#'
+#' @param p a probability
+#' @param mu a mean
+#' @param sigma a standard deviation
+#'
+#' @return a positive value
+delay_quantile_mean_sd <- function(p, mu, sigma) {
+  if(delay_family() == "lognormal") {
+    sdlog <- sqrt(log1p(sigma^2 / mu^2))
+    return(stats::qlnorm(p, log(mu) - sdlog^2 / 2, sdlog))
+  }
+  qgamma_mean_sd(p, mu, sigma)
+}
+
 #' Discrete gamma probability mass function
 #'
 #' @param day day to evaluate pmf

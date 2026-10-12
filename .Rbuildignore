@@ -7,3 +7,5 @@
 ^main\.tex$
 ^inst/stan/relaxed$
 ^inst/stan/.*\.hpp$
+^\.positai$
+^\.claude$

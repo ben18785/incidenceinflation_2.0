@@ -31,13 +31,11 @@
 #' @return a vector of log-probabilities
 log_undetected_days <- function(days, day_onset, reporting_parameters,
                                 revision_parameters=NULL) {
-  shape <- reporting_parameters$mean^2 / reporting_parameters$sd^2
-  rate <- reporting_parameters$mean / reporting_parameters$sd^2
   tail <- revision_parameters$tail
   f_log_base <- function(days_tmp) {
     delay <- days_tmp + 0.5 - day_onset
-    log_gamma <- stats::pgamma(delay, shape=shape, rate=rate,
-                               lower.tail=FALSE, log.p=TRUE)
+    log_gamma <- delay_log_survival(delay, reporting_parameters$mean,
+                                    reporting_parameters$sd)
     if(is.null(tail) || tail$weight == 0)
       return(log_gamma)
     a <- log1p(-tail$weight) + log_gamma
@@ -133,7 +131,7 @@ update_report_multipliers <- function(revision_parameters) {
 #' @return a delay in days
 delay_quantile <- function(p, reporting_parameters, revision_parameters=NULL) {
   if(is.null(revision_parameters$tail) || revision_parameters$tail$weight == 0)
-    return(qgamma_mean_sd(p, reporting_parameters$mean, reporting_parameters$sd))
+    return(delay_quantile_mean_sd(p, reporting_parameters$mean, reporting_parameters$sd))
   if(p <= 0)
     return(0)
   rev_tmp <- list(tail=revision_parameters$tail)

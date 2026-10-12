@@ -27,7 +27,8 @@ mcmc_single(
   n_parameter_steps = 1,
   deaths = NULL,
   progress_file = NULL,
-  progress_every = 50
+  progress_every = 50,
+  fixed_cases = FALSE
 )
 }
 \arguments{
@@ -181,6 +182,9 @@ overwritten each time.}
 
 \item{progress_every}{the number of iterations between each time progress
 is written. Defaults to 50.}
+
+\item{fixed_cases}{if TRUE, the true cases are held at initial_cases_true
+throughout and everything else is sampled given them. Defaults to FALSE.}
 }
 \value{
 a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters;

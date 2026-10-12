@@ -15,7 +15,9 @@ reporting_changepoint_settings(n_days, settings = list())
 a named list of: 'alpha' and 'beta' (parameters of the beta prior
 on the probability of a change on each day, see
 \code{changepoints_logp_prior}); 'min_length' (the minimum number of onset
-times in a segment); 'spread_sd' (see \code{reporting_centre_logp_prior});
+times in a segment); 'first_length' (the minimum number of onset times in
+the first segment if there is more than one: no change is placed on or
+before this onset time; by default 'min_length'); 'spread_sd' (see \code{reporting_centre_logp_prior});
 'mean_step' and 'sd_step' (step sizes for the parameters of a segment);
 'birth_sd' (the sd of the log of the ratio of the parameters proposed for a
 new segment to those of the segment it is split from); 'shift_max' (the
@@ -23,7 +25,9 @@ furthest a change is proposed to move); 'hyper_step' and 'n_hyper_steps'
 (the step size and number of updates of the centre and spread);
 'n_partition_moves' (the number of times in each sweep that a split or
 merge, and then a shift, is proposed); 'n_segment_steps' (the number of
-times in each sweep that the parameters of each segment are updated)
+times in each sweep that the parameters of each segment are updated);
+'drift' (NULL, or a number of days: the delay then drifts, see
+\code{sample_reporting_drift})
 }
 \description{
 Default settings for sampling reporting delays whose changes are unknown

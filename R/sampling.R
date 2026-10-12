@@ -80,7 +80,7 @@ sample_true_cases_single_onset <- function(
 max_uncertain_days <- function(p_gamma_cutoff, reporting_parameters) {
   r_mean <- reporting_parameters$mean
   r_sd <- reporting_parameters$sd
-  days_from_end <- qgamma_mean_sd(p_gamma_cutoff, r_mean, r_sd)
+  days_from_end <- delay_quantile_mean_sd(p_gamma_cutoff, r_mean, r_sd)
   days_from_end
 }
 
@@ -1223,6 +1223,8 @@ metropolis_step_revisions <- function(
 #' overwritten each time.
 #' @param progress_every the number of iterations between each time progress
 #' is written. Defaults to 50.
+#' @param fixed_cases if TRUE, the true cases are held at initial_cases_true
+#' throughout and everything else is sampled given them. Defaults to FALSE.
 #' @return a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters;
 #' and "revisions" if initial_revision_parameters is supplied
 #' @importFrom rlang .data
@@ -1248,8 +1250,11 @@ mcmc_single <- function(
   n_parameter_steps=1,
   deaths=NULL,
   progress_file=NULL,
-  progress_every=50) {
+  progress_every=50,
+  fixed_cases=FALSE) {
 
+  if(fixed_cases & (maximise | !condition_on_future_cases))
+    stop("fixed_cases needs maximise FALSE and condition_on_future_cases TRUE.")
   if(!is.null(progress_file) && progress_every < 1)
     stop("progress_every must be at least one.")
   time_started <- Sys.time()
@@ -1584,7 +1589,12 @@ mcmc_single <- function(
         dplyr::select(time_onset, cases_true) %>%
         unique()
 
-    df_temp <- sample_cases_history(
+    # with fixed_cases the true cases stay at their initial values
+    df_temp <- if(fixed_cases) dplyr::left_join(
+      df_current,
+      dplyr::rename(cases_true_current, cases_estimated="cases_true"),
+      by="time_onset")
+    else sample_cases_history(
       df_current, max_cases,
       Rt_function, serial_parameters, reporting_current,
       p_gamma_cutoff=p_gamma_cutoff,

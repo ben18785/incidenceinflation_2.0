@@ -324,3 +324,40 @@ test_that("several updates of segment parameters in a sweep leave the state cons
   res <- f_mcmc_delay(l, 3, list(min_length=3), n_parameter_steps=3)
   expect_equal(nrow(res$reporting_changepoints), 3)
 })
+
+test_that("no change is placed within the minimum length of the first segment", {
+  set.seed(11)
+  n_days <- 40
+  settings <- reporting_changepoint_settings(
+    n_days, list(min_length=3, first_length=20, n_partition_moves=10, beta=4))
+  expect_equal(reporting_changepoint_settings(n_days, list(min_length=5))$first_length, 5)
+  expect_error(reporting_changepoint_settings(n_days, list(min_length=5, first_length=3)))
+  expect_equal(n_splits_segment(1, 40, settings), 18)
+  expect_equal(n_splits_segment(5, 40, settings), n_splits(36, 3))
+  expect_false(is_valid_reporting_partition(c(1, 20), n_days, settings))
+  expect_true(is_valid_reporting_partition(c(1, 21), n_days, settings))
+  expect_true(is_valid_reporting_partition(1, n_days, settings))
+  expect_error(sample_reporting_changepoints(
+    f_state(starts=c(1, 10), means=c(5, 5), sds=c(3, 3)), function(days, parameters) 0,
+    n_days, prior_parameters, settings))
+
+  # with reports which say nothing, the place of a single change is uniform
+  # over the places allowed
+  state <- f_state()
+  firsts <- c()
+  n_changes <- c()
+  for(i in 1:6000) {
+    state <- sample_reporting_changepoints(state, function(days, parameters) 0,
+                                           n_days, prior_parameters, settings)
+    n_changes <- c(n_changes, length(state$starts) - 1)
+    if(length(state$starts) > 1)
+      expect_true(state$starts[2] > 20)
+    if(length(state$starts) == 2)
+      firsts <- c(firsts, state$starts[2])
+  }
+  expect_true(all(firsts %in% 21:38))
+  expect_true(length(firsts) > 500)
+  share_late <- mean(firsts >= 30)
+  expect_true(abs(share_late - 0.5) < 0.1)
+  expect_true(mean(n_changes > 0) > 0.1)
+})

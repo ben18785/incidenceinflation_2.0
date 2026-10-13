@@ -39,5 +39,6 @@ has not been reported only if its own reporting delay has not elapsed and,
 for one of those cases, nor has the delay to its death being recorded. A
 fatal case newly reported is shown as alive only if it was reported through
 its own delay and its death has not been recorded, whichever kind it is.
-This cannot be combined with fatal cases dated by death.
+Where some fatal cases are also dated by death, these are reported after
+their own delay and shown as dead at once, as above.
 }

@@ -12,7 +12,9 @@ delay_quantile(p, reporting_parameters, revision_parameters = NULL)
 \item{reporting_parameters}{named list of 'mean' and 'sd' of the gamma delay}
 
 \item{revision_parameters}{named list which can contain 'tail' and
-'report_multipliers' (see above); or NULL}
+'report_multipliers' (see above) and 'before' (a named list with element
+'lag_probabilities': the probability that the event from which the delay
+runs happens one day, two days, ... after onset); or NULL}
 }
 \value{
 a delay in days

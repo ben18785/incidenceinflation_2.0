@@ -63,7 +63,7 @@ initial_recording_effects <- function(report_days, weekday_first=1) {
 #' @return the state with element 'recording_effects' updated
 deaths_recording_weekday_step <- function(state, settings) {
   effects <- state$recording_effects
-  if(is.null(effects))
+  if(is.null(effects$weekday_log_effects))
     return(state)
   delays <- deaths_delay_by_onset(state)
   sub <- uncorrected_state(state)
@@ -85,6 +85,59 @@ deaths_recording_weekday_step <- function(state, settings) {
       current$log_effects, f_logl, current$logl, settings$weekday_sd,
       settings$weekday_step)
   state$recording_effects <- f_effects(current$log_effects)
+  state
+}
+
+#' Updates the heavier tail of the delay to a death being recorded
+#'
+#' The proportion of deaths recorded after an exponential delay and the mean
+#' of that delay are updated in turn by Metropolis steps, on the logit and
+#' log scales, given how many of the cases in each report are fatal.
+#'
+#' @inheritParams deaths_delay_by_onset
+#' @param tail the element 'recording_tail' of the result of
+#' \code{deaths_settings}; nothing is done if it is FALSE
+#'
+#' @return the state with element 'tail' of its element 'recording_effects'
+#' updated
+deaths_recording_tail_step <- function(state, tail) {
+  if(identical(tail, FALSE) | is.null(tail) | is.null(state$recording_effects$tail))
+    return(state)
+  delays <- deaths_delay_by_onset(state)
+  sub <- uncorrected_state(state)
+  f_logp <- function(value) {
+    effects <- state$recording_effects
+    effects$tail <- value
+    sum(purrr::map_dbl(seq_along(state$onset_times), function(k)
+      deaths_recording_day_logp(state, k, delay_of_onset(delays, k), effects))) +
+      sum(purrr::map_dbl(seq_along(sub$onset_times), function(k)
+        deaths_recording_day_logp(sub, k, delay_of_onset(sub$delays, k), effects))) +
+      stats::dbeta(value$weight, tail$weight_alpha, tail$weight_beta, log=TRUE) +
+      stats::dgamma(value$mean, shape=tail$mean_mu^2 / tail$mean_sigma^2,
+                    rate=tail$mean_mu / tail$mean_sigma^2, log=TRUE) +
+      # Jacobians of the transformations to the logit and log scales
+      log(value$weight) + log(1 - value$weight) + log(value$mean)
+  }
+  value <- state$recording_effects$tail
+  logp <- f_logp(value)
+  for(step in seq_len(tail$n_steps)) {
+    for(name in c("weight", "mean")) {
+      proposed <- value
+      if(name == "weight")
+        proposed$weight <- stats::plogis(
+          stats::rnorm(1, stats::qlogis(value$weight), tail$weight_step))
+      else
+        proposed$mean <- value$mean * exp(stats::rnorm(1, 0, tail$mean_step))
+      if(proposed$weight <= 0 | proposed$weight >= 1)
+        next
+      logp_proposed <- f_logp(proposed)
+      if(is.finite(logp_proposed) && log(stats::runif(1)) < logp_proposed - logp) {
+        value <- proposed
+        logp <- logp_proposed
+      }
+    }
+  }
+  state$recording_effects$tail <- value
   state
 }
 

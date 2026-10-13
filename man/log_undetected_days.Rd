@@ -19,7 +19,9 @@ log_undetected_days(
 \item{reporting_parameters}{named list of 'mean' and 'sd' of the gamma delay}
 
 \item{revision_parameters}{named list which can contain 'tail' and
-'report_multipliers' (see above); or NULL}
+'report_multipliers' (see above) and 'before' (a named list with element
+'lag_probabilities': the probability that the event from which the delay
+runs happens one day, two days, ... after onset); or NULL}
 }
 \value{
 a vector of log-probabilities
@@ -33,4 +35,13 @@ day is multiplied by that day's multiplier, so that the log-probability of
 remaining undetected becomes:
 \deqn{log S(0.5) - \sum_k m_k (log S(k - 1) - log S(k))}
 where the sum is over days after the onset day.
+}
+\details{
+If 'before' is supplied, the delay runs not from the onset day but from an
+earlier event of the case, which happens a whole number of days after onset
+(here a death, with the delay being that to the death being recorded). The
+probability of remaining undetected at the end of day k after onset is then
+\deqn{\sum_{z > k} h_z + \sum_{z \le k} h_z S(k - z + 0.5)}
+where h_z is the probability the event happens z days after onset. The
+multipliers then apply to the rate of detection counted from onset.
 }

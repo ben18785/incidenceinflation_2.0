@@ -15,7 +15,10 @@ NULL if no fatal cases are dated by death; otherwise a tibble with
 columns time_onset and cases_offset
 }
 \description{
-In the exact form, a fatal case dated by death which is recorded for a day
-but is not yet in the reports is left out, so that an onset time taken to
-be fully reported keeps any such case.
+A fatal case dated by death which is recorded for a day but is not yet in
+the reports is left out, so that an onset time taken to be fully reported
+keeps any such case: in the exact form these are known, and otherwise no
+more of the cases dated by death are taken to be in the reports than the
+fatal cases which could have been shown as dead in the first report they
+were in.
 }

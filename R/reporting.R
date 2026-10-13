@@ -22,18 +22,28 @@
 #' \deqn{log S(0.5) - \sum_k m_k (log S(k - 1) - log S(k))}
 #' where the sum is over days after the onset day.
 #'
+#' If 'before' is supplied, the delay runs not from the onset day but from an
+#' earlier event of the case, which happens a whole number of days after onset
+#' (here a death, with the delay being that to the death being recorded). The
+#' probability of remaining undetected at the end of day k after onset is then
+#' \deqn{\sum_{z > k} h_z + \sum_{z \le k} h_z S(k - z + 0.5)}
+#' where h_z is the probability the event happens z days after onset. The
+#' multipliers then apply to the rate of detection counted from onset.
+#'
 #' @param days vector of days, each a whole number of days on or after day_onset
 #' @param day_onset the onset day
 #' @param reporting_parameters named list of 'mean' and 'sd' of the gamma delay
 #' @param revision_parameters named list which can contain 'tail' and
-#' 'report_multipliers' (see above); or NULL
+#' 'report_multipliers' (see above) and 'before' (a named list with element
+#' 'lag_probabilities': the probability that the event from which the delay
+#' runs happens one day, two days, ... after onset); or NULL
 #'
 #' @return a vector of log-probabilities
 log_undetected_days <- function(days, day_onset, reporting_parameters,
                                 revision_parameters=NULL) {
   tail <- revision_parameters$tail
-  f_log_base <- function(days_tmp) {
-    delay <- days_tmp + 0.5 - day_onset
+  before <- revision_parameters$before
+  f_log_delay <- function(delay) {
     log_gamma <- delay_log_survival(delay, reporting_parameters$mean,
                                     reporting_parameters$sd)
     if(is.null(tail) || tail$weight == 0)
@@ -41,6 +51,12 @@ log_undetected_days <- function(days, day_onset, reporting_parameters,
     a <- log1p(-tail$weight) + log_gamma
     b <- log(tail$weight) - delay / tail$mean
     pmax(a, b) + log1p(exp(-abs(a - b)))
+  }
+  f_log_base <- function(days_tmp) {
+    if(is.null(before))
+      return(f_log_delay(days_tmp + 0.5 - day_onset))
+    log_survival_after_event(round(days_tmp - day_onset),
+                             before$lag_probabilities, f_log_delay)
   }
 
   multipliers <- revision_parameters$report_multipliers
@@ -56,6 +72,54 @@ log_undetected_days <- function(days, day_onset, reporting_parameters,
   values[is_within] <- multipliers$values[index[is_within]]
   log_effective <- log_base[1] - c(0, cumsum(values * -diff(log_base)))
   log_effective[round(days - day_onset) + 1]
+}
+
+#' Log-probability that something which follows an event of a case by a
+#' delay has not happened by the end of each of a set of days after onset
+#'
+#' @param lags whole numbers of days since onset (zero or more)
+#' @param lag_probabilities the probability that the event happens one day,
+#' two days, ... after onset
+#' @param f_log_survival a function giving the log of the probability that
+#' the delay from the event exceeds each of a vector of values
+#'
+#' @return a vector of log-probabilities
+log_survival_after_event <- function(lags, lag_probabilities, f_log_survival) {
+  lag_max <- max(lags)
+  n_event <- length(lag_probabilities)
+  # the event has not yet happened
+  p <- c(1, pmax(1 - cumsum(lag_probabilities), 0),
+         rep(0, max(lag_max - n_event, 0)))[seq_len(lag_max + 1)]
+  if(lag_max >= 1) {
+    survival <- exp(f_log_survival(seq(0, lag_max - 1, 1) + 0.5))
+    for(z in seq_len(min(n_event, lag_max))) {
+      index <- z:lag_max
+      p[index + 1] <- p[index + 1] +
+        lag_probabilities[z] * survival[index - z + 1]
+    }
+  }
+  log(pmax(p, 1e-300))[lags + 1]
+}
+
+#' Probabilities of a gamma-distributed time, rounded up to a whole number of
+#' days
+#'
+#' @param mean the mean of the gamma distribution
+#' @param sd its standard deviation
+#' @param max_lag the longest time allowed for (by default the 99.9th
+#' percentile)
+#'
+#' @return a vector of the probabilities of one day, two days, ..., max_lag
+#' days, which sum to one
+lag_probabilities_gamma <- function(mean, sd, max_lag=NULL) {
+  shape <- mean^2 / sd^2
+  rate <- mean / sd^2
+  if(is.null(max_lag))
+    max_lag <- max(1, ceiling(stats::qgamma(0.999, shape=shape, rate=rate)))
+  if(max_lag < 1)
+    stop("max_lag must be at least one day.")
+  probabilities <- diff(stats::pgamma(0:max_lag, shape=shape, rate=rate))
+  probabilities / sum(probabilities)
 }
 
 #' Day of the week of each of a set of days

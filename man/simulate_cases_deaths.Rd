@@ -15,7 +15,9 @@ simulate_cases_deaths(
   dated_by_death = NULL,
   wrong = NULL,
   correction = NULL,
-  triggered = 0
+  triggered = 0,
+  onset_to_death = NULL,
+  recording_tail = NULL
 )
 }
 \arguments{
@@ -42,9 +44,10 @@ recorded runs from onset independently of when the case is reported, or
 \item{dated_by_death}{an optional named list of 'fraction' (the fraction of
 fatal cases which are recorded for their day of death), 'mean' and 'sd' (of
 the gamma-distributed time from onset to death of those cases, which is
-rounded up to a whole number of days) and, optionally, 'reporting' (a named
-list of the 'mean' and 'sd' of the delay from the day of death to those
-cases being reported)}
+rounded up to a whole number of days; not needed with onset_to_death) and,
+optionally, 'reporting' (a named list of the 'mean' and 'sd' of the delay
+from the day of death to those cases being reported; with onset_to_death
+the default is instead the delay from a death to its being recorded)}
 
 \item{wrong}{an optional named list of 'eta', 'rho' and 'delta', which adds
 wrong records to the reports. On each day after the day for which cases
@@ -66,6 +69,16 @@ three days away). The truth returned is not altered by these.}
 \item{triggered}{the proportion of fatal cases which are reported when
 their death is recorded, if they have not been reported by then (needs
 death_from "onset"; fatal cases dated by death are not affected)}
+
+\item{onset_to_death}{an optional named list of the 'mean' and 'sd' of the
+gamma-distributed time from onset to death of every fatal case, which is
+rounded up to a whole number of days. death_parameters is then the delay
+from the day of death to the death being recorded (needs death_from
+"onset")}
+
+\item{recording_tail}{an optional named list of 'weight' and 'mean': that
+proportion of deaths are recorded after an exponential delay with that
+mean, in place of the delay of death_parameters}
 }
 \value{
 a named list of 'snapshots' (a tibble with columns time_onset,

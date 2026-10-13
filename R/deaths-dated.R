@@ -7,35 +7,69 @@
 # its fatal cases are dated by death and when they died, and moves these
 # cases between the two sets of counts.
 #
-# The fraction of fatal cases which are dated by death, the distribution of
-# their time from onset to death and (optionally) their delay from death to
-# being reported are supplied, not estimated.
+# The distribution of the time from onset to death of these cases is supplied.
+# The fraction of fatal cases which are dated by death is supplied or, with a
+# prior, estimated. Their delay from death to being reported is supplied, or
+# is that of other fatal cases counted from the day of death, or is the delay
+# from a death to its being recorded.
 
 #' Settings for fatal cases which are recorded for their day of death
 #'
 #' @param n_days number of onset times
 #' @param dated NULL, or a named list of: 'fraction' (the fraction of the
 #' fatal cases with onset on a day which are recorded for their day of death:
-#' a single value or one for each onset time); 'mean' and 'sd' (of the time
-#' from onset to death of those cases, which has a gamma distribution rounded
-#' up to a whole number of days, so is at least one day); and optionally
+#' a single value or one for each onset time if it is known; or, if it is to
+#' be estimated, a named list of 'alpha' and 'beta', the parameters of its
+#' beta prior, and optionally 'initial', the value to start from. An
+#' estimated fraction is the same for every onset time); 'mean' and 'sd' (of
+#' the time from onset to death of those cases, which has a gamma distribution
+#' rounded up to a whole number of days, so is at least one day; by default
+#' those of onset_to_death); and optionally
 #' 'max_lag' (the longest such time allowed for, by default the 99.9th
 #' percentile), 'reporting' (a named list of the 'mean' and 'sd' of the delay
-#' from the day of death to those cases being reported; if absent this is the
+#' from the day of death to those cases being reported, or "recording" if
+#' they are reported after the delay from a death to its being recorded,
+#' which needs onset_to_death and is the default with it; if absent
+#' otherwise this is the
 #' reporting delay of other cases, counted from the day of death) and
 #' 'n_moves' (the number of changes proposed in each iteration, by default
 #' four for each onset time, or one in the exact form) and 'exact' (if TRUE,
 #' the fatal cases dated by onset and by death among those reported are
 #' followed separately, which is exact and slower; by default each fatal
 #' case recorded for a day is taken to be dated by death with a probability)
+#' @param onset_to_death NULL, or the element of that name of the result of
+#' \code{deaths_settings}: the time from onset to death of every fatal case
 #'
 #' @return NULL if no fatal cases are dated by death; otherwise the list with
-#' 'fraction' given for each onset time, defaults filled in and
+#' 'fraction' given for each onset time, defaults filled in,
 #' 'lag_probabilities' added (the probability of each time from onset to
-#' death, from one day to max_lag)
-dated_by_death_settings <- function(n_days, dated) {
+#' death, from one day to max_lag) and 'fraction_prior' (NULL if the fraction
+#' is known; otherwise a named list of 'alpha' and 'beta')
+dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
   if(is.null(dated))
     return(NULL)
+  if(!is.null(onset_to_death)) {
+    for(name in c("mean", "sd", "max_lag"))
+      if(is.null(dated[[name]]))
+        dated[[name]] <- onset_to_death[[name]]
+    if(is.null(dated$reporting))
+      dated$reporting <- "recording"
+  }
+  fraction_prior <- NULL
+  if(is.list(dated$fraction)) {
+    fraction_prior <- list(alpha=1, beta=1, initial=0.2)
+    unknown <- setdiff(names(dated$fraction), names(fraction_prior))
+    if(length(unknown) > 0)
+      stop(paste0("Unknown settings for the fraction dated by death: ",
+                  paste(unknown, collapse=", "), "."))
+    fraction_prior[names(dated$fraction)] <- dated$fraction
+    if(fraction_prior$alpha <= 0 | fraction_prior$beta <= 0)
+      stop("The parameters of the prior for the fraction dated by death must be positive.")
+    if(fraction_prior$initial <= 0 | fraction_prior$initial >= 1)
+      stop("The initial fraction dated by death must lie strictly between 0 and 1.")
+    dated$fraction <- fraction_prior$initial
+    fraction_prior$initial <- NULL
+  }
   unknown <- setdiff(names(dated),
                      c("fraction", "mean", "sd", "max_lag", "reporting", "n_moves",
                        "exact"))
@@ -47,7 +81,7 @@ dated_by_death_settings <- function(n_days, dated) {
     stop("The fraction dated by death must be a single value or one for each onset time.")
   if(any(is.na(fraction)) || any(fraction < 0 | fraction > 1))
     stop("The fraction dated by death must lie between 0 and 1.")
-  if(all(fraction == 0))
+  if(all(fraction == 0) & is.null(fraction_prior))
     return(NULL)
   if(is.null(dated$mean) || is.null(dated$sd) || dated$mean <= 0 || dated$sd <= 0)
     stop("A positive mean and sd of the time from onset to death must be given.")
@@ -59,8 +93,11 @@ dated_by_death_settings <- function(n_days, dated) {
   if(max_lag < 1)
     stop("max_lag must be at least one day.")
   reporting <- dated$reporting
-  if(!is.null(reporting) &&
-     (is.null(reporting$mean) || is.null(reporting$sd) ||
+  if(identical(reporting, "recording")) {
+    if(is.null(onset_to_death))
+      stop("Fatal cases dated by death can be reported after the delay from a death to its being recorded only if onset_to_death is supplied.")
+  } else if(!is.null(reporting) &&
+     (!is.list(reporting) || is.null(reporting$mean) || is.null(reporting$sd) ||
       reporting$mean <= 0 || reporting$sd <= 0))
     stop("The delay from death to being reported must have a positive mean and sd.")
   lag_probabilities <- diff(stats::pgamma(0:max_lag, shape=shape, rate=rate))
@@ -69,6 +106,7 @@ dated_by_death_settings <- function(n_days, dated) {
   if(is.null(n_moves))
     n_moves <- ifelse(is_exact, 1, 4) * n_days
   list(fraction=rep_len(fraction, n_days),
+       fraction_prior=fraction_prior,
        mean=dated$mean, sd=dated$sd,
        max_lag=max_lag,
        lag_probabilities=lag_probabilities / sum(lag_probabilities),
@@ -134,6 +172,12 @@ initial_dated_state <- function(state, dated, cases_before=NULL) {
     # there are no more of them than the deaths in the latest report
     n_dated <- min(round(dated$fraction[t] * fatal_recorded[t]),
                    utils::tail(state$reports[[t]]$deaths_reported, 1))
+    # where a death is recorded only after the time from onset to death, a
+    # death shown on the day itself must be that of a case dated by death
+    reports <- state$reports[[t]]
+    if(identical(dated$reporting, "recording") &&
+       any(reports$deaths_reported[reports$time_reported == state$onset_times[t]] > 0))
+      n_dated <- max(n_dated, 1)
     weights <- h * (seq_len(max_lag) < t)
     weight_inflow <- (inflow_weight[t] > 0) * sum(h[seq_len(max_lag) >= t])
     if(n_dated == 0 | sum(weights) + weight_inflow == 0)
@@ -429,12 +473,64 @@ deaths_dated_step <- function(state, cases_true, renewal) {
   list(state=state, cases_true=cases_true)
 }
 
+#' Updates the fraction of fatal cases which are dated by death
+#'
+#' Given how many of the fatal cases of each day of onset are dated by death,
+#' the fraction (one value for all onset times, with a beta prior) has a beta
+#' distribution but for the fatal cases recorded for the first days whose
+#' onset was before the first day, whose expected number is proportional to
+#' it. A value is drawn from the beta distribution with the same mode and
+#' curvature there as the distribution of the fraction, and is accepted with
+#' the Metropolis-Hastings probability.
+#'
+#' @inheritParams deaths_delay_by_onset
+#' @param n_steps the number of values proposed
+#'
+#' @return the state with element 'fraction' of its element 'dated' updated
+deaths_dated_fraction_step <- function(state, n_steps=2) {
+  dated <- state$dated
+  prior <- dated$fraction_prior
+  if(is.null(dated) || is.null(prior))
+    return(state)
+  n_dated <- sum(dated$out)
+  # log density: a log(f) + b log(1 - f) - rate f
+  a <- prior$alpha - 1 + n_dated + sum(dated$inflow)
+  b <- prior$beta - 1 + sum(state$deaths_true) - n_dated
+  rate <- sum(dated$inflow_weight) * state$cfr[1]
+  f_logp <- function(x) x_log_y(a, x) + x_log_y(b, 1 - x) - rate * x
+  shape_1 <- a + 1
+  shape_2 <- b + 1
+  if(rate > 0 & a > 0 & b > 0) {
+    mode <- (a + b + rate - sqrt((a + b + rate)^2 - 4 * rate * a)) / (2 * rate)
+    if(is.finite(mode) && mode > 0 && mode < 1) {
+      n <- (a / mode^2 + b / (1 - mode)^2) * mode * (1 - mode)
+      shape_1 <- mode * n + 1
+      shape_2 <- (1 - mode) * n + 1
+    }
+  }
+  f_weight <- function(x) f_logp(x) - stats::dbeta(x, shape_1, shape_2, log=TRUE)
+  current <- dated$fraction[1]
+  for(step in seq_len(n_steps)) {
+    proposed <- stats::rbeta(1, shape_1, shape_2)
+    if(proposed <= 0 | proposed >= 1)
+      next
+    log_ratio <- f_weight(proposed) - f_weight(current)
+    if(is.finite(log_ratio) && log(stats::runif(1)) < log_ratio)
+      current <- proposed
+  }
+  state$dated$fraction <- rep(current, length(dated$fraction))
+  state
+}
+
 #' The amount by which the cases recorded for each day exceed the true cases
 #' whose onset was on it
 #'
-#' In the exact form, a fatal case dated by death which is recorded for a day
-#' but is not yet in the reports is left out, so that an onset time taken to
-#' be fully reported keeps any such case.
+#' A fatal case dated by death which is recorded for a day but is not yet in
+#' the reports is left out, so that an onset time taken to be fully reported
+#' keeps any such case: in the exact form these are known, and otherwise no
+#' more of the cases dated by death are taken to be in the reports than the
+#' fatal cases which could have been shown as dead in the first report they
+#' were in.
 #'
 #' @inheritParams deaths_delay_by_onset
 #'
@@ -446,6 +542,11 @@ deaths_cases_offset <- function(state) {
   into <- state$dated$into
   if(state$dated$exact & !is.null(state$paths))
     into <- purrr::map_dbl(state$paths, ~sum(.$dated_new))
+  else if(!is.null(state$paths))
+    # no more of them can be in the reports than the fatal cases which could
+    # have been shown as dead in the first report they were in
+    into <- pmin(into, purrr::map_dbl(
+      state$paths, ~sum(pmin(.$fatal_new, pmax(.$deaths_new, 0)))))
   dplyr::tibble(time_onset=state$onset_times,
                 cases_offset=into - state$dated$out)
 }

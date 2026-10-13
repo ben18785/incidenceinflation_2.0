@@ -26,7 +26,9 @@ from onset to a death being recorded}
 a log-probability
 }
 \description{
-Where some fatal cases are reported when their death is recorded, the
-fatal cases newly reported in each report depend on the delay to a death
-being recorded too, and their probability is included.
+Where some fatal cases are reported when their death is recorded, or
+fatal cases dated by death are reported after the delay from a death to
+its being recorded, the fatal cases newly reported in each report depend
+on the delay to a death being recorded too, and their probability is
+included.
 }

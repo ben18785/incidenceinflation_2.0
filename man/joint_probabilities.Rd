@@ -30,7 +30,9 @@ from onset to a case being reported}
 onset to a death being recorded}
 
 \item{revision_parameters}{named list which can contain 'tail' and
-'report_multipliers' (see above); or NULL}
+'report_multipliers' (see above) and 'before' (a named list with element
+'lag_probabilities': the probability that the event from which the delay
+runs happens one day, two days, ... after onset); or NULL}
 
 \item{fraction_dated_by_death}{the fraction of the fatal cases recorded for
 the day which are dated by death}
@@ -38,7 +40,9 @@ the day which are dated by death}
 \item{dated_reporting_parameters}{named list of the 'mean' and 'sd' of the
 delay from death to being reported, for fatal cases recorded for their day
 of death; if NULL (the default) this is the delay of other fatal cases
-counted from onset}
+counted from onset; if "recording" it is the delay from a death to its
+being recorded (death_parameters, where recording_effects has an element
+'before': see \code{log_undetected_days})}
 
 \item{recording_effects}{a named list which can contain
 'report_multipliers' for the delay to a death being recorded, as

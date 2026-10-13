@@ -4,31 +4,42 @@
 \alias{dated_by_death_settings}
 \title{Settings for fatal cases which are recorded for their day of death}
 \usage{
-dated_by_death_settings(n_days, dated)
+dated_by_death_settings(n_days, dated, onset_to_death = NULL)
 }
 \arguments{
 \item{n_days}{number of onset times}
 
 \item{dated}{NULL, or a named list of: 'fraction' (the fraction of the
 fatal cases with onset on a day which are recorded for their day of death:
-a single value or one for each onset time); 'mean' and 'sd' (of the time
-from onset to death of those cases, which has a gamma distribution rounded
-up to a whole number of days, so is at least one day); and optionally
+a single value or one for each onset time if it is known; or, if it is to
+be estimated, a named list of 'alpha' and 'beta', the parameters of its
+beta prior, and optionally 'initial', the value to start from. An
+estimated fraction is the same for every onset time); 'mean' and 'sd' (of
+the time from onset to death of those cases, which has a gamma distribution
+rounded up to a whole number of days, so is at least one day; by default
+those of onset_to_death); and optionally
 'max_lag' (the longest such time allowed for, by default the 99.9th
 percentile), 'reporting' (a named list of the 'mean' and 'sd' of the delay
-from the day of death to those cases being reported; if absent this is the
+from the day of death to those cases being reported, or "recording" if
+they are reported after the delay from a death to its being recorded,
+which needs onset_to_death and is the default with it; if absent
+otherwise this is the
 reporting delay of other cases, counted from the day of death) and
 'n_moves' (the number of changes proposed in each iteration, by default
 four for each onset time, or one in the exact form) and 'exact' (if TRUE,
 the fatal cases dated by onset and by death among those reported are
 followed separately, which is exact and slower; by default each fatal
 case recorded for a day is taken to be dated by death with a probability)}
+
+\item{onset_to_death}{NULL, or the element of that name of the result of
+\code{deaths_settings}: the time from onset to death of every fatal case}
 }
 \value{
 NULL if no fatal cases are dated by death; otherwise the list with
-'fraction' given for each onset time, defaults filled in and
+'fraction' given for each onset time, defaults filled in,
 'lag_probabilities' added (the probability of each time from onset to
-death, from one day to max_lag)
+death, from one day to max_lag) and 'fraction_prior' (NULL if the fraction
+is known; otherwise a named list of 'alpha' and 'beta')
 }
 \description{
 Settings for fatal cases which are recorded for their day of death

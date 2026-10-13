@@ -37,6 +37,25 @@
 #' \code{reporting_changepoint_settings}, or FALSE for a delay which does not
 #' change); 'dated_by_death' (NULL, or what is supplied about fatal cases
 #' recorded for their day of death: see \code{dated_by_death_settings});
+#' 'onset_to_death' (NULL, or a named list of the 'mean' and 'sd' of the time
+#' from onset to death, which has a gamma distribution rounded up to a whole
+#' number of days, and optionally 'max_lag', the longest such time allowed
+#' for. If it is supplied, a death is recorded after that time plus a delay
+#' from the day of death, and it is this second delay which is estimated: the
+#' settings 'initial_delay', 'delay_prior' and 'delay_changepoints' then
+#' describe the delay from death to the death being recorded. Fatal cases
+#' recorded for their day of death, if any, are then given the same time from
+#' onset to death and are reported after that same delay from death, unless
+#' dated_by_death says otherwise); 'recording_tail' (FALSE, the default, or a
+#' named list which gives the delay to a death being recorded a heavier tail:
+#' a proportion of deaths are recorded after an exponential delay in place of
+#' the gamma one. Its elements are 'weight_alpha' and 'weight_beta', the
+#' parameters of the beta prior for that proportion, 'mean_mu' and
+#' 'mean_sigma', the mean and sd of the gamma prior for the mean of the
+#' exponential delay, 'initial', a named list of the 'weight' and 'mean' to
+#' start from, 'weight_step' and 'mean_step', the standard deviations of the
+#' changes proposed in the logit of the one and the log of the other, and
+#' 'n_steps'. With onset_to_death the delay is that from death);
 #' 'fatal_delay' (FALSE if fatal cases are reported as others are; otherwise
 #' a named list of 'probability_same', the prior probability that they are,
 #' 'sd', the standard deviation of the normal prior for the log of the ratio
@@ -67,6 +86,8 @@ deaths_settings <- function(n_days, settings=list()) {
     delay_prior=list(mean_mu=14, mean_sigma=10, sd_mu=8, sd_sigma=8),
     delay_changepoints=list(min_length=14),
     dated_by_death=NULL,
+    onset_to_death=NULL,
+    recording_tail=FALSE,
     fatal_delay=list(),
     triggered=FALSE,
     recording_weekday=NULL,
@@ -77,6 +98,26 @@ deaths_settings <- function(n_days, settings=list()) {
   if(length(unknown) > 0)
     stop(paste0("Unknown settings for deaths: ", paste(unknown, collapse=", "), "."))
   defaults[names(settings)] <- settings
+  if(!is.null(defaults$onset_to_death)) {
+    onset_to_death <- defaults$onset_to_death
+    unknown <- setdiff(names(onset_to_death), c("mean", "sd", "max_lag"))
+    if(length(unknown) > 0)
+      stop(paste0("Unknown settings for onset_to_death: ",
+                  paste(unknown, collapse=", "), "."))
+    if(is.null(onset_to_death$mean) || is.null(onset_to_death$sd) ||
+       onset_to_death$mean <= 0 || onset_to_death$sd <= 0)
+      stop("A positive mean and sd of the time from onset to death must be given.")
+    onset_to_death$lag_probabilities <- lag_probabilities_gamma(
+      onset_to_death$mean, onset_to_death$sd, onset_to_death$max_lag)
+    onset_to_death$max_lag <- length(onset_to_death$lag_probabilities)
+    defaults$onset_to_death <- onset_to_death
+    # the delay estimated is now that from death to the death being recorded
+    if(is.null(settings$initial_delay))
+      defaults$initial_delay <- list(mean=3, sd=2.5)
+    if(is.null(settings$delay_prior))
+      defaults$delay_prior <- list(mean_mu=4, mean_sigma=4, sd_mu=4, sd_sigma=4)
+  }
+  defaults$initial_delay <- lapply(defaults$initial_delay, as.numeric)
   if(defaults$cfr_alpha <= 0 | defaults$cfr_beta <= 0)
     stop("The parameters of the prior for the case fatality ratio must be positive.")
   if(defaults$alpha <= 0 | defaults$beta <= 0)
@@ -86,7 +127,8 @@ deaths_settings <- function(n_days, settings=list()) {
   if(defaults$initial_cfr <= 0 | defaults$initial_cfr >= 1)
     stop("The initial case fatality ratio must lie strictly between 0 and 1.")
   defaults["dated_by_death"] <- list(
-    dated_by_death_settings(n_days, defaults$dated_by_death))
+    dated_by_death_settings(n_days, defaults$dated_by_death,
+                            defaults$onset_to_death))
   if(!identical(defaults$fatal_delay, FALSE)) {
     fatal_delay <- list(probability_same=0.5, sd=0.5, step=0.1, n_steps=3)
     unknown <- setdiff(names(defaults$fatal_delay), names(fatal_delay))
@@ -113,9 +155,27 @@ deaths_settings <- function(n_days, settings=list()) {
       stop("The initial proportion of fatal cases reported when their death is recorded must lie strictly between 0 and 1.")
     if(triggered$step <= 0)
       stop("The standard deviation of the changes proposed in the proportion of fatal cases reported when their death is recorded must be positive.")
-    if(!is.null(defaults$dated_by_death))
-      stop("Fatal cases reported when their death is recorded cannot be combined with fatal cases dated by death.")
+    if(isTRUE(defaults$dated_by_death$exact))
+      stop("Fatal cases reported when their death is recorded cannot be combined with the exact form of fatal cases dated by death.")
     defaults$triggered <- triggered
+  }
+  if(!identical(defaults$recording_tail, FALSE)) {
+    tail <- list(weight_alpha=1, weight_beta=9, mean_mu=40, mean_sigma=20,
+                 initial=list(weight=0.1, mean=40), weight_step=0.3,
+                 mean_step=0.2, n_steps=2)
+    unknown <- setdiff(names(defaults$recording_tail), names(tail))
+    if(length(unknown) > 0)
+      stop(paste0("Unknown settings for recording_tail: ",
+                  paste(unknown, collapse=", "), "."))
+    tail[names(defaults$recording_tail)] <- defaults$recording_tail
+    if(any(unlist(tail[c("weight_alpha", "weight_beta", "mean_mu", "mean_sigma",
+                         "weight_step", "mean_step")]) <= 0))
+      stop("The parameters of the priors and the sizes of the steps for the tail of the delay to a death being recorded must be positive.")
+    tail$initial <- lapply(tail$initial[c("weight", "mean")], as.numeric)
+    if(length(tail$initial) != 2 || tail$initial$weight <= 0 ||
+       tail$initial$weight >= 1 || tail$initial$mean <= 0)
+      stop("The tail of the delay to a death being recorded must start from a weight strictly between 0 and 1 and a positive mean.")
+    defaults$recording_tail <- tail
   }
   if(defaults$wrong_dead_alpha <= 0 | defaults$wrong_dead_beta <= 0)
     stop("The parameters of the prior for the probability a wrong record is shown as dead must be positive.")
@@ -212,7 +272,9 @@ sample_cfr_changepoints <- function(deaths_true, cases_true, p_change,
 #' @param dated_reporting_parameters named list of the 'mean' and 'sd' of the
 #' delay from death to being reported, for fatal cases recorded for their day
 #' of death; if NULL (the default) this is the delay of other fatal cases
-#' counted from onset
+#' counted from onset; if "recording" it is the delay from a death to its
+#' being recorded (death_parameters, where recording_effects has an element
+#' 'before': see \code{log_undetected_days})
 #' @param recording_effects a named list which can contain
 #' 'report_multipliers' for the delay to a death being recorded, as
 #' revision_parameters can for the reporting delay; or NULL
@@ -228,7 +290,8 @@ sample_cfr_changepoints <- function(deaths_true, cases_true, p_change,
 #' 'log_recorded' (the death of a fatal case has not been recorded) and
 #' 'log_dated' (a fatal case recorded for its day of death has not been
 #' reported); 'is_dated_same' (whether the last is the same as the second);
-#' and 'triggered'
+#' 'is_dated_recording' (whether the last is the delay from a death to its
+#' being recorded); and 'triggered'
 joint_survivals <- function(days, day_onset, reporting_parameters,
                             death_parameters, revision_parameters=NULL,
                             dated_reporting_parameters=NULL,
@@ -241,13 +304,30 @@ joint_survivals <- function(days, day_onset, reporting_parameters,
     log_reported_fatal <- f(list(mean=reporting_parameters$mean * exp(nu),
                                  sd=reporting_parameters$sd * exp(nu)))
   is_dated_same <- is.null(dated_reporting_parameters)
+  is_dated_recording <- identical(dated_reporting_parameters, "recording")
   list(log_reported=log_reported,
        log_reported_fatal=log_reported_fatal,
        log_recorded=f(death_parameters, recording_effects),
        log_dated=if(is_dated_same) log_reported_fatal
+       else if(is_dated_recording)
+         f(death_parameters, effects_from_death(recording_effects))
        else f(dated_reporting_parameters),
        is_dated_same=is_dated_same,
+       is_dated_recording=is_dated_recording,
        triggered=triggered)
+}
+
+#' What alters the delay from a death to its being recorded, counted from the
+#' day of death
+#'
+#' @param recording_effects see \code{joint_survivals}
+#'
+#' @return recording_effects without its element 'before'
+effects_from_death <- function(recording_effects) {
+  recording_effects$before <- NULL
+  if(length(recording_effects) == 0)
+    return(NULL)
+  recording_effects
 }
 
 #' Probability that an event which had not happened by the report before has
@@ -278,7 +358,8 @@ survival_steps <- function(log_s) {
 #' for one of those cases, nor has the delay to its death being recorded. A
 #' fatal case newly reported is shown as alive only if it was reported through
 #' its own delay and its death has not been recorded, whichever kind it is.
-#' This cannot be combined with fatal cases dated by death.
+#' Where some fatal cases are also dated by death, these are reported after
+#' their own delay and shown as dead at once, as above.
 #'
 #' @param survivals as returned by \code{joint_survivals}
 #' @param fraction the fraction of the fatal cases recorded for the day which
@@ -322,8 +403,6 @@ mixed_probabilities <- function(survivals, fraction=0) {
   g <- share + (1 - share) * f_rows(-expm1(survivals$log_recorded))
   triggered <- survivals$triggered
   if(!is.null(triggered) && triggered > 0) {
-    if(any(fraction > 0))
-      stop("Fatal cases reported when their death is recorded cannot be combined with fatal cases dated by death.")
     # not reported: the reporting delay has not elapsed and, for a case
     # reported when its death is recorded, nor has that delay
     log_unreported <- log_fatal +
@@ -339,8 +418,28 @@ mixed_probabilities <- function(survivals, fraction=0) {
     # no fatal case can be newly reported
     is_undefined <- !is.finite(g_triggered)
     g_triggered[is_undefined] <- g[1, is_undefined]
-    p_fatal <- f_rows(steps_unreported)
-    g <- f_rows(g_triggered)
+    if(any(fraction > 0)) {
+      # each fatal case recorded for the day is one dated by death with a
+      # probability, and is otherwise as above
+      log_mixture <- matrix(
+        log_add_exp(outer(log1p(-fraction), log_unreported, "+"),
+                    outer(log(fraction), survivals$log_dated, "+")),
+        n, n_reports)
+      log_mixture_before <- cbind(rep(0, n), log_mixture[, -n_reports, drop=FALSE])
+      p_mixture <- -expm1(pmin(log_mixture - log_mixture_before, 0))
+      log_alive_new <- c(0, log_fatal[-n_reports]) + log(survival_steps(log_fatal)) +
+        survivals$log_recorded
+      g_mixture <- -expm1(pmin(
+        outer(log1p(-fraction), log_alive_new, "+") -
+          (log_mixture_before + log(p_mixture)), 0))
+      is_undefined <- !is.finite(g_mixture)
+      g_mixture[is_undefined] <- g[is_undefined]
+      p_fatal <- p_mixture
+      g <- g_mixture
+    } else {
+      p_fatal <- f_rows(steps_unreported)
+      g <- f_rows(g_triggered)
+    }
   }
   list(p=p,
        q=survival_steps(survivals$log_recorded),
@@ -1109,7 +1208,8 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
     deaths_true <- state$deaths_true[k]
     forward <- f_forward(deaths_true)
     if(!is.finite(forward$logp))
-      stop("The reports of cases and deaths are impossible given the true cases and deaths.")
+      stop(paste0("The reports of cases and deaths are impossible given the true cases and deaths (onset time ",
+                  state$onset_times[k], ")."))
     for(proposal in seq_len(n_proposals)) {
       proposed <- deaths_true + sample(c(-1, 1), 1) * sample.int(step_max, 1)
       if(proposed < dated$out[k] | proposed > cases_true[k])
@@ -1270,9 +1370,11 @@ deaths_reporting_day_logp <- function(state, k, cases_true, reporting_parameters
   if(nu != 0)
     survivals$log_reported_fatal <- f(list(mean=reporting_parameters$mean * exp(nu),
                                            sd=reporting_parameters$sd * exp(nu)))
+  # where fatal cases dated by death are reported after the delay from a
+  # death to its being recorded, the reporting delay does not alter that
   if(survivals$is_dated_same)
     survivals$log_dated <- survivals$log_reported_fatal
-  else
+  else if(!isTRUE(survivals$is_dated_recording))
     survivals$log_dated <- f(state$dated$reporting)
   is_triggered <- !is.null(triggered) && triggered > 0
   survivals$triggered <- if(is_triggered) triggered else 0
@@ -1353,9 +1455,11 @@ deaths_reporting_logp_function <- function(state, cases_true,
 #' Log-probability of the deaths newly shown in the reports of one onset
 #' time, given how many of the cases in each report are fatal
 #'
-#' Where some fatal cases are reported when their death is recorded, the
-#' fatal cases newly reported in each report depend on the delay to a death
-#' being recorded too, and their probability is included.
+#' Where some fatal cases are reported when their death is recorded, or
+#' fatal cases dated by death are reported after the delay from a death to
+#' its being recorded, the fatal cases newly reported in each report depend
+#' on the delay to a death being recorded too, and their probability is
+#' included.
 #'
 #' @inheritParams deaths_reporting_day_logp
 #' @param death_parameters named list of the 'mean' and 'sd' of the delay
@@ -1371,7 +1475,13 @@ deaths_recording_day_logp <- function(state, k, death_parameters,
   survivals$log_recorded <- log_undetected_days(
     state$reports[[k]]$time_reported, state$onset_times[k], death_parameters,
     recording_effects)
-  if(!is.null(survivals$triggered) && survivals$triggered > 0)
+  is_dated_recording <- isTRUE(survivals$is_dated_recording)
+  if(is_dated_recording)
+    survivals$log_dated <- log_undetected_days(
+      state$reports[[k]]$time_reported, state$onset_times[k], death_parameters,
+      effects_from_death(recording_effects))
+  if((!is.null(survivals$triggered) && survivals$triggered > 0) |
+     (is_dated_recording & dated$into > 0))
     return(fatal_reports_logp(path, survivals, dated$fatal_recorded, dated$into))
   probabilities <- path_probabilities(
     survivals, ifelse(dated$fatal_recorded > 0 & !isTRUE(path$is_exact),
@@ -1421,6 +1531,7 @@ deaths_parameters_step <- function(state, cases_true, settings) {
     deaths_recording_logp_function(state),
     n_days, settings$delay_prior, settings$delay_changepoints)
   state <- deaths_recording_weekday_step(state, settings)
+  state <- deaths_recording_tail_step(state, settings$recording_tail)
 
   sampled <- sample_cfr_changepoints(
     state$deaths_true, cases_true, state$p_change, settings$min_length,
@@ -1445,7 +1556,9 @@ deaths_parameters_step <- function(state, cases_true, settings) {
 #' 'deaths_parameters' (a single row, which includes 'fatal_delay_ratio', the
 #' ratio of the reporting delay of fatal cases to that of others,
 #' 'triggered', the proportion of fatal cases which are reported when their
-#' death is recorded if not before, 'wrong_dead', the probability a wrong record is shown as dead, and the
+#' death is recorded if not before, 'dated_fraction', the fraction of fatal
+#' cases which are recorded for their day of death (that of the first onset
+#' time, if it differs between them), 'wrong_dead', the probability a wrong record is shown as dead, and the
 #' effect of each day of the week on the delay to a death being recorded)
 deaths_draws <- function(state, iteration) {
   delays <- deaths_delay_by_onset(state)
@@ -1460,7 +1573,12 @@ deaths_draws <- function(state, iteration) {
     delay_spread=state$recording$spread,
     fatal_delay_ratio=exp(state$nu),
     triggered=ifelse(is.null(state$triggered), 0, state$triggered),
+    dated_fraction=ifelse(is.null(state$dated), 0, state$dated$fraction[1]),
     wrong_dead=state$delta)
+  if(!is.null(state$recording_effects$tail)) {
+    parameters$recording_tail_weight <- state$recording_effects$tail$weight
+    parameters$recording_tail_mean <- state$recording_effects$tail$mean
+  }
   for(weekday in names(state$recording_effects$weekday_log_effects))
     parameters[[paste0("recording_weekday_", weekday)]] <-
       exp(state$recording_effects$weekday_log_effects[[weekday]])
@@ -1512,9 +1630,18 @@ deaths_draws <- function(state, iteration) {
 #' @param dated_by_death an optional named list of 'fraction' (the fraction of
 #' fatal cases which are recorded for their day of death), 'mean' and 'sd' (of
 #' the gamma-distributed time from onset to death of those cases, which is
-#' rounded up to a whole number of days) and, optionally, 'reporting' (a named
-#' list of the 'mean' and 'sd' of the delay from the day of death to those
-#' cases being reported)
+#' rounded up to a whole number of days; not needed with onset_to_death) and,
+#' optionally, 'reporting' (a named list of the 'mean' and 'sd' of the delay
+#' from the day of death to those cases being reported; with onset_to_death
+#' the default is instead the delay from a death to its being recorded)
+#' @param onset_to_death an optional named list of the 'mean' and 'sd' of the
+#' gamma-distributed time from onset to death of every fatal case, which is
+#' rounded up to a whole number of days. death_parameters is then the delay
+#' from the day of death to the death being recorded (needs death_from
+#' "onset")
+#' @param recording_tail an optional named list of 'weight' and 'mean': that
+#' proportion of deaths are recorded after an exponential delay with that
+#' mean, in place of the delay of death_parameters
 #' @param wrong an optional named list of 'eta', 'rho' and 'delta', which adds
 #' wrong records to the reports. On each day after the day for which cases
 #' are recorded, a Poisson number of wrong records is entered, with mean eta
@@ -1547,8 +1674,11 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
                                   fatal_reporting_parameters=NULL,
                                   death_from=c("onset", "report"),
                                   dated_by_death=NULL, wrong=NULL,
-                                  correction=NULL, triggered=0) {
+                                  correction=NULL, triggered=0,
+                                  onset_to_death=NULL, recording_tail=NULL) {
   death_from <- match.arg(death_from)
+  if(!is.null(onset_to_death) & death_from == "report")
+    stop("A time from onset to death needs death_from 'onset'.")
   if(triggered < 0 | triggered > 1)
     stop("The proportion of fatal cases reported when their death is recorded must lie between 0 and 1.")
   if(triggered > 0 & death_from == "report")
@@ -1573,6 +1703,14 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
     stop("There must be a case fatality ratio for each onset time.")
   f_delay <- function(mean, sd)
     stats::rgamma(length(mean), shape=mean^2 / sd^2, rate=mean / sd^2)
+  # a proportion of deaths are recorded after an exponential delay
+  f_tail <- function(delay) {
+    if(is.null(recording_tail))
+      return(delay)
+    is_tail <- stats::runif(length(delay)) < recording_tail$weight
+    delay[is_tail] <- stats::rexp(sum(is_tail), 1 / recording_tail$mean)
+    delay
+  }
 
   # one row for each case
   cases_by_onset <- cases_true
@@ -1591,25 +1729,43 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
   is_fatal <- stats::runif(n) < cfr[source]
   is_dated_by_death <- rep(FALSE, n)
   day <- onset
+  days_to_death <- NULL
+  if(!is.null(onset_to_death))
+    days_to_death <- ceiling(f_delay(rep(onset_to_death$mean, n),
+                                     rep(onset_to_death$sd, n)))
   if(!is.null(dated_by_death)) {
     is_dated_by_death <- is_fatal & stats::runif(n) < dated_by_death$fraction
-    time_to_death <- f_delay(rep(dated_by_death$mean, n), rep(dated_by_death$sd, n))
+    days_dated <- days_to_death
+    if(!is.null(dated_by_death$mean))
+      days_dated <- ceiling(f_delay(rep(dated_by_death$mean, n),
+                                    rep(dated_by_death$sd, n)))
+    if(is.null(days_dated))
+      stop("The time from onset to death of fatal cases dated by death must be given.")
     # rounded up, so that a case dated by its death is at least a day late
     day[is_dated_by_death] <- onset[is_dated_by_death] +
-      ceiling(time_to_death[is_dated_by_death])
+      days_dated[is_dated_by_death]
   }
   # delays are counted from the day for which the case is recorded
   delay_reported <- ifelse(
     is_fatal,
     f_delay(fatal_reporting$mean[source], fatal_reporting$sd[source]),
     f_delay(reporting$mean[source], reporting$sd[source]))
-  if(!is.null(dated_by_death$reporting)) {
+  if(is.list(dated_by_death$reporting)) {
     n_dated <- sum(is_dated_by_death)
     delay_reported[is_dated_by_death] <- f_delay(
       rep(dated_by_death$reporting$mean, n_dated),
       rep(dated_by_death$reporting$sd, n_dated))
+  } else if(!is.null(onset_to_death) & any(is_dated_by_death)) {
+    # reported after the delay from a death to its being recorded, which is
+    # that of the day the case is recorded for
+    day_dated <- pmin(day[is_dated_by_death], n_days)
+    delay_reported[is_dated_by_death] <- f_tail(f_delay(death$mean[day_dated],
+                                                        death$sd[day_dated]))
   }
   delay_recorded <- f_delay(death$mean[source], death$sd[source])
+  delay_recorded <- f_tail(delay_recorded)
+  if(!is.null(onset_to_death))
+    delay_recorded <- days_to_death + delay_recorded
   if(death_from == "report")
     delay_recorded <- delay_reported + delay_recorded
   if(triggered > 0) {

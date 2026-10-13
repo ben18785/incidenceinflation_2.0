@@ -23,6 +23,25 @@ the 'mean' and 'sd' of the delay from onset to a death being reported);
 \code{reporting_changepoint_settings}, or FALSE for a delay which does not
 change); 'dated_by_death' (NULL, or what is supplied about fatal cases
 recorded for their day of death: see \code{dated_by_death_settings});
+'onset_to_death' (NULL, or a named list of the 'mean' and 'sd' of the time
+from onset to death, which has a gamma distribution rounded up to a whole
+number of days, and optionally 'max_lag', the longest such time allowed
+for. If it is supplied, a death is recorded after that time plus a delay
+from the day of death, and it is this second delay which is estimated: the
+settings 'initial_delay', 'delay_prior' and 'delay_changepoints' then
+describe the delay from death to the death being recorded. Fatal cases
+recorded for their day of death, if any, are then given the same time from
+onset to death and are reported after that same delay from death, unless
+dated_by_death says otherwise); 'recording_tail' (FALSE, the default, or a
+named list which gives the delay to a death being recorded a heavier tail:
+a proportion of deaths are recorded after an exponential delay in place of
+the gamma one. Its elements are 'weight_alpha' and 'weight_beta', the
+parameters of the beta prior for that proportion, 'mean_mu' and
+'mean_sigma', the mean and sd of the gamma prior for the mean of the
+exponential delay, 'initial', a named list of the 'weight' and 'mean' to
+start from, 'weight_step' and 'mean_step', the standard deviations of the
+changes proposed in the logit of the one and the log of the other, and
+'n_steps'. With onset_to_death the delay is that from death);
 'fatal_delay' (FALSE if fatal cases are reported as others are; otherwise
 a named list of 'probability_same', the prior probability that they are,
 'sd', the standard deviation of the normal prior for the log of the ratio

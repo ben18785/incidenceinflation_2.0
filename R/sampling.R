@@ -1434,6 +1434,12 @@ mcmc_single <- function(
         snapshot_with_Rt_index_df$time_reported,
         ifelse(is.null(initial_revision_parameters$weekday_first), 1,
                initial_revision_parameters$weekday_first))
+    if(!identical(deaths_options$recording_tail, FALSE))
+      deaths_state$recording_effects$tail <- deaths_options$recording_tail$initial
+    # a death is recorded after the time from onset to death and then a delay
+    if(!is.null(deaths_options$onset_to_death))
+      deaths_state$recording_effects$before <- deaths_options$onset_to_death[
+        "lag_probabilities"]
     if(is_reporting_extensions) {
       if(is.null(deaths$settings$weekday_sd))
         deaths_options$weekday_sd <- priors_reporting$weekday_sd
@@ -1604,7 +1610,7 @@ mcmc_single <- function(
             deaths_Rt_df$Rt[match(deaths_state$onset_times, deaths_Rt_df$time_onset)],
             overdispersion_current, is_negative_binomial, serial_parameters,
             serial_max, cases_before))
-        deaths_state <- deaths_dated$state
+        deaths_state <- deaths_dated_fraction_step(deaths_dated$state)
         df_running$cases_true <- deaths_dated$cases_true[
           match(df_running$time_onset, deaths_state$onset_times)]
       }

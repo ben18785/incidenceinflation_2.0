@@ -93,7 +93,7 @@ uncorrected_state <- function(state, nu=state$nu) {
                   "cfr", "paths", "survivals", "wrong_units", "wrong")],
     list(delays=deaths_delay_by_onset(state)[uncorrected$day, ],
          recording_effects=state$recording_effects,
-         nu=nu, delta=state$delta, dated=NULL))
+         nu=nu, triggered=state$triggered, delta=state$delta, dated=NULL))
 }
 
 #' Rows of the reporting delay by onset time for the uncorrected series

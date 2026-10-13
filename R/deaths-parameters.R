@@ -157,6 +157,44 @@ deaths_fatal_delay_step <- function(state, cases_true, reporting_by_onset,
   state
 }
 
+#' Updates the proportion of fatal cases which are reported when their death
+#' is recorded, if they have not been reported by then
+#'
+#' The proportion has a beta prior and is updated by Metropolis steps on the
+#' logit scale, given how many of the cases in each report are fatal.
+#'
+#' @inheritParams deaths_paths_step
+#' @param triggered the element of that name of the result of
+#' \code{deaths_settings}; nothing is done if it is FALSE
+#'
+#' @return the state with element 'triggered' updated
+deaths_triggered_step <- function(state, cases_true, reporting_by_onset,
+                                  revision_parameters=NULL, triggered) {
+  if(identical(triggered, FALSE) | is.null(triggered))
+    return(state)
+  f_logp <- function(value)
+    deaths_reporting_logp(state, cases_true, reporting_by_onset,
+                          revision_parameters, is_fatal_only=TRUE,
+                          triggered=value) +
+    stats::dbeta(value, triggered$alpha, triggered$beta, log=TRUE) +
+    # Jacobian of the transformation to the logit scale
+    log(value) + log(1 - value)
+  value <- state$triggered
+  logp <- f_logp(value)
+  for(step in seq_len(triggered$n_steps)) {
+    proposed <- stats::plogis(stats::rnorm(1, stats::qlogis(value), triggered$step))
+    if(proposed <= 0 | proposed >= 1)
+      next
+    logp_proposed <- f_logp(proposed)
+    if(is.finite(logp_proposed) && log(stats::runif(1)) < logp_proposed - logp) {
+      value <- proposed
+      logp <- logp_proposed
+    }
+  }
+  state$triggered <- value
+  state
+}
+
 #' Updates the parameters governing wrong records
 #'
 #' Given the wrong records entered and removed between reports: the
@@ -323,8 +361,9 @@ deaths_tail_step <- function(state, cases_true, reporting_by_onset,
 #' itself
 #'
 #' These are the parameters governing wrong records, the effects of the day
-#' of the week on the reporting delay, its heavier tail and the ratio of the reporting delay of
-#' fatal cases to that of others. What is held about the delays of each onset
+#' of the week on the reporting delay, its heavier tail, the ratio of the reporting delay of
+#' fatal cases to that of others and the proportion of fatal cases which are
+#' reported when their death is recorded. What is held about the delays of each onset
 #' time is then recalculated.
 #'
 #' @inheritParams deaths_wrong_step
@@ -345,6 +384,8 @@ deaths_reporting_effects_step <- function(state, cases_true, reporting_by_onset,
                                           revision_parameters, settings)
   state <- deaths_fatal_delay_step(state, cases_true, reporting_by_onset,
                                    revision_parameters, settings$fatal_delay)
+  state <- deaths_triggered_step(state, cases_true, reporting_by_onset,
+                                 revision_parameters, settings$triggered)
   list(state=deaths_refresh_survivals(state, reporting_by_onset,
                                       revision_parameters),
        revision_parameters=revision_parameters)

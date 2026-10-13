@@ -26,6 +26,7 @@ from onset to a death being recorded}
 a log-probability
 }
 \description{
-Log-probability of the deaths newly shown in the reports of one onset
-time, given how many of the cases in each report are fatal
+Where some fatal cases are reported when their death is recorded, the
+fatal cases newly reported in each report depend on the delay to a death
+being recorded too, and their probability is included.
 }

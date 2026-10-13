@@ -14,7 +14,8 @@ simulate_cases_deaths(
   death_from = c("onset", "report"),
   dated_by_death = NULL,
   wrong = NULL,
-  correction = NULL
+  correction = NULL,
+  triggered = 0
 )
 }
 \arguments{
@@ -61,6 +62,10 @@ correction), 'missing' (the probability a case is absent from every report
 before the correction) and 'misdated' (the probability a case is recorded,
 before the correction, for another of the onset times corrected, up to
 three days away). The truth returned is not altered by these.}
+
+\item{triggered}{the proportion of fatal cases which are reported when
+their death is recorded, if they have not been reported by then (needs
+death_from "onset"; fatal cases dated by death are not affected)}
 }
 \value{
 a named list of 'snapshots' (a tibble with columns time_onset,

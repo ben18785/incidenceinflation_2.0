@@ -43,7 +43,8 @@ a named list of the updated 'state' and 'revision_parameters'
 }
 \description{
 These are the parameters governing wrong records, the effects of the day
-of the week on the reporting delay, its heavier tail and the ratio of the reporting delay of
-fatal cases to that of others. What is held about the delays of each onset
+of the week on the reporting delay, its heavier tail, the ratio of the reporting delay of
+fatal cases to that of others and the proportion of fatal cases which are
+reported when their death is recorded. What is held about the delays of each onset
 time is then recalculated.
 }

@@ -18,7 +18,8 @@ ratio, the delay from onset to a death being recorded, the fatal cases
 recorded for the day and how many of those are dated by death) and
 'deaths_parameters' (a single row, which includes 'fatal_delay_ratio', the
 ratio of the reporting delay of fatal cases to that of others,
-'wrong_dead', the probability a wrong record is shown as dead, and the
+'triggered', the proportion of fatal cases which are reported when their
+death is recorded if not before, 'wrong_dead', the probability a wrong record is shown as dead, and the
 effect of each day of the week on the delay to a death being recorded)
 }
 \description{

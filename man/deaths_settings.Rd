@@ -27,7 +27,13 @@ recorded for their day of death: see \code{dated_by_death_settings});
 a named list of 'probability_same', the prior probability that they are,
 'sd', the standard deviation of the normal prior for the log of the ratio
 of the two delays if they are not, 'step', the standard deviation of the
-changes proposed in it, and 'n_steps'); 'recording_weekday' (whether the
+changes proposed in it, and 'n_steps'); 'triggered' (FALSE, the default,
+if a death never brings about the report of its case; otherwise a named
+list of 'alpha' and 'beta', the parameters of the beta prior for the
+proportion of fatal cases which are reported when their death is recorded
+if not before, 'initial', the value to start from, 'step', the standard
+deviation of the changes proposed in its logit, and 'n_steps');
+'recording_weekday' (whether the
 delay to a death being recorded has its own effects of the day of the
 week: by default it does if the reporting delay has them);
 'wrong_dead_alpha' and 'wrong_dead_beta' (parameters of the beta prior for

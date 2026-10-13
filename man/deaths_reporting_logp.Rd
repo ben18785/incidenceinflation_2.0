@@ -10,7 +10,8 @@ deaths_reporting_logp(
   reporting_by_onset,
   revision_parameters = NULL,
   nu = state$nu,
-  is_fatal_only = FALSE
+  is_fatal_only = FALSE,
+  triggered = state$triggered
 )
 }
 \arguments{
@@ -30,6 +31,9 @@ reporting delay (see \code{log_undetected_days})}
 that of others}
 
 \item{is_fatal_only}{if TRUE only the parts for fatal cases are included}
+
+\item{triggered}{the proportion of fatal cases which are reported when
+their death is recorded, if they have not been reported by then}
 }
 \value{
 a log-probability

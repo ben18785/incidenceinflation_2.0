@@ -14,7 +14,8 @@ joint_probabilities(
   fraction_dated_by_death = 0,
   dated_reporting_parameters = NULL,
   recording_effects = NULL,
-  nu = 0
+  nu = 0,
+  triggered = 0
 )
 }
 \arguments{
@@ -45,6 +46,9 @@ revision_parameters can for the reporting delay; or NULL}
 
 \item{nu}{the log of the ratio of the reporting delay of fatal cases to
 that of others (both its mean and its sd)}
+
+\item{triggered}{the proportion of fatal cases which are reported when
+their death is recorded, if they have not been reported by then}
 }
 \value{
 a named list of vectors with an element for each report: 'p' (the

@@ -13,7 +13,8 @@ joint_survivals(
   revision_parameters = NULL,
   dated_reporting_parameters = NULL,
   recording_effects = NULL,
-  nu = 0
+  nu = 0,
+  triggered = 0
 )
 }
 \arguments{
@@ -41,14 +42,19 @@ revision_parameters can for the reporting delay; or NULL}
 
 \item{nu}{the log of the ratio of the reporting delay of fatal cases to
 that of others (both its mean and its sd)}
+
+\item{triggered}{the proportion of fatal cases which are reported when
+their death is recorded, if they have not been reported by then}
 }
 \value{
 a named list of vectors with an element for each report:
 'log_reported' (a case which is not fatal has not been reported),
-'log_reported_fatal' (a fatal case dated by onset has not been reported),
+'log_reported_fatal' (a fatal case dated by onset has not been reported
+through its own reporting delay),
 'log_recorded' (the death of a fatal case has not been recorded) and
 'log_dated' (a fatal case recorded for its day of death has not been
-reported); and 'is_dated_same' (whether the last is the same as the second)
+reported); 'is_dated_same' (whether the last is the same as the second);
+and 'triggered'
 }
 \description{
 Logs of the probabilities that the events of the cases recorded for one

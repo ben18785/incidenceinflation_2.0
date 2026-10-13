@@ -13,7 +13,8 @@ deaths_reporting_day_logp(
   reporting_parameters,
   revision_parameters = NULL,
   nu = state$nu,
-  is_fatal_only = FALSE
+  is_fatal_only = FALSE,
+  triggered = state$triggered
 )
 }
 \arguments{
@@ -35,6 +36,9 @@ reporting delay (see \code{log_undetected_days})}
 that of others}
 
 \item{is_fatal_only}{if TRUE only the parts for fatal cases are included}
+
+\item{triggered}{the proportion of fatal cases which are reported when
+their death is recorded, if they have not been reported by then}
 }
 \value{
 a log-probability
@@ -44,5 +48,8 @@ This is the probability of the fatal and other cases newly reported in
 each report, of the wrong records entered and removed and, where fatal
 cases dated by death have their own delay, of the deaths newly shown
 (since that delay and the reporting delay together decide how many of the
-fatal cases newly reported are dated by death).
+fatal cases newly reported are dated by death). The deaths newly shown
+are included too where some fatal cases are reported when their death is
+recorded, since the reporting delay then helps decide which fatal cases
+are shown as dead in the first report they appear in.
 }

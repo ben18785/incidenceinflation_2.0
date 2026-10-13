@@ -314,3 +314,20 @@ test_that("cases dated by death which cannot be in the reports are kept", {
   state$paths <- NULL
   expect_equal(deaths_cases_offset(state)$cases_offset, c(0, 2))
 })
+
+test_that("simulated proportions can differ between onset times", {
+  set.seed(6)
+  cases <- rep(600, 30)
+  sim <- simulate_cases_deaths(cases, 1:60, list(mean=6, sd=4), 1,
+                               list(mean=3, sd=2.5),
+                               onset_to_death=list(mean=9.3, sd=5.5),
+                               dated_by_death=list(fraction=rep(c(0, 0.6), each=15)),
+                               triggered=rep(c(0.8, 0), each=15))
+  # none of the first fifteen onset times are dated by death
+  expect_equal(sim$truth$cases_true[1], 600)
+  expect_equal(sum(sim$truth$n_dated_by_death[1:16]), 0)
+  expect_gt(sum(sim$truth$n_dated_by_death), 0)
+  expect_error(simulate_cases_deaths(cases, 1:60, list(mean=6, sd=4), 1,
+                                     list(mean=3, sd=2.5), triggered=c(0.1, 0.2)),
+               "single value or one for each onset time")
+})

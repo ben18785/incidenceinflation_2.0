@@ -1625,10 +1625,12 @@ deaths_draws <- function(state, iteration) {
 #' recorded runs from onset independently of when the case is reported, or
 #' "report" if it runs from when the case is reported
 #' @param triggered the proportion of fatal cases which are reported when
-#' their death is recorded, if they have not been reported by then (needs
+#' their death is recorded, if they have not been reported by then: a single
+#' value or one for each onset time (needs
 #' death_from "onset"; fatal cases dated by death are not affected)
 #' @param dated_by_death an optional named list of 'fraction' (the fraction of
-#' fatal cases which are recorded for their day of death), 'mean' and 'sd' (of
+#' fatal cases which are recorded for their day of death: a single value or
+#' one for each onset time), 'mean' and 'sd' (of
 #' the gamma-distributed time from onset to death of those cases, which is
 #' rounded up to a whole number of days; not needed with onset_to_death) and,
 #' optionally, 'reporting' (a named list of the 'mean' and 'sd' of the delay
@@ -1679,9 +1681,9 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
   death_from <- match.arg(death_from)
   if(!is.null(onset_to_death) & death_from == "report")
     stop("A time from onset to death needs death_from 'onset'.")
-  if(triggered < 0 | triggered > 1)
+  if(any(triggered < 0 | triggered > 1))
     stop("The proportion of fatal cases reported when their death is recorded must lie between 0 and 1.")
-  if(triggered > 0 & death_from == "report")
+  if(any(triggered > 0) & death_from == "report")
     stop("Fatal cases reported when their death is recorded need death_from 'onset'.")
   n_days <- length(cases_true)
   f_expand <- function(parameters) {
@@ -1727,6 +1729,14 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
   onset <- c(onset, rep(0, length(source) - n_genuine))
   n <- length(onset)
   is_fatal <- stats::runif(n) < cfr[source]
+  # a proportion which is the same for all onset times or differs between them
+  f_by_onset <- function(x) {
+    if(length(x) == 1)
+      return(rep(x, n))
+    if(length(x) != n_days)
+      stop("A proportion must be a single value or one for each onset time.")
+    x[source]
+  }
   is_dated_by_death <- rep(FALSE, n)
   day <- onset
   days_to_death <- NULL
@@ -1734,7 +1744,8 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
     days_to_death <- ceiling(f_delay(rep(onset_to_death$mean, n),
                                      rep(onset_to_death$sd, n)))
   if(!is.null(dated_by_death)) {
-    is_dated_by_death <- is_fatal & stats::runif(n) < dated_by_death$fraction
+    is_dated_by_death <- is_fatal &
+      stats::runif(n) < f_by_onset(dated_by_death$fraction)
     days_dated <- days_to_death
     if(!is.null(dated_by_death$mean))
       days_dated <- ceiling(f_delay(rep(dated_by_death$mean, n),
@@ -1768,9 +1779,10 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
     delay_recorded <- days_to_death + delay_recorded
   if(death_from == "report")
     delay_recorded <- delay_reported + delay_recorded
-  if(triggered > 0) {
+  if(any(triggered > 0)) {
     # the death brings about the report if the case has not been reported
-    is_triggered <- is_fatal & !is_dated_by_death & stats::runif(n) < triggered
+    is_triggered <- is_fatal & !is_dated_by_death &
+      stats::runif(n) < f_by_onset(triggered)
     delay_reported[is_triggered] <- pmin(delay_reported, delay_recorded)[is_triggered]
   }
   delay_dead <- ifelse(is_dated_by_death, delay_reported,

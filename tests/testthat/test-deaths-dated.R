@@ -58,8 +58,16 @@ test_that("initial_dated_state gives counts by day of onset which are consistent
   # about the fraction supplied of the fatal cases recorded are dated by death
   counts <- dated_counts(test$state)
   expect_true(abs(sum(counts$into[5:25]) / sum(counts$fatal_recorded[5:25]) - 0.4) < 0.05)
+  # before the reports have been gone through, every case dated by death is
+  # taken to be in them; afterwards, no more than could have been shown as
+  # dead in the first report they were in
+  without_paths <- test$state
+  without_paths["paths"] <- list(NULL)
+  expect_equal(deaths_cases_offset(without_paths)$cases_offset,
+               dated$into - dated$out)
   offset <- deaths_cases_offset(test$state)
-  expect_equal(offset$cases_offset, dated$into - dated$out)
+  expect_true(all(offset$cases_offset <= dated$into - dated$out))
+  expect_true(all(offset$cases_offset >= -dated$out))
 
   # with earlier cases, some recorded for the first days had onset before them
   set.seed(12)

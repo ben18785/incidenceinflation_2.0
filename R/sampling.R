@@ -1225,6 +1225,18 @@ metropolis_step_revisions <- function(
 #' is written. Defaults to 50.
 #' @param fixed_cases if TRUE, the true cases are held at initial_cases_true
 #' throughout and everything else is sampled given them. Defaults to FALSE.
+#' @param return_state if TRUE, the result has an element 'state' from which
+#' sampling can be taken up again, and 'iterations_done'. Defaults to FALSE.
+#' @param resume_from the 'state' returned by an earlier call. Sampling
+#' carries on from where that call stopped, as if it had not stopped: the
+#' draws are those which the earlier call would have gone on to make. All
+#' other arguments must be as in the earlier call, apart from niterations
+#' (the number of further iterations), time_limit and those for progress;
+#' the starting values are not used. The iterations returned are numbered
+#' on from those of the earlier call.
+#' @param time_limit an optional number of minutes after which sampling
+#' stops at the end of the iteration under way, returning the draws made so
+#' far (and the state, as with return_state).
 #' @return a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters;
 #' and "revisions" if initial_revision_parameters is supplied
 #' @importFrom rlang .data
@@ -1251,8 +1263,16 @@ mcmc_single <- function(
   deaths=NULL,
   progress_file=NULL,
   progress_every=50,
-  fixed_cases=FALSE) {
+  fixed_cases=FALSE,
+  return_state=FALSE,
+  resume_from=NULL,
+  time_limit=NULL) {
 
+  if(!is.null(time_limit) && (!is.numeric(time_limit) || time_limit <= 0))
+    stop("time_limit must be a positive number of minutes.")
+  if(!is.null(resume_from) &&
+     !all(c("variables", "seed", "iterations", "check") %in% names(resume_from)))
+    stop("resume_from must be the 'state' returned by an earlier call.")
   if(fixed_cases & (maximise | !condition_on_future_cases))
     stop("fixed_cases needs maximise FALSE and condition_on_future_cases TRUE.")
   if(!is.null(progress_file) && progress_every < 1)
@@ -1535,6 +1555,22 @@ mcmc_single <- function(
   }
 
   max_cases <- priors$max_cases
+
+  # taking sampling up where an earlier call stopped: everything which is
+  # carried from one iteration to the next is put back as it was, with the
+  # state of the random number generator
+  state_check <- c(nrow(snapshot_with_Rt_index_df),
+                   sum(snapshot_with_Rt_index_df$cases_reported),
+                   if(is_deaths) sum(deaths$snapshot$deaths_reported))
+  iteration_offset <- 0
+  if(!is.null(resume_from)) {
+    if(!isTRUE(all.equal(resume_from$check, state_check)))
+      stop("resume_from is the state of a fit to different reports.")
+    list2env(resume_from$variables, envir=environment())
+    assign(".Random.seed", resume_from$seed, envir=globalenv())
+    iteration_offset <- resume_from$iterations
+  }
+  iterations_done <- niterations
 
   k <- 1
   for(i in 1:niterations) {
@@ -2003,9 +2039,15 @@ mcmc_single <- function(
       cat(paste(" // Execution time:", tolower(as.character(time)),
                 " // Estimated time remaining:", tolower(as.character(remaining))), "")
     }
+
+    if(!is.null(time_limit) &&
+       as.numeric(Sys.time() - time_started, units="mins") >= time_limit) {
+      iterations_done <- i
+      break
+    }
   }
 
-  Rt_samples <- Rt_samples %>%
+  Rt_samples <- Rt_samples[seq_len(k - 1), , drop=FALSE] %>%
     as.data.frame()
   colnames(Rt_samples) <- c("iteration", "Rt_index", "Rt")
   if(is_Rt_changepoints)
@@ -2056,6 +2098,32 @@ mcmc_single <- function(
     list_results$deaths_parameters <- dplyr::bind_rows(deaths_parameters_samples)
     if(is_uncorrected)
       list_results$deaths_uncorrected <- dplyr::bind_rows(uncorrected_samples)
+  }
+
+  # iterations are numbered on from those of the call being taken up
+  if(iteration_offset > 0)
+    list_results <- lapply(list_results, function(df) {
+      df$iteration <- df$iteration + iteration_offset
+      df
+    })
+
+  if(return_state | !is.null(resume_from) | !is.null(time_limit)) {
+    # everything carried from one iteration to the next: all that the
+    # function holds apart from its arguments, the draws and its functions
+    variables <- as.list(environment(), all.names=TRUE)
+    names_left_out <- c(
+      names(formals(mcmc_single)), "list_results", "variables", "progress_bar",
+      "init", "end", "time", "est", "remaining", "time_started", "i", "k",
+      "state_check", "iteration_offset", "iterations_done",
+      grep("_samples$", names(variables), value=TRUE))
+    variables <- variables[setdiff(names(variables), names_left_out)]
+    variables <- variables[!vapply(variables, is.function, logical(1))]
+    list_results$state <- list(
+      variables=variables,
+      seed=get(".Random.seed", envir=globalenv()),
+      iterations=iteration_offset + iterations_done,
+      check=state_check)
+    list_results$iterations_done <- iterations_done
   }
 
   list_results

@@ -28,7 +28,10 @@ mcmc_single(
   deaths = NULL,
   progress_file = NULL,
   progress_every = 50,
-  fixed_cases = FALSE
+  fixed_cases = FALSE,
+  return_state = FALSE,
+  resume_from = NULL,
+  time_limit = NULL
 )
 }
 \arguments{
@@ -185,6 +188,21 @@ is written. Defaults to 50.}
 
 \item{fixed_cases}{if TRUE, the true cases are held at initial_cases_true
 throughout and everything else is sampled given them. Defaults to FALSE.}
+
+\item{return_state}{if TRUE, the result has an element 'state' from which
+sampling can be taken up again, and 'iterations_done'. Defaults to FALSE.}
+
+\item{resume_from}{the 'state' returned by an earlier call. Sampling
+carries on from where that call stopped, as if it had not stopped: the
+draws are those which the earlier call would have gone on to make. All
+other arguments must be as in the earlier call, apart from niterations
+(the number of further iterations), time_limit and those for progress;
+the starting values are not used. The iterations returned are numbered
+on from those of the earlier call.}
+
+\item{time_limit}{an optional number of minutes after which sampling
+stops at the end of the iteration under way, returning the draws made so
+far (and the state, as with return_state).}
 }
 \value{
 a named list of three tibbles: "cases", "Rt" and "reporting" which contain estimates of the model parameters;

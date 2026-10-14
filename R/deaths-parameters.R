@@ -88,6 +88,82 @@ deaths_recording_weekday_step <- function(state, settings) {
   state
 }
 
+#' Updates the effects of each report on the delay to a death being recorded
+#'
+#' Each report has its own multiplier on the rate at which deaths are
+#' recorded in the interval it ends, as for the reporting of cases, so that a
+#' report which clears a backlog of deaths can record more of those
+#' outstanding than its day of the week would imply. The log multipliers have
+#' normal priors with mean zero and a common standard deviation. They are
+#' proposed in random blocks with a normal kernel and accepted or rejected
+#' given how many of the cases in each report are fatal; the standard
+#' deviation is then drawn from its conditional distribution (see
+#' \code{sample_report_sd}).
+#'
+#' @inheritParams deaths_delay_by_onset
+#' @param report the element 'recording_report' of the result of
+#' \code{deaths_settings}; nothing is done if it is FALSE
+#'
+#' @return the state with elements 'report_log_effects', 'report_sd' and
+#' 'report_multipliers' of its element 'recording_effects' updated
+deaths_recording_report_step <- function(state, report) {
+  effects <- state$recording_effects
+  if(identical(report, FALSE) | is.null(report) |
+     is.null(effects$report_log_effects))
+    return(state)
+  delays <- deaths_delay_by_onset(state)
+  sub <- uncorrected_state(state)
+  f_logl <- function(effects)
+    sum(purrr::map_dbl(seq_along(state$onset_times), function(k)
+      deaths_recording_day_logp(state, k, delay_of_onset(delays, k), effects))) +
+    sum(purrr::map_dbl(seq_along(sub$onset_times), function(k)
+      deaths_recording_day_logp(sub, k, delay_of_onset(sub$delays, k), effects)))
+  logl <- f_logl(effects)
+  n_reports <- length(effects$report_log_effects)
+  f_accept <- function(proposed, log_ratio_prior) {
+    proposed <- update_report_multipliers(proposed)
+    logl_proposed <- f_logl(proposed)
+    log_ratio <- logl_proposed - logl + log_ratio_prior
+    if(!is.na(log_ratio) && log(stats::runif(1)) < log_ratio) {
+      effects <<- proposed
+      logl <<- logl_proposed
+    }
+  }
+  # log-density of the standard deviation, from the inverse-gamma prior for
+  # the variance
+  f_log_prior_sd <- function(s)
+    -(2 * report$sd_shape + 1) * log(s) - report$sd_scale / s^2
+  for(step in seq_len(report$n_steps)) {
+    # changes in blocks of reports, of a size relative to the spread of the
+    # effects
+    blocks <- split(sample.int(n_reports),
+                    rep(seq_len(min(report$n_blocks, n_reports)), length.out=n_reports))
+    for(block in blocks) {
+      proposed <- effects
+      proposed$report_log_effects[block] <- effects$report_log_effects[block] +
+        stats::rnorm(length(block), 0, report$step * effects$report_sd)
+      f_accept(proposed, sum(
+        stats::dnorm(proposed$report_log_effects[block], 0, effects$report_sd, log=TRUE) -
+          stats::dnorm(effects$report_log_effects[block], 0, effects$report_sd, log=TRUE)))
+    }
+    # the standard deviation given the effects, then both scaled together so
+    # that the effects can grow or shrink with it
+    effects$report_sd <- sample_report_sd(
+      effects$report_log_effects,
+      list(report_sd_shape=report$sd_shape, report_sd_scale=report$sd_scale))
+    log_scale <- stats::rnorm(1, 0, report$scale_step)
+    proposed <- effects
+    proposed$report_log_effects <- effects$report_log_effects * exp(log_scale)
+    proposed$report_sd <- effects$report_sd * exp(log_scale)
+    # the priors of the effects change by -n_reports * log_scale and the
+    # Jacobian by (n_reports + 1) * log_scale
+    f_accept(proposed, f_log_prior_sd(proposed$report_sd) -
+               f_log_prior_sd(effects$report_sd) + log_scale)
+  }
+  state$recording_effects <- effects
+  state
+}
+
 #' Updates the heavier tail of the delay to a death being recorded
 #'
 #' The proportion of deaths recorded after an exponential delay and the mean

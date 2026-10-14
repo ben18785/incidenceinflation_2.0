@@ -301,6 +301,61 @@ test_that("the tail of the delay to a death being recorded is sampled", {
                             parameters$recording_tail_mean))), 2)
 })
 
+test_that("each report can have its own effect on the delay to a death being recorded", {
+  expect_false(deaths_settings(30)$recording_report)
+  report <- deaths_settings(30, list(recording_report=TRUE))$recording_report
+  expect_equal(report$sd_shape, 3)
+  expect_equal(report$initial_sd, sqrt(0.2 / 2))
+  expect_equal(deaths_settings(30, list(recording_report=list(step=0.3)))$
+                 recording_report$step, 0.3)
+  expect_error(deaths_settings(30, list(recording_report=list(sd=1))),
+               "Unknown settings")
+  expect_error(deaths_settings(30, list(recording_report=list(step=0))),
+               "must be positive")
+  # a report which records more deaths than usual shows more as dead from then
+  effects <- update_report_multipliers(list(
+    report_days=c(5, 10, 15, 20), report_log_effects=c(0, 0, 0, 0)))
+  more <- effects
+  more$report_log_effects[3] <- log(4)
+  more <- update_report_multipliers(more)
+  f <- function(effects) exp(joint_survivals(
+    c(5, 10, 15, 20), 1, list(mean=3, sd=2), list(mean=6, sd=4),
+    recording_effects=effects)$log_recorded)
+  expect_equal(f(more)[1:2], f(effects)[1:2])
+  expect_lt(f(more)[3], f(effects)[3])
+  # and the effects are sampled
+  example <- misdated_example()
+  snapshots <- example$snapshots
+  set.seed(9)
+  fit <- mcmc_single(
+    niterations=6,
+    snapshot_with_Rt_index_df=snapshots %>%
+      dplyr::select(time_onset, time_reported, cases_reported) %>%
+      dplyr::mutate(Rt_index=1),
+    priors=list(Rt=list(shape=1, rate=1),
+                reporting=list(mean_mu=6, mean_sigma=5, sd_mu=4, sd_sigma=4),
+                max_cases=300, overdispersion=list(mean=20, sd=20),
+                Rt_changepoints=list(),
+                reporting_changepoints=list(min_length=14)),
+    serial_parameters=example$serial_parameters,
+    initial_cases_true=example$initial_cases,
+    initial_reporting_parameters=list(mean=6, sd=4),
+    initial_Rt=dplyr::tibble(Rt_index=1, Rt=1),
+    print_to_screen=FALSE, is_negative_binomial=TRUE, initial_overdispersion=10,
+    cases_before=example$cases_before,
+    deaths=list(
+      snapshot=snapshots %>%
+        dplyr::select(time_onset, time_reported, deaths_reported),
+      settings=list(onset_to_death=list(mean=9.3, sd=5.5), fatal_delay=FALSE,
+                    recording_report=TRUE,
+                    dated_by_death=list(fraction=list()))))
+  parameters <- fit$deaths_parameters
+  columns <- grep("^recording_report_[0-9]", names(parameters), value=TRUE)
+  expect_equal(length(columns), length(unique(snapshots$time_reported)))
+  expect_true(all(parameters$recording_report_sd > 0))
+  expect_gt(length(unique(unlist(parameters[columns]))), 1)
+})
+
 test_that("cases dated by death which cannot be in the reports are kept", {
   state <- list(
     onset_times=1:2,

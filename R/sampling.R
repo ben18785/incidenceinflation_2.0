@@ -1434,6 +1434,20 @@ mcmc_single <- function(
         snapshot_with_Rt_index_df$time_reported,
         ifelse(is.null(initial_revision_parameters$weekday_first), 1,
                initial_revision_parameters$weekday_first))
+    # and its own effect of each report
+    report_options <- deaths_options$recording_report
+    if(!identical(report_options, FALSE)) {
+      if(is.null(deaths_state$recording_effects)) {
+        deaths_state$recording_effects <- initial_recording_effects(
+          snapshot_with_Rt_index_df$time_reported)
+        deaths_state$recording_effects$weekday_log_effects <- NULL
+      }
+      deaths_state$recording_effects$report_log_effects <- rep(
+        0, length(deaths_state$recording_effects$report_days))
+      deaths_state$recording_effects$report_sd <- report_options$initial_sd
+      deaths_state$recording_effects <- update_report_multipliers(
+        deaths_state$recording_effects)
+    }
     if(!identical(deaths_options$recording_tail, FALSE))
       deaths_state$recording_effects$tail <- deaths_options$recording_tail$initial
     # a death is recorded after the time from onset to death and then a delay

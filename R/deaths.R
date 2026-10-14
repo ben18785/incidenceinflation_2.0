@@ -69,6 +69,15 @@
 #' 'recording_weekday' (whether the
 #' delay to a death being recorded has its own effects of the day of the
 #' week: by default it does if the reporting delay has them);
+#' 'recording_report' (FALSE, the default, if the delay to a death being
+#' recorded has no effect of each report; TRUE, or a named list, if it does:
+#' 'sd_shape' and 'sd_scale', the parameters of the inverse-gamma prior for
+#' the variance of the log effects, 'initial_sd', the standard deviation to
+#' start from, 'step', the standard deviation of the changes proposed in each
+#' log effect relative to their standard deviation, 'scale_step', that of the
+#' log of the factor by which the effects and their standard deviation are
+#' scaled together, 'n_blocks', the number of blocks into which the reports
+#' are divided for each proposal, and 'n_steps');
 #' 'wrong_dead_alpha' and 'wrong_dead_beta' (parameters of the beta prior for
 #' the probability a wrong record is shown as dead); 'weekday_sd' and
 #' 'weekday_step' (the standard deviation of the prior for the log of each
@@ -91,6 +100,7 @@ deaths_settings <- function(n_days, settings=list()) {
     fatal_delay=list(),
     triggered=FALSE,
     recording_weekday=NULL,
+    recording_report=FALSE,
     wrong_dead_alpha=1, wrong_dead_beta=1,
     weekday_sd=1, weekday_step=0.05,
     n_parameter_steps=1)
@@ -176,6 +186,24 @@ deaths_settings <- function(n_days, settings=list()) {
        tail$initial$weight >= 1 || tail$initial$mean <= 0)
       stop("The tail of the delay to a death being recorded must start from a weight strictly between 0 and 1 and a positive mean.")
     defaults$recording_tail <- tail
+  }
+  if(!identical(defaults$recording_report, FALSE)) {
+    report <- list(sd_shape=3, sd_scale=0.2, initial_sd=NULL, step=0.5,
+                   scale_step=0.2, n_blocks=5, n_steps=1)
+    supplied <- if(isTRUE(defaults$recording_report)) list()
+      else defaults$recording_report
+    unknown <- setdiff(names(supplied), names(report))
+    if(length(unknown) > 0)
+      stop(paste0("Unknown settings for recording_report: ",
+                  paste(unknown, collapse=", "), "."))
+    report[names(supplied)] <- supplied
+    if(is.null(report$initial_sd))
+      report$initial_sd <- sqrt(report$sd_scale / (report$sd_shape - 1))
+    if(any(unlist(report[c("sd_shape", "sd_scale", "initial_sd", "step",
+                           "scale_step")]) <= 0) ||
+       report$n_blocks < 1 || report$n_steps < 1)
+      stop("The prior, starting value, steps and blocks for the effects of each report on the delay to a death being recorded must be positive.")
+    defaults$recording_report <- report
   }
   if(defaults$wrong_dead_alpha <= 0 | defaults$wrong_dead_beta <= 0)
     stop("The parameters of the prior for the probability a wrong record is shown as dead must be positive.")
@@ -1531,6 +1559,7 @@ deaths_parameters_step <- function(state, cases_true, settings) {
     deaths_recording_logp_function(state),
     n_days, settings$delay_prior, settings$delay_changepoints)
   state <- deaths_recording_weekday_step(state, settings)
+  state <- deaths_recording_report_step(state, settings$recording_report)
   state <- deaths_recording_tail_step(state, settings$recording_tail)
 
   sampled <- sample_cfr_changepoints(
@@ -1582,6 +1611,13 @@ deaths_draws <- function(state, iteration) {
   for(weekday in names(state$recording_effects$weekday_log_effects))
     parameters[[paste0("recording_weekday_", weekday)]] <-
       exp(state$recording_effects$weekday_log_effects[[weekday]])
+  if(!is.null(state$recording_effects$report_log_effects)) {
+    parameters$recording_report_sd <- state$recording_effects$report_sd
+    effects <- state$recording_effects
+    for(r in seq_along(effects$report_days))
+      parameters[[paste0("recording_report_", effects$report_days[r])]] <-
+        exp(effects$report_log_effects[r])
+  }
   list(
     deaths=dplyr::tibble(
       iteration=iteration,

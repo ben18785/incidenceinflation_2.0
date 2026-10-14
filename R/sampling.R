@@ -1445,6 +1445,7 @@ mcmc_single <- function(
       deaths_state$recording_effects$report_log_effects <- rep(
         0, length(deaths_state$recording_effects$report_days))
       deaths_state$recording_effects$report_sd <- report_options$initial_sd
+      deaths_state$recording_effects$report_tail_only <- isTRUE(report_options$tail_only)
       deaths_state$recording_effects <- update_report_multipliers(
         deaths_state$recording_effects)
     }

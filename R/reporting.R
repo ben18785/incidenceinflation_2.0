@@ -42,6 +42,22 @@
 log_undetected_days <- function(days, day_onset, reporting_parameters,
                                 revision_parameters=NULL) {
   tail <- revision_parameters$tail
+  # where the tail has multipliers of its own, the probability is found for
+  # each part of the delay apart and the two are mixed
+  if(!is.null(revision_parameters$tail_multipliers) && !is.null(tail) &&
+     tail$weight > 0) {
+    f_part <- function(part, multipliers) {
+      parameters <- revision_parameters
+      parameters$tail_multipliers <- NULL
+      parameters$tail <- part
+      parameters["report_multipliers"] <- list(multipliers)
+      log_undetected_days(days, day_onset, reporting_parameters, parameters)
+    }
+    a <- log1p(-tail$weight) + f_part(NULL, revision_parameters$report_multipliers)
+    b <- log(tail$weight) + f_part(list(weight=1, mean=tail$mean),
+                                   revision_parameters$tail_multipliers)
+    return(pmax(a, b) + log1p(exp(-abs(a - b))))
+  }
   before <- revision_parameters$before
   f_log_delay <- function(delay) {
     log_gamma <- delay_log_survival(delay, reporting_parameters$mean,
@@ -164,9 +180,13 @@ report_multipliers <- function(report_days, weekday_log_effects=NULL,
 #' Refreshes the daily multipliers held within the revision parameters
 #'
 #' @param revision_parameters named list containing 'report_days' and
-#' optionally 'weekday_log_effects', 'report_log_effects' and 'weekday_first'
+#' optionally 'weekday_log_effects', 'report_log_effects', 'weekday_first' and
+#' 'report_tail_only' (TRUE if the effects of each report act on the tail of
+#' the delay alone)
 #'
-#' @return revision_parameters with element 'report_multipliers' updated
+#' @return revision_parameters with element 'report_multipliers' updated, and
+#' 'tail_multipliers' (those of the tail) where the effects of each report act
+#' on the tail alone
 update_report_multipliers <- function(revision_parameters) {
   has_weekday <- !is.null(revision_parameters$weekday_log_effects)
   has_report <- !is.null(revision_parameters$report_log_effects)
@@ -182,6 +202,14 @@ update_report_multipliers <- function(revision_parameters) {
     revision_parameters$weekday_log_effects,
     revision_parameters$report_log_effects,
     weekday_first)
+  # the effects of each report may act on the tail of the delay alone
+  if(isTRUE(revision_parameters$report_tail_only) & has_report) {
+    revision_parameters$tail_multipliers <- revision_parameters$report_multipliers
+    revision_parameters["report_multipliers"] <- list(if(has_weekday)
+      report_multipliers(revision_parameters$report_days,
+                         revision_parameters$weekday_log_effects, NULL,
+                         weekday_first))
+  }
   revision_parameters
 }
 

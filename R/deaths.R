@@ -77,7 +77,8 @@
 #' log effect relative to their standard deviation, 'scale_step', that of the
 #' log of the factor by which the effects and their standard deviation are
 #' scaled together, 'n_blocks', the number of blocks into which the reports
-#' are divided for each proposal, and 'n_steps');
+#' are divided for each proposal, 'n_steps', and 'tail_only', TRUE if the
+#' effects act on the tail of the delay alone, which needs 'recording_tail');
 #' 'wrong_dead_alpha' and 'wrong_dead_beta' (parameters of the beta prior for
 #' the probability a wrong record is shown as dead); 'weekday_sd' and
 #' 'weekday_step' (the standard deviation of the prior for the log of each
@@ -189,7 +190,7 @@ deaths_settings <- function(n_days, settings=list()) {
   }
   if(!identical(defaults$recording_report, FALSE)) {
     report <- list(sd_shape=3, sd_scale=0.2, initial_sd=NULL, step=0.5,
-                   scale_step=0.2, n_blocks=5, n_steps=1)
+                   scale_step=0.2, n_blocks=5, n_steps=1, tail_only=FALSE)
     supplied <- if(isTRUE(defaults$recording_report)) list()
       else defaults$recording_report
     unknown <- setdiff(names(supplied), names(report))
@@ -203,6 +204,8 @@ deaths_settings <- function(n_days, settings=list()) {
                            "scale_step")]) <= 0) ||
        report$n_blocks < 1 || report$n_steps < 1)
       stop("The prior, starting value, steps and blocks for the effects of each report on the delay to a death being recorded must be positive.")
+    if(isTRUE(report$tail_only) & identical(defaults$recording_tail, FALSE))
+      stop("The effects of each report can act on the tail of the delay to a death being recorded alone only if it has a tail.")
     defaults$recording_report <- report
   }
   if(defaults$wrong_dead_alpha <= 0 | defaults$wrong_dead_beta <= 0)

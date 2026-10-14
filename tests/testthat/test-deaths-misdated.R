@@ -323,6 +323,23 @@ test_that("each report can have its own effect on the delay to a death being rec
     recording_effects=effects)$log_recorded)
   expect_equal(f(more)[1:2], f(effects)[1:2])
   expect_lt(f(more)[3], f(effects)[3])
+  # or on the tail of the delay alone, which then mixes with the rest
+  expect_error(deaths_settings(30, list(recording_report=list(tail_only=TRUE))),
+               "only if it has a tail")
+  h <- lag_probabilities_gamma(9.3, 5.5)
+  tail_only <- more
+  tail_only$report_tail_only <- TRUE
+  tail_only <- update_report_multipliers(tail_only)
+  expect_null(tail_only$report_multipliers)
+  tail_only$tail <- list(weight=0.3, mean=20)
+  tail_only$before <- list(lag_probabilities=h)
+  days <- c(5, 10, 15, 20, 40)
+  g <- function(effects) exp(log_undetected_days(days, 1, list(mean=3, sd=2), effects))
+  gamma_part <- g(list(before=tail_only$before))
+  tail_part <- g(list(before=tail_only$before, tail=list(weight=1, mean=20),
+                      report_multipliers=more$report_multipliers))
+  expect_equal(g(tail_only), 0.7 * gamma_part + 0.3 * tail_part)
+  expect_lt(tail_part[3], g(list(before=tail_only$before, tail=list(weight=1, mean=20)))[3])
   # and the effects are sampled
   example <- misdated_example()
   snapshots <- example$snapshots
@@ -354,6 +371,34 @@ test_that("each report can have its own effect on the delay to a death being rec
   expect_equal(length(columns), length(unique(snapshots$time_reported)))
   expect_true(all(parameters$recording_report_sd > 0))
   expect_gt(length(unique(unlist(parameters[columns]))), 1)
+  # and the effects on the tail alone are sampled
+  set.seed(9)
+  fit <- mcmc_single(
+    niterations=3,
+    snapshot_with_Rt_index_df=snapshots %>%
+      dplyr::select(time_onset, time_reported, cases_reported) %>%
+      dplyr::mutate(Rt_index=1),
+    priors=list(Rt=list(shape=1, rate=1),
+                reporting=list(mean_mu=6, mean_sigma=5, sd_mu=4, sd_sigma=4),
+                max_cases=300, overdispersion=list(mean=20, sd=20),
+                Rt_changepoints=list(),
+                reporting_changepoints=list(min_length=14)),
+    serial_parameters=example$serial_parameters,
+    initial_cases_true=example$initial_cases,
+    initial_reporting_parameters=list(mean=6, sd=4),
+    initial_Rt=dplyr::tibble(Rt_index=1, Rt=1),
+    print_to_screen=FALSE, is_negative_binomial=TRUE, initial_overdispersion=10,
+    cases_before=example$cases_before,
+    deaths=list(
+      snapshot=snapshots %>%
+        dplyr::select(time_onset, time_reported, deaths_reported),
+      settings=list(onset_to_death=list(mean=9.3, sd=5.5), fatal_delay=FALSE,
+                    recording_tail=list(),
+                    recording_report=list(tail_only=TRUE),
+                    dated_by_death=list(fraction=list()))))
+  parameters <- fit$deaths_parameters
+  expect_gt(length(unique(unlist(parameters[columns]))), 1)
+  expect_true(all(parameters$recording_tail_weight > 0))
 })
 
 test_that("cases dated by death which cannot be in the reports are kept", {

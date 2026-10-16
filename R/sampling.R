@@ -1451,6 +1451,19 @@ mcmc_single <- function(
     }
     if(!identical(deaths_options$recording_tail, FALSE))
       deaths_state$recording_effects$tail <- deaths_options$recording_tail$initial
+    # a backlog of deaths cleared in calendar time
+    if(!identical(deaths_options$recording_backlog, FALSE)) {
+      if(is.null(deaths_state$recording_effects)) {
+        deaths_state$recording_effects <- initial_recording_effects(
+          snapshot_with_Rt_index_df$time_reported)
+        deaths_state$recording_effects$weekday_log_effects <- NULL
+        deaths_state$recording_effects <- update_report_multipliers(
+          deaths_state$recording_effects)
+      }
+      deaths_state$recording_effects$backlog <- initial_backlog(
+        max(deaths_state$onset_times), snapshot_with_Rt_index_df$time_reported,
+        deaths_options$recording_backlog)
+    }
     # a death is recorded after the time from onset to death and then a delay
     if(!is.null(deaths_options$onset_to_death))
       deaths_state$recording_effects$before <- deaths_options$onset_to_death[

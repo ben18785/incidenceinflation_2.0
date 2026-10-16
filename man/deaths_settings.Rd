@@ -55,6 +55,21 @@ deviation of the changes proposed in its logit, and 'n_steps');
 'recording_weekday' (whether the
 delay to a death being recorded has its own effects of the day of the
 week: by default it does if the reporting delay has them);
+'recording_report' (FALSE, the default, if the delay to a death being
+recorded has no effect of each report; TRUE, or a named list, if it does:
+'sd_shape' and 'sd_scale', the parameters of the inverse-gamma prior for
+the variance of the log effects, 'initial_sd', the standard deviation to
+start from, 'step', the standard deviation of the changes proposed in each
+log effect relative to their standard deviation, 'scale_step', that of the
+log of the factor by which the effects and their standard deviation are
+scaled together, 'n_blocks', the number of blocks into which the reports
+are divided for each proposal, 'n_steps', and 'tail_only', TRUE if the
+effects act on the tail of the delay alone, which needs 'recording_tail');
+'recording_backlog' (FALSE, the default, or TRUE or a named list of the
+settings of \code{backlog_settings}: a share of deaths, a random walk over
+onset weeks, join a backlog which is cleared with a hazard set by calendar
+day, a random walk over reports; it takes the place of 'recording_tail' and
+'recording_report'; see deaths-backlog.R);
 'wrong_dead_alpha' and 'wrong_dead_beta' (parameters of the beta prior for
 the probability a wrong record is shown as dead); 'weekday_sd' and
 'weekday_step' (the standard deviation of the prior for the log of each

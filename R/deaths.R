@@ -79,6 +79,11 @@
 #' scaled together, 'n_blocks', the number of blocks into which the reports
 #' are divided for each proposal, 'n_steps', and 'tail_only', TRUE if the
 #' effects act on the tail of the delay alone, which needs 'recording_tail');
+#' 'recording_backlog' (FALSE, the default, or TRUE or a named list of the
+#' settings of \code{backlog_settings}: a share of deaths, a random walk over
+#' onset weeks, join a backlog which is cleared with a hazard set by calendar
+#' day, a random walk over reports; it takes the place of 'recording_tail' and
+#' 'recording_report'; see deaths-backlog.R);
 #' 'wrong_dead_alpha' and 'wrong_dead_beta' (parameters of the beta prior for
 #' the probability a wrong record is shown as dead); 'weekday_sd' and
 #' 'weekday_step' (the standard deviation of the prior for the log of each
@@ -102,6 +107,7 @@ deaths_settings <- function(n_days, settings=list()) {
     triggered=FALSE,
     recording_weekday=NULL,
     recording_report=FALSE,
+    recording_backlog=FALSE,
     wrong_dead_alpha=1, wrong_dead_beta=1,
     weekday_sd=1, weekday_step=0.05,
     n_parameter_steps=1)
@@ -207,6 +213,12 @@ deaths_settings <- function(n_days, settings=list()) {
     if(isTRUE(report$tail_only) & identical(defaults$recording_tail, FALSE))
       stop("The effects of each report can act on the tail of the delay to a death being recorded alone only if it has a tail.")
     defaults$recording_report <- report
+  }
+  if(!identical(defaults$recording_backlog, FALSE)) {
+    if(!identical(defaults$recording_tail, FALSE) |
+       !identical(defaults$recording_report, FALSE))
+      stop("A backlog of deaths takes the place of the tail of the delay to a death being recorded and of the effects of each report on it.")
+    defaults$recording_backlog <- backlog_settings(defaults$recording_backlog)
   }
   if(defaults$wrong_dead_alpha <= 0 | defaults$wrong_dead_beta <= 0)
     stop("The parameters of the prior for the probability a wrong record is shown as dead must be positive.")
@@ -1564,6 +1576,7 @@ deaths_parameters_step <- function(state, cases_true, settings) {
   state <- deaths_recording_weekday_step(state, settings)
   state <- deaths_recording_report_step(state, settings$recording_report)
   state <- deaths_recording_tail_step(state, settings$recording_tail)
+  state <- deaths_recording_backlog_step(state, settings$recording_backlog)
 
   sampled <- sample_cfr_changepoints(
     state$deaths_true, cases_true, state$p_change, settings$min_length,
@@ -1621,17 +1634,22 @@ deaths_draws <- function(state, iteration) {
       parameters[[paste0("recording_report_", effects$report_days[r])]] <-
         exp(effects$report_log_effects[r])
   }
-  list(
-    deaths=dplyr::tibble(
-      iteration=iteration,
-      time_onset=state$onset_times,
-      deaths_true=state$deaths_true,
-      cfr=state$cfr,
-      delay_mean=delays$mean,
-      delay_sd=delays$sd,
-      deaths_recorded=dated$fatal_recorded,
-      dated_by_death=dated$into),
-    deaths_parameters=parameters)
+  backlog <- state$recording_effects$backlog
+  if(!is.null(backlog))
+    parameters <- dplyr::bind_cols(parameters, dplyr::as_tibble(backlog_draws(backlog)))
+  deaths <- dplyr::tibble(
+    iteration=iteration,
+    time_onset=state$onset_times,
+    deaths_true=state$deaths_true,
+    cfr=state$cfr,
+    delay_mean=delays$mean,
+    delay_sd=delays$sd,
+    deaths_recorded=dated$fatal_recorded,
+    dated_by_death=dated$into)
+  if(!is.null(backlog))
+    deaths$backlog_share <- backlog$share[pmin(pmax(round(state$onset_times), 1),
+                                               length(backlog$share))]
+  list(deaths=deaths, deaths_parameters=parameters)
 }
 
 #' Simulates reported cases and deaths from individual cases
@@ -1683,6 +1701,13 @@ deaths_draws <- function(state, iteration) {
 #' @param recording_tail an optional named list of 'weight' and 'mean': that
 #' proportion of deaths are recorded after an exponential delay with that
 #' mean, in place of the delay of death_parameters
+#' @param recording_backlog an optional named list of 'share' (a single value
+#' or one for each onset time) and 'rate' (a single value or one for each day
+#' 1, 2, ...; later days have the last). That share of deaths join a backlog in
+#' place of the delay of death_parameters, and a death in the backlog is
+#' recorded on each day with that hazard, counted from the middle of the day
+#' of death. The share of a case dated by death is that of the day it is
+#' recorded for. Needs onset_to_death
 #' @param wrong an optional named list of 'eta', 'rho' and 'delta', which adds
 #' wrong records to the reports. On each day after the day for which cases
 #' are recorded, a Poisson number of wrong records is entered, with mean eta
@@ -1716,7 +1741,8 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
                                   death_from=c("onset", "report"),
                                   dated_by_death=NULL, wrong=NULL,
                                   correction=NULL, triggered=0,
-                                  onset_to_death=NULL, recording_tail=NULL) {
+                                  onset_to_death=NULL, recording_tail=NULL,
+                                  recording_backlog=NULL) {
   death_from <- match.arg(death_from)
   if(!is.null(onset_to_death) & death_from == "report")
     stop("A time from onset to death needs death_from 'onset'.")
@@ -1753,6 +1779,33 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
     delay
   }
 
+  if(!is.null(recording_backlog) & is.null(onset_to_death))
+    stop("A backlog of deaths needs a time from onset to death.")
+  # a share of deaths join a backlog: the whole days from the day of death to
+  # the day the death is recorded, with the hazard of each day summed from the
+  # middle of the day of death
+  f_backlog <- function(delay, day_death, share) {
+    if(is.null(recording_backlog))
+      return(delay)
+    is_backlog <- stats::runif(length(delay)) < share
+    if(!any(is_backlog))
+      return(delay)
+    rate <- recording_backlog$rate
+    f_rate <- function(days) rate[pmin(days, length(rate))]
+    target <- stats::rexp(sum(is_backlog))
+    start <- day_death[is_backlog]
+    waited <- f_rate(start) / 2
+    k <- rep(0, length(start))
+    is_waiting <- waited < target
+    while(any(is_waiting)) {
+      k[is_waiting] <- k[is_waiting] + 1
+      waited[is_waiting] <- waited[is_waiting] + f_rate(start[is_waiting] + k[is_waiting])
+      is_waiting <- waited < target
+    }
+    delay[is_backlog] <- k
+    delay
+  }
+
   # one row for each case
   cases_by_onset <- cases_true
   onset <- rep(seq_len(n_days), cases_true)
@@ -1775,6 +1828,16 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
     if(length(x) != n_days)
       stop("A proportion must be a single value or one for each onset time.")
     x[source]
+  }
+  # the share of the backlog for cases recorded for given onset times
+  f_share <- function(share, days) {
+    if(is.null(share))
+      return(rep(0, length(days)))
+    if(length(share) == 1)
+      return(rep(share, length(days)))
+    if(length(share) != n_days)
+      stop("The share of the backlog must be a single value or one for each onset time.")
+    share[pmin(pmax(days, 1), n_days)]
   }
   is_dated_by_death <- rep(FALSE, n)
   day <- onset
@@ -1809,11 +1872,19 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
     # reported after the delay from a death to its being recorded, which is
     # that of the day the case is recorded for
     day_dated <- pmin(day[is_dated_by_death], n_days)
-    delay_reported[is_dated_by_death] <- f_tail(f_delay(death$mean[day_dated],
-                                                        death$sd[day_dated]))
+    delay_reported[is_dated_by_death] <- f_backlog(
+      f_tail(f_delay(death$mean[day_dated], death$sd[day_dated])),
+      day[is_dated_by_death], f_share(recording_backlog$share, day_dated))
   }
   delay_recorded <- f_delay(death$mean[source], death$sd[source])
   delay_recorded <- f_tail(delay_recorded)
+  if(!is.null(recording_backlog)) {
+    is_onset_dated <- !is_dated_by_death
+    delay_recorded[is_onset_dated] <- f_backlog(
+      delay_recorded[is_onset_dated],
+      (source + days_to_death)[is_onset_dated],
+      f_share(recording_backlog$share, source[is_onset_dated]))
+  }
   if(!is.null(onset_to_death))
     delay_recorded <- days_to_death + delay_recorded
   if(death_from == "report")

@@ -17,7 +17,8 @@ simulate_cases_deaths(
   correction = NULL,
   triggered = 0,
   onset_to_death = NULL,
-  recording_tail = NULL
+  recording_tail = NULL,
+  recording_backlog = NULL
 )
 }
 \arguments{
@@ -81,6 +82,14 @@ from the day of death to the death being recorded (needs death_from
 \item{recording_tail}{an optional named list of 'weight' and 'mean': that
 proportion of deaths are recorded after an exponential delay with that
 mean, in place of the delay of death_parameters}
+
+\item{recording_backlog}{an optional named list of 'share' (a single value
+or one for each onset time) and 'rate' (a single value or one for each day
+1, 2, ...; later days have the last). That share of deaths join a backlog in
+place of the delay of death_parameters, and a death in the backlog is
+recorded on each day with that hazard, counted from the middle of the day
+of death. The share of a case dated by death is that of the day it is
+recorded for. Needs onset_to_death}
 }
 \value{
 a named list of 'snapshots' (a tibble with columns time_onset,

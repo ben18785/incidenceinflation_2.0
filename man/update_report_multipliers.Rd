@@ -8,10 +8,14 @@ update_report_multipliers(revision_parameters)
 }
 \arguments{
 \item{revision_parameters}{named list containing 'report_days' and
-optionally 'weekday_log_effects', 'report_log_effects' and 'weekday_first'}
+optionally 'weekday_log_effects', 'report_log_effects', 'weekday_first' and
+'report_tail_only' (TRUE if the effects of each report act on the tail of
+the delay alone)}
 }
 \value{
-revision_parameters with element 'report_multipliers' updated
+revision_parameters with element 'report_multipliers' updated, and
+'tail_multipliers' (those of the tail) where the effects of each report act
+on the tail alone
 }
 \description{
 Refreshes the daily multipliers held within the revision parameters

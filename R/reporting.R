@@ -41,6 +41,10 @@
 #' @return a vector of log-probabilities
 log_undetected_days <- function(days, day_onset, reporting_parameters,
                                 revision_parameters=NULL) {
+  # a share of deaths join a backlog cleared in calendar time (deaths-backlog.R)
+  if(!is.null(revision_parameters$backlog))
+    return(log_undetected_days_backlog(days, day_onset, reporting_parameters,
+                                       revision_parameters))
   tail <- revision_parameters$tail
   # where the tail has multipliers of its own, the probability is found for
   # each part of the delay apart and the two are mixed

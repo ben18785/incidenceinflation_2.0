@@ -35,10 +35,16 @@
 initial_backlog <- function(n_days, report_days, backlog) {
   report_days <- sort(unique(report_days))
   week_of_day <- (seq_len(n_days) - 1) %/% backlog$share_week + 1
+  # a single starting value, or one for each onset day (the mean of each
+  # week is taken) or each day (the mean of each report interval)
+  share <- rep_len(backlog$initial_share, n_days)
+  rate <- rep_len(backlog$initial_rate, max(report_days))
+  bounds <- c(0, report_days)
   refresh_backlog(list(
-    logit_share=rep(stats::qlogis(backlog$initial_share), max(week_of_day)),
+    logit_share=stats::qlogis(as.numeric(tapply(share, week_of_day, mean))),
     week_of_day=week_of_day,
-    log_rate=rep(log(backlog$initial_rate), length(report_days)),
+    log_rate=log(vapply(seq_along(report_days), function(r)
+      mean(rate[(bounds[r] + 1):bounds[r + 1]]), numeric(1))),
     report_days=report_days,
     share_rw_sd=backlog$initial_share_rw_sd,
     rate_rw_sd=backlog$initial_rate_rw_sd))
@@ -148,12 +154,22 @@ log_undetected_days_backlog <- function(days, day_onset, reporting_parameters,
 #' Updates the backlog: the share for each onset week, the hazard for each
 #' report interval and the standard deviations of the two random walks
 #'
-#' The logit of the share of each week is changed in turn, with only the
-#' onset days of that week in the likelihood. The log hazard is changed in
-#' blocks of consecutive report intervals, by a common shift (which keeps the
-#' steps within the block) and by independent changes; only onset days up to
-#' the end of the block are affected. The standard deviations are updated
-#' given the steps of their random walks, which have half-normal priors.
+#' With sampler 'slice' (the default), each random walk is drawn whole by
+#' elliptical slice sampling (Murray, Adams and MacKay 2010) given its
+#' standard deviation, which is then changed both with the walk held (cheap)
+#' and with its steps scaled with it (non-centred, which lets a walk and its
+#' standard deviation move together); and the shares and hazards are moved
+#' along the ridge on which their product, and so the trickle of deaths
+#' cleared early, is little changed.
+#'
+#' With sampler 'metropolis', the logit of the share of each week is changed
+#' in turn, with only the onset days of that week in the likelihood. The log
+#' hazard is changed in blocks of consecutive report intervals, by a common
+#' shift (which keeps the steps within the block) and by independent changes;
+#' only onset days up to the end of the block are affected. The standard
+#' deviations are updated given the steps of their random walks.
+#'
+#' The standard deviations have half-normal priors.
 #'
 #' @inheritParams deaths_delay_by_onset
 #' @param settings the element 'recording_backlog' of the result of
@@ -195,6 +211,13 @@ deaths_recording_backlog_step <- function(state, settings) {
   f_accept <- function(log_ratio)
     !is.na(log_ratio) && log(stats::runif(1)) < log_ratio
 
+  if(settings$sampler == "slice") {
+    backlog <- backlog_slice_steps(backlog, settings, function(backlog)
+      f_logl(f_with(backlog), seq_along(onset_times)), f_log_prior_share,
+      f_log_prior_rate, gaps)
+    state$recording_effects$backlog <- refresh_backlog(backlog)
+    return(state)
+  }
   for(step in seq_len(settings$n_steps)) {
     # the share of each onset week
     for(w in sample.int(length(backlog$logit_share))) {
@@ -247,6 +270,123 @@ deaths_recording_backlog_step <- function(state, settings) {
   state
 }
 
+#' Elliptical slice sampling of a vector with a normal prior
+#'
+#' @param x the current value
+#' @param mean the mean of the prior
+#' @param f_draw a function returning a draw from the prior less its mean
+#' @param f_logl the log-likelihood of a value
+#' @param logl the log-likelihood of x
+#' @param max_shrink the most times the bracket is shrunk, after which x is
+#' kept
+#'
+#' @return a list of the new value 'x' and its log-likelihood 'logl'
+elliptical_slice <- function(x, mean, f_draw, f_logl, logl, max_shrink=60) {
+  nu <- f_draw()
+  f <- x - mean
+  log_y <- logl + log(stats::runif(1))
+  theta <- stats::runif(1, 0, 2 * pi)
+  lo <- theta - 2 * pi
+  hi <- theta
+  for(i in seq_len(max_shrink)) {
+    proposed <- mean + f * cos(theta) + nu * sin(theta)
+    logl_proposed <- f_logl(proposed)
+    if(!is.na(logl_proposed) && logl_proposed > log_y)
+      return(list(x=proposed, logl=logl_proposed))
+    if(theta < 0) lo <- theta else hi <- theta
+    theta <- stats::runif(1, lo, hi)
+  }
+  list(x=x, logl=logl)
+}
+
+#' The updates of the backlog with sampler 'slice'
+#'
+#' @param backlog the element 'backlog' of the effects on recording
+#' @param settings see \code{deaths_recording_backlog_step}
+#' @param f_logl the log-likelihood of all onset days given a backlog
+#' @param f_log_prior_share,f_log_prior_rate the log-priors of the two random
+#' walks given the standard deviations of their steps
+#' @param gaps the days between consecutive reports (NA first)
+#'
+#' @return the backlog updated
+backlog_slice_steps <- function(backlog, settings, f_logl, f_log_prior_share,
+                                f_log_prior_rate, gaps) {
+  f_accept <- function(log_ratio)
+    !is.na(log_ratio) && log(stats::runif(1)) < log_ratio
+  f_half_normal <- function(x, scale) stats::dnorm(x, 0, scale, log=TRUE)
+  # a walk with its steps scaled by r, from the same first value
+  f_scale <- function(x, r) c(x[1], x[1] + cumsum(diff(x) * r))
+  walks <- list(
+    list(name="logit_share", sd="share_rw_sd", mu=settings$share_mu,
+         sd_first=settings$share_sd, scale=settings$share_rw_sd_scale,
+         step_sd=function(sd) rep(sd, length(backlog$logit_share) - 1),
+         f_log_prior=f_log_prior_share),
+    list(name="log_rate", sd="rate_rw_sd", mu=settings$rate_mu,
+         sd_first=settings$rate_sd, scale=settings$rate_rw_sd_scale,
+         step_sd=function(sd) sd * sqrt(gaps[-1] / 7),
+         f_log_prior=f_log_prior_rate))
+  logl <- f_logl(backlog)
+  for(step in seq_len(settings$n_steps)) {
+    for(walk in walks) {
+      # the whole walk, given its standard deviation
+      n <- length(backlog[[walk$name]])
+      sd_steps <- walk$step_sd(backlog[[walk$sd]])
+      out <- elliptical_slice(
+        backlog[[walk$name]], rep(walk$mu, n),
+        function() cumsum(c(stats::rnorm(1, 0, walk$sd_first),
+                            stats::rnorm(n - 1, 0, sd_steps))),
+        function(x) {
+          proposed <- backlog
+          proposed[[walk$name]] <- x
+          f_logl(proposed)
+        }, logl)
+      backlog[[walk$name]] <- out$x
+      logl <- out$logl
+      if(n == 1)
+        next
+      # its standard deviation with the walk held: no likelihood is needed
+      current <- backlog[[walk$sd]]
+      proposed_sd <- current * exp(stats::rnorm(1, 0, settings$rw_sd_step))
+      log_ratio <- walk$f_log_prior(backlog[[walk$name]], proposed_sd) -
+        walk$f_log_prior(backlog[[walk$name]], current) +
+        f_half_normal(proposed_sd, walk$scale) - f_half_normal(current, walk$scale) +
+        log(proposed_sd) - log(current)
+      if(f_accept(log_ratio))
+        backlog[[walk$sd]] <- proposed_sd
+      # and with its steps scaled with it, the standardised steps held
+      current <- backlog[[walk$sd]]
+      proposed_sd <- current * exp(stats::rnorm(1, 0, settings$rw_sd_step))
+      proposed <- backlog
+      proposed[[walk$sd]] <- proposed_sd
+      proposed[[walk$name]] <- f_scale(backlog[[walk$name]], proposed_sd / current)
+      logl_proposed <- f_logl(proposed)
+      log_ratio <- logl_proposed - logl +
+        f_half_normal(proposed_sd, walk$scale) - f_half_normal(current, walk$scale) +
+        log(proposed_sd) - log(current)
+      if(f_accept(log_ratio)) {
+        backlog <- proposed
+        logl <- logl_proposed
+      }
+    }
+    # along the ridge: more deaths in the backlog, cleared more slowly
+    delta <- stats::rnorm(1, 0, settings$ridge_step)
+    proposed <- backlog
+    proposed$logit_share <- backlog$logit_share + delta
+    proposed$log_rate <- backlog$log_rate - delta
+    logl_proposed <- f_logl(proposed)
+    log_ratio <- logl_proposed - logl +
+      f_log_prior_share(proposed$logit_share, backlog$share_rw_sd) -
+      f_log_prior_share(backlog$logit_share, backlog$share_rw_sd) +
+      f_log_prior_rate(proposed$log_rate, backlog$rate_rw_sd) -
+      f_log_prior_rate(backlog$log_rate, backlog$rate_rw_sd)
+    if(f_accept(log_ratio)) {
+      backlog <- proposed
+      logl <- logl_proposed
+    }
+  }
+  backlog
+}
+
 #' Default settings of the backlog
 #'
 #' @param supplied TRUE or a named list of settings to change
@@ -257,15 +397,18 @@ deaths_recording_backlog_step <- function(state, settings) {
 #' an onset week), 'rate_mu' and 'rate_sd' (normal prior of the log hazard
 #' up to the first report), 'rate_rw_sd_scale' (scale of the half-normal prior
 #' for the sd of its steps over seven days), 'initial_share', 'initial_rate',
-#' 'initial_share_rw_sd', 'initial_rate_rw_sd', the steps proposed
-#' ('share_step', 'rate_step', 'rw_sd_step'), 'n_blocks' and 'n_steps'
+#' 'initial_share_rw_sd', 'initial_rate_rw_sd' (the starting share may be one
+#' value for each onset day, and the starting hazard one for each day), the
+#' steps proposed ('share_step', 'rate_step', 'rw_sd_step', 'ridge_step'),
+#' 'n_blocks', 'n_steps' and 'sampler' ('slice', the default, or 'metropolis';
+#' see \code{deaths_recording_backlog_step})
 backlog_settings <- function(supplied) {
   backlog <- list(share_mu=stats::qlogis(0.2), share_sd=1, share_rw_sd_scale=0.5,
                   share_week=7, rate_mu=log(1 / 60), rate_sd=1,
                   rate_rw_sd_scale=0.5, initial_share=0.2, initial_rate=1 / 60,
                   initial_share_rw_sd=0.2, initial_rate_rw_sd=0.2,
                   share_step=0.4, rate_step=0.3, rw_sd_step=0.3, n_blocks=6,
-                  n_steps=1)
+                  n_steps=1, sampler="slice", ridge_step=0.5)
   if(isTRUE(supplied))
     supplied <- list()
   unknown <- setdiff(names(supplied), names(backlog))
@@ -276,10 +419,12 @@ backlog_settings <- function(supplied) {
   positive <- c("share_sd", "share_rw_sd_scale", "share_week", "rate_sd",
                 "rate_rw_sd_scale", "initial_rate", "initial_share_rw_sd",
                 "initial_rate_rw_sd", "share_step", "rate_step", "rw_sd_step",
-                "n_blocks", "n_steps")
+                "n_blocks", "n_steps", "ridge_step")
   if(any(unlist(backlog[positive]) <= 0))
     stop("The scales, starting values, steps and blocks of the backlog must be positive.")
-  if(backlog$initial_share <= 0 | backlog$initial_share >= 1)
+  if(!backlog$sampler %in% c("slice", "metropolis"))
+    stop("The sampler of the backlog must be 'slice' or 'metropolis'.")
+  if(any(backlog$initial_share <= 0 | backlog$initial_share >= 1))
     stop("The share of deaths in the backlog must start strictly between 0 and 1.")
   backlog
 }

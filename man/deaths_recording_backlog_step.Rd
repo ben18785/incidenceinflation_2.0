@@ -17,10 +17,21 @@ deaths_recording_backlog_step(state, settings)
 the state with element 'backlog' of 'recording_effects' updated
 }
 \description{
-The logit of the share of each week is changed in turn, with only the
-onset days of that week in the likelihood. The log hazard is changed in
-blocks of consecutive report intervals, by a common shift (which keeps the
-steps within the block) and by independent changes; only onset days up to
-the end of the block are affected. The standard deviations are updated
-given the steps of their random walks, which have half-normal priors.
+With sampler 'slice' (the default), each random walk is drawn whole by
+elliptical slice sampling (Murray, Adams and MacKay 2010) given its
+standard deviation, which is then changed both with the walk held (cheap)
+and with its steps scaled with it (non-centred, which lets a walk and its
+standard deviation move together); and the shares and hazards are moved
+along the ridge on which their product, and so the trickle of deaths
+cleared early, is little changed.
+}
+\details{
+With sampler 'metropolis', the logit of the share of each week is changed
+in turn, with only the onset days of that week in the likelihood. The log
+hazard is changed in blocks of consecutive report intervals, by a common
+shift (which keeps the steps within the block) and by independent changes;
+only onset days up to the end of the block are affected. The standard
+deviations are updated given the steps of their random walks.
+
+The standard deviations have half-normal priors.
 }

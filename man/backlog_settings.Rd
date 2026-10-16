@@ -16,8 +16,11 @@ the half-normal prior for the sd of its weekly steps), 'share_week' (days in
 an onset week), 'rate_mu' and 'rate_sd' (normal prior of the log hazard
 up to the first report), 'rate_rw_sd_scale' (scale of the half-normal prior
 for the sd of its steps over seven days), 'initial_share', 'initial_rate',
-'initial_share_rw_sd', 'initial_rate_rw_sd', the steps proposed
-('share_step', 'rate_step', 'rw_sd_step'), 'n_blocks' and 'n_steps'
+'initial_share_rw_sd', 'initial_rate_rw_sd' (the starting share may be one
+value for each onset day, and the starting hazard one for each day), the
+steps proposed ('share_step', 'rate_step', 'rw_sd_step', 'ridge_step'),
+'n_blocks', 'n_steps' and 'sampler' ('slice', the default, or 'metropolis';
+see \code{deaths_recording_backlog_step})
 }
 \description{
 Default settings of the backlog

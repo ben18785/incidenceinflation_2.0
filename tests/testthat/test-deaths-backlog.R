@@ -109,7 +109,7 @@ backlog_example <- function() {
          dplyr::summarise(cases_true=max(cases_reported) + 2))
 }
 
-test_that("the backlog is sampled", {
+for(sampler in c("slice", "metropolis")) test_that(paste("the backlog is sampled by", sampler), {
   example <- backlog_example()
   snapshots <- example$snapshots
   set.seed(13)
@@ -133,7 +133,7 @@ test_that("the backlog is sampled", {
       snapshot=snapshots %>%
         dplyr::select(time_onset, time_reported, deaths_reported),
       settings=list(onset_to_death=list(mean=9.3, sd=5.5), fatal_delay=FALSE,
-                    triggered=list(), recording_backlog=TRUE,
+                    triggered=list(), recording_backlog=list(sampler=sampler),
                     dated_by_death=list(fraction=list()))))
   parameters <- fit$deaths_parameters
   rates <- parameters[, grepl("^backlog_rate_[0-9]+$", names(parameters))]
@@ -144,4 +144,30 @@ test_that("the backlog is sampled", {
   expect_true(all(share > 0 & share < 1))
   expect_gt(length(unique(share)), 1)
   expect_true(all(parameters$backlog_share_rw_sd > 0))
+})
+
+test_that("elliptical slice sampling with a normal likelihood draws from the posterior", {
+  set.seed(5)
+  # prior N(1, 2^2), likelihood N(x; 3, 1): posterior N(2.6, 0.8)
+  x <- 0
+  logl <- stats::dnorm(3, x, 1, log=TRUE)
+  draws <- numeric(4000)
+  for(i in seq_along(draws)) {
+    out <- elliptical_slice(x, 1, function() stats::rnorm(1, 0, 2),
+                            function(x) stats::dnorm(3, x, 1, log=TRUE), logl)
+    x <- out$x
+    logl <- out$logl
+    draws[i] <- x
+  }
+  expect_equal(mean(draws), 2.6, tolerance=0.05)
+  expect_equal(stats::var(draws), 0.8, tolerance=0.1)
+})
+
+test_that("the backlog can start from a share for each onset day and a rate for each day", {
+  settings <- backlog_settings(list(initial_share=rep(c(0.4, 0.1), c(14, 6)),
+                                    initial_rate=c(rep(0.01, 10), rep(0.1, 10))))
+  backlog <- initial_backlog(20, c(10, 15, 20), settings)
+  expect_equal(stats::plogis(backlog$logit_share), c(0.4, 0.4, 0.1))
+  expect_equal(exp(backlog$log_rate), c(0.01, 0.1, 0.1))
+  expect_error(backlog_settings(list(sampler="gibbs")), "must be 'slice'")
 })

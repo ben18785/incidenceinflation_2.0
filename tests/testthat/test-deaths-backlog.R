@@ -171,3 +171,30 @@ test_that("the backlog can start from a share for each onset day and a rate for 
   expect_equal(exp(backlog$log_rate), c(0.01, 0.1, 0.1))
   expect_error(backlog_settings(list(sampler="gibbs")), "must be 'slice'")
 })
+
+test_that("with a holding period, deaths in the backlog are recorded only after it", {
+  set.seed(12)
+  rate <- c(rep(0.01, 30), rep(0.1, 20), rep(0.02, 50))
+  backlog_truth <- list(share=0.4, rate=rate, hold_days=14)
+  sim <- simulate_cases_deaths(c(20000, rep(0, 9)), 1:100, list(mean=0.2, sd=0.1),
+                               1, list(mean=1, sd=0.5),
+                               onset_to_death=list(mean=9.3, sd=5.5),
+                               recording_backlog=backlog_truth)
+  shown <- sim$snapshots %>% dplyr::filter(time_onset == 1)
+  settings <- backlog_settings(list(initial_share=0.4, hold_days=14))
+  backlog <- initial_backlog(100, 1:100, settings)
+  backlog$log_rate <- log(rate)
+  backlog <- refresh_backlog(backlog)
+  expected <- exp(log_undetected_days(shown$time_reported, 1, list(mean=1, sd=0.5),
+                                      list(before=list(lag_probabilities=
+                                                         lag_probabilities_gamma(9.3, 5.5)),
+                                           backlog=backlog)))
+  observed <- 1 - shown$deaths_reported / sim$truth$deaths_true[1]
+  is_checked <- shown$time_reported %in% c(10, 20, 30, 45, 60, 90)
+  expect_equal(observed[is_checked], expected[is_checked], tolerance=0.03)
+  # nothing of the backlog is recorded within the holding period: by day 14,
+  # the deaths not recorded are the backlog and those of the gamma delay
+  # still to come
+  expect_gt(expected[shown$time_reported == 14], 0.4)
+  expect_error(backlog_settings(list(hold_days=-1)), "whole number")
+})

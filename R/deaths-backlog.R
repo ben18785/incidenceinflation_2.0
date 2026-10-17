@@ -7,7 +7,10 @@
 #   S^U(d | t') = (1 - b_t) S_gamma(t' - d) + b_t exp(-Lambda(d, t')),
 #
 # where Lambda(d, t') is the hazard summed from the death (the middle of day
-# d) to the end of day t'. The share is a random walk on the logit scale over
+# d) to the end of day t'. With a holding period of m days, a death in the
+# backlog cannot be recorded until m days after the death: the hazard is
+# summed from the middle of day d + m, and Lambda is 0 before then. This keeps
+# a backlog cleared quickly from standing in for the delay of S_gamma. The share is a random walk on the logit scale over
 # onset weeks. The hazard is constant between consecutive reports, and its log
 # is a random walk over reports with variance proportional to the time
 # between them; the days up to the first report share one value.
@@ -22,7 +25,8 @@
 # - 'report_days': the days of the reports;
 # - 'cumulative': the hazard summed over days 1, 2, ..., to the last report;
 # - 'share_rw_sd' and 'rate_rw_sd': the standard deviations of the steps of
-#   the two random walks (that of the hazard for seven days).
+#   the two random walks (that of the hazard for seven days);
+# - 'hold_days': the holding period.
 
 #' Starting values of the backlog
 #'
@@ -46,6 +50,7 @@ initial_backlog <- function(n_days, report_days, backlog) {
     log_rate=log(vapply(seq_along(report_days), function(r)
       mean(rate[(bounds[r] + 1):bounds[r + 1]]), numeric(1))),
     report_days=report_days,
+    hold_days=backlog$hold_days,
     share_rw_sd=backlog$initial_share_rw_sd,
     rate_rw_sd=backlog$initial_rate_rw_sd))
 }
@@ -101,8 +106,9 @@ backlog_cumulative <- function(backlog, days) {
 #'
 #' The death happens z days after onset with probability h_z (or on the onset
 #' day itself, where there is no 'before'). Its record waits from the middle
-#' of the day of death to the end of each day:
-#' \deqn{\sum_{z > k} h_z + \sum_{z \le k} h_z \exp(-[L(t') - L(d) + \lambda_d / 2])}
+#' of the day m days after the day of death (m the holding period) to the end
+#' of each day:
+#' \deqn{\sum_{z > k} h_z + \sum_{z \le k} h_z \exp(-\max[0, L(t') - L(d + m) + \lambda_{d + m} / 2])}
 #' with k = t' - t, d = t + z and L the summed hazard.
 #'
 #' @inheritParams log_undetected_days
@@ -116,17 +122,18 @@ log_backlog_days <- function(days, day_onset, backlog, before=NULL) {
   h <- if(is.null(before)) 1 else c(0, before$lag_probabilities)
   # z = 0, 1, 2, ...: the probability of death z days after onset
   z_max <- length(h) - 1
-  days_death <- day_onset + 0:z_max
-  rates_death <- backlog_cumulative(backlog, days_death) -
-    backlog_cumulative(backlog, days_death - 1)
-  # the summed hazard from the middle of the day of death
-  start <- backlog_cumulative(backlog, days_death) - rates_death / 2
+  hold <- if(is.null(backlog$hold_days)) 0 else backlog$hold_days
+  days_start <- day_onset + 0:z_max + hold
+  rates_start <- backlog_cumulative(backlog, days_start) -
+    backlog_cumulative(backlog, days_start - 1)
+  # the summed hazard from the middle of the day the holding period ends
+  start <- backlog_cumulative(backlog, days_start) - rates_start / 2
   end <- backlog_cumulative(backlog, days)
   vapply(seq_along(days), function(i) {
     k <- lags[i]
     z <- 0:min(k, z_max)
     alive <- if(k < z_max) sum(h[(k + 2):(z_max + 1)]) else 0
-    p <- alive + sum(h[z + 1] * exp(-(end[i] - start[z + 1])))
+    p <- alive + sum(h[z + 1] * exp(-pmax(0, end[i] - start[z + 1])))
     log(max(p, 1e-300))
   }, numeric(1))
 }
@@ -400,15 +407,16 @@ backlog_slice_steps <- function(backlog, settings, f_logl, f_log_prior_share,
 #' 'initial_share_rw_sd', 'initial_rate_rw_sd' (the starting share may be one
 #' value for each onset day, and the starting hazard one for each day), the
 #' steps proposed ('share_step', 'rate_step', 'rw_sd_step', 'ridge_step'),
-#' 'n_blocks', 'n_steps' and 'sampler' ('slice', the default, or 'metropolis';
-#' see \code{deaths_recording_backlog_step})
+#' 'n_blocks', 'n_steps', 'sampler' ('slice', the default, or 'metropolis';
+#' see \code{deaths_recording_backlog_step}) and 'hold_days' (the days after a
+#' death before a death in the backlog can be recorded; 0 by default)
 backlog_settings <- function(supplied) {
   backlog <- list(share_mu=stats::qlogis(0.2), share_sd=1, share_rw_sd_scale=0.5,
                   share_week=7, rate_mu=log(1 / 60), rate_sd=1,
                   rate_rw_sd_scale=0.5, initial_share=0.2, initial_rate=1 / 60,
                   initial_share_rw_sd=0.2, initial_rate_rw_sd=0.2,
                   share_step=0.4, rate_step=0.3, rw_sd_step=0.3, n_blocks=6,
-                  n_steps=1, sampler="slice", ridge_step=0.5)
+                  n_steps=1, sampler="slice", ridge_step=0.5, hold_days=0)
   if(isTRUE(supplied))
     supplied <- list()
   unknown <- setdiff(names(supplied), names(backlog))
@@ -422,6 +430,8 @@ backlog_settings <- function(supplied) {
                 "n_blocks", "n_steps", "ridge_step")
   if(any(unlist(backlog[positive]) <= 0))
     stop("The scales, starting values, steps and blocks of the backlog must be positive.")
+  if(backlog$hold_days < 0 | backlog$hold_days != round(backlog$hold_days))
+    stop("The holding period of the backlog must be a whole number of days, 0 or more.")
   if(!backlog$sampler %in% c("slice", "metropolis"))
     stop("The sampler of the backlog must be 'slice' or 'metropolis'.")
   if(any(backlog$initial_share <= 0 | backlog$initial_share >= 1))

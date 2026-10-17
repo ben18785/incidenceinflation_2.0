@@ -1703,10 +1703,11 @@ deaths_draws <- function(state, iteration) {
 #' mean, in place of the delay of death_parameters
 #' @param recording_backlog an optional named list of 'share' (a single value
 #' or one for each onset time) and 'rate' (a single value or one for each day
-#' 1, 2, ...; later days have the last). That share of deaths join a backlog in
-#' place of the delay of death_parameters, and a death in the backlog is
-#' recorded on each day with that hazard, counted from the middle of the day
-#' of death. The share of a case dated by death is that of the day it is
+#' 1, 2, ...; later days have the last), and optionally 'hold_days' (0 by
+#' default). That share of deaths join a backlog in place of the delay of
+#' death_parameters, and a death in the backlog is recorded on each day with
+#' that hazard, counted from the middle of the day hold_days after the day of
+#' death. The share of a case dated by death is that of the day it is
 #' recorded for. Needs onset_to_death
 #' @param wrong an optional named list of 'eta', 'rho' and 'delta', which adds
 #' wrong records to the reports. On each day after the day for which cases
@@ -1793,7 +1794,8 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
     rate <- recording_backlog$rate
     f_rate <- function(days) rate[pmin(days, length(rate))]
     target <- stats::rexp(sum(is_backlog))
-    start <- day_death[is_backlog]
+    hold <- if(is.null(recording_backlog$hold_days)) 0 else recording_backlog$hold_days
+    start <- day_death[is_backlog] + hold
     waited <- f_rate(start) / 2
     k <- rep(0, length(start))
     is_waiting <- waited < target
@@ -1802,7 +1804,7 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
       waited[is_waiting] <- waited[is_waiting] + f_rate(start[is_waiting] + k[is_waiting])
       is_waiting <- waited < target
     }
-    delay[is_backlog] <- k
+    delay[is_backlog] <- hold + k
     delay
   }
 

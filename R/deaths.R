@@ -172,8 +172,6 @@ deaths_settings <- function(n_days, settings=list()) {
       stop("The initial proportion of fatal cases reported when their death is recorded must lie strictly between 0 and 1.")
     if(triggered$step <= 0)
       stop("The standard deviation of the changes proposed in the proportion of fatal cases reported when their death is recorded must be positive.")
-    if(isTRUE(defaults$dated_by_death$exact))
-      stop("Fatal cases reported when their death is recorded cannot be combined with the exact form of fatal cases dated by death.")
     defaults$triggered <- triggered
   }
   if(!identical(defaults$recording_tail, FALSE)) {
@@ -1252,7 +1250,9 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
     forward <- f_forward(deaths_true)
     if(!is.finite(forward$logp))
       stop(paste0("The reports of cases and deaths are impossible given the true cases and deaths (onset time ",
-                  state$onset_times[k], ")."))
+                  state$onset_times[k], ": ", cases_true[k], " cases, ", deaths_true,
+                  " fatal, ", dated$out[k], " of them dated by death, ", dated$into[k],
+                  " dated by death into the day)."))
     for(proposal in seq_len(n_proposals)) {
       proposed <- deaths_true + sample(c(-1, 1), 1) * sample.int(step_max, 1)
       if(proposed < dated$out[k] | proposed > cases_true[k])

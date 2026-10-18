@@ -155,7 +155,8 @@ log_undetected_days_backlog <- function(days, day_onset, reporting_parameters,
     return(a)
   b <- log(share) + log_backlog_days(days, day_onset, backlog,
                                      revision_parameters$before)
-  pmax(a, b) + log1p(exp(-abs(a - b)))
+  # a probability, which rounding can take just above one
+  pmin(pmax(a, b) + log1p(exp(-abs(a - b))), 0)
 }
 
 #' Updates the backlog: the share for each onset week, the hazard for each

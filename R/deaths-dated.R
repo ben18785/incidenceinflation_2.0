@@ -172,9 +172,15 @@ initial_dated_state <- function(state, dated, cases_before=NULL) {
     # there are no more of them than the deaths in the latest report
     n_dated <- min(round(dated$fraction[t] * fatal_recorded[t]),
                    utils::tail(state$reports[[t]]$deaths_reported, 1))
+    reports <- state$reports[[t]]
+    # in the exact form each enters as a case and a death in the same report,
+    # so there are no more than the reports' increases in both allow
+    if(isTRUE(dated$exact))
+      n_dated <- min(n_dated, sum(pmin(
+        pmax(diff(c(0, reports$cases_reported)), 0),
+        pmax(diff(c(0, reports$deaths_reported)), 0))))
     # where a death is recorded only after the time from onset to death, a
     # death shown on the day itself must be that of a case dated by death
-    reports <- state$reports[[t]]
     if(identical(dated$reporting, "recording") &&
        any(reports$deaths_reported[reports$time_reported == state$onset_times[t]] > 0))
       n_dated <- max(n_dated, 1)

@@ -73,13 +73,13 @@ test_that("the fraction dated by death can be given a prior", {
   expect_error(deaths_settings(30, list(
     dated_by_death=list(fraction=0.2, mean=7, sd=3, reporting="recording"))),
     "onset_to_death")
-  # with fatal cases reported when their death is recorded, but not exactly
+  # with fatal cases reported when their death is recorded, in either form
   expect_type(deaths_settings(30, list(
     onset_to_death=onset_to_death, triggered=list(),
     dated_by_death=list(fraction=list())))$triggered, "list")
-  expect_error(deaths_settings(30, list(
+  expect_true(deaths_settings(30, list(
     onset_to_death=onset_to_death, triggered=list(),
-    dated_by_death=list(fraction=0.2, exact=TRUE))), "exact form")
+    dated_by_death=list(fraction=0.2, exact=TRUE)))$dated_by_death$exact)
 })
 
 test_that("fatal cases dated by death combine with those reported at death", {

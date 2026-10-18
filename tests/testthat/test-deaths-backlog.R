@@ -146,6 +146,48 @@ for(sampler in c("slice", "metropolis")) test_that(paste("the backlog is sampled
   expect_true(all(parameters$backlog_share_rw_sd > 0))
 })
 
+test_that("the backlog is sampled with the exact form of fatal cases dated by death", {
+  example <- backlog_example()
+  snapshots <- example$snapshots
+  set.seed(14)
+  fit <- mcmc_single(
+    niterations=5,
+    snapshot_with_Rt_index_df=snapshots %>%
+      dplyr::select(time_onset, time_reported, cases_reported) %>%
+      dplyr::mutate(Rt_index=1),
+    priors=list(Rt=list(shape=1, rate=1),
+                reporting=list(mean_mu=6, mean_sigma=5, sd_mu=4, sd_sigma=4),
+                max_cases=300, Rt_changepoints=list(),
+                reporting_changepoints=list(min_length=14)),
+    serial_parameters=example$serial_parameters,
+    initial_cases_true=example$initial_cases,
+    initial_reporting_parameters=list(mean=6, sd=4),
+    initial_Rt=dplyr::tibble(Rt_index=1, Rt=1),
+    print_to_screen=FALSE,
+    cases_before=example$cases_before,
+    deaths=list(
+      snapshot=snapshots %>%
+        dplyr::select(time_onset, time_reported, deaths_reported),
+      settings=list(onset_to_death=list(mean=9.3, sd=5.5), fatal_delay=FALSE,
+                    triggered=list(), recording_backlog=list(hold_days=5),
+                    dated_by_death=list(fraction=list(), exact=TRUE))))
+  expect_equal(nrow(fit$deaths), 5 * 30)
+  both <- dplyr::left_join(fit$deaths, fit$cases, by=c("iteration", "time_onset"))
+  expect_true(all(both$deaths_true <= both$cases_true))
+  expect_true(all(fit$deaths$dated_by_death <= fit$deaths$deaths_recorded))
+  expect_true(all(is.finite(fit$deaths_parameters$triggered)))
+})
+
+test_that("the probability a death in the backlog is not recorded is at most one", {
+  backlog <- backlog_constant(0.3, 0.05, n_days=60, report_days=1:60)
+  log_s <- log_undetected_days(1:40, 1, list(mean=3, sd=2.5),
+                               list(before=list(lag_probabilities=
+                                                  lag_probabilities_gamma(9.3, 5.5)),
+                                    backlog=backlog))
+  expect_true(all(log_s <= 0))
+  expect_equal(log_s[1], 0)
+})
+
 test_that("elliptical slice sampling with a normal likelihood draws from the posterior", {
   set.seed(5)
   # prior N(1, 2^2), likelihood N(x; 3, 1): posterior N(2.6, 0.8)

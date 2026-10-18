@@ -85,6 +85,21 @@ test_that("joint_path_exact_forward gives the probability of the reports", {
                exact_paths_reference(cases, deaths_fall, 3, 1, 3, forward$arguments,
                                      wrong),
                tolerance=1e-8)
+  # with fatal cases reported when their death is recorded too, and none
+  # dated by death, it is again the model in which they are not followed
+  h <- lag_probabilities_gamma(4, 3)
+  survivals_triggered <- joint_survivals(
+    days, 2, list(mean=4, sd=3), list(mean=3, sd=2.5), NULL, "recording",
+    list(before=list(lag_probabilities=h)), 0, 0.6)
+  expect_equal(
+    joint_path_exact_forward(cases, deaths, 3, 0, 4, survivals_triggered)$logp,
+    joint_path_forward(cases, deaths, 3, 4, path_probabilities(survivals_triggered, 0))$logp)
+  for(dated in 1:2) {
+    forward <- joint_path_exact_forward(cases, deaths, 3, dated, 3, survivals_triggered)
+    expect_equal(forward$logp,
+                 exact_paths_reference(cases, deaths, 3, dated, 3, forward$arguments, none),
+                 tolerance=1e-8)
+  }
   expect_equal(joint_path_exact_forward(cases, deaths, -1, 1, 3, survivals)$logp, -Inf)
   expect_error(joint_path_exact_forward(c(1, 2), c(2, 2), 2, 1, 3, survivals))
 

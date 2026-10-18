@@ -15,14 +15,28 @@ public:
   std::vector<double> p, p_fatal, p_dated, g, q, lambda, w, log_factorial;
   double delta;
   std::vector<double> kernel;
+  // optional: for each report, the wrong records present (as an index of
+  // wrong_alive and wrong_dead) and the fatal cases of each kind which have
+  // been reported; empty if free. Fixing the wrong records lets them be
+  // updated separately from the rest, which is much faster.
+  std::vector<int> fixed_wrong, fixed_r, fixed_d;
 
   JointPathExact(NumericVector cases_, NumericVector deaths_, int fatal_,
                  int dated_, int survivors_, NumericVector p_,
                  NumericVector p_fatal_, NumericVector p_dated_,
                  NumericVector g_, NumericVector q_, NumericVector lambda_,
-                 NumericVector w_, double delta_, int max_erroneous_) :
+                 NumericVector w_, double delta_, int max_erroneous_,
+                 IntegerVector fixed_wrong_, IntegerVector fixed_r_,
+                 IntegerVector fixed_d_) :
     n_reports(cases_.size()), fatal(fatal_), dated(dated_), survivors(survivors_),
     max_erroneous(max_erroneous_), delta(delta_) {
+    fixed_wrong = as<std::vector<int> >(fixed_wrong_);
+    fixed_r = as<std::vector<int> >(fixed_r_);
+    fixed_d = as<std::vector<int> >(fixed_d_);
+    if((fixed_wrong.size() > 0 && (int) fixed_wrong.size() != n_reports) ||
+       (fixed_r.size() > 0 && (int) fixed_r.size() != n_reports) ||
+       (fixed_d.size() > 0 && (int) fixed_d.size() != n_reports))
+      stop("Fixed paths must have an element for each report.");
     // counts before the first report are zero
     cases.push_back(0);
     deaths.push_back(0);
@@ -102,8 +116,12 @@ public:
   // for report j (counted from one), the probability of each change in the
   // wrong records present, summed over those removed
   void set_kernel(int j) {
+    std::fill(kernel.begin(), kernel.end(), 0.0);
     for(int from = 0; from < n_wrong; from++)
       for(int to = 0; to < n_wrong; to++) {
+        if(!fixed_wrong.empty() &&
+           (from != (j == 1 ? 0 : fixed_wrong[j - 2]) || to != fixed_wrong[j - 1]))
+          continue;
         double total = 0.0;
         for(int removed_alive = 0; removed_alive <= wrong_alive[from]; removed_alive++)
           for(int removed_dead = 0; removed_dead <= wrong_dead[from]; removed_dead++)
@@ -174,6 +192,8 @@ public:
         largest = std::max(largest, alpha[(j - 1) * n_states() + i]);
       for(int from = 0; from < n_wrong; from++) {
         int wrong_from = wrong_alive[from] + wrong_dead[from];
+        if(!fixed_wrong.empty() && from != (j == 1 ? 0 : fixed_wrong[j - 2]))
+          continue;
         for(int d = 0; d <= d_max; d++)
           for(int r = 0; r <= r_max; r++) {
             double weight = alpha[index(j - 1, from, d, r)];
@@ -185,12 +205,17 @@ public:
                 continue;
               int wrong_to = wrong_alive[to] + wrong_dead[to];
               int genuine_new = cases_new - (wrong_to - wrong_from);
-              for(int a_d = 0; a_d <= std::min(genuine_new, d_max - d); a_d++)
+              for(int a_d = 0; a_d <= std::min(genuine_new, d_max - d); a_d++) {
+                if(!fixed_d.empty() && d + a_d != fixed_d[j - 1])
+                  continue;
                 for(int a = 0; a <= std::min(genuine_new - a_d, r_max - r); a++) {
+                  if(!fixed_r.empty() && r + a != fixed_r[j - 1])
+                    continue;
                   double value = genuine(j, from, r, d, to, r + a, d + a_d);
                   if(value > 0.0)
                     alpha[index(j, to, d + a_d, r + a)] += weight * weight_wrong * value;
                 }
+              }
             }
           }
       }
@@ -238,6 +263,13 @@ public:
 //' @param p_dated the same for a fatal case dated by death
 //' @param g for each report, the probability a fatal case dated by onset
 //' which is newly reported in it is shown as dead in it
+//' @param fixed_wrong optional: for each report, the wrong records present,
+//' as an index counted from zero of the pairs (shown as alive, shown as dead)
+//' ordered by their total and then by those shown as dead; the probability
+//' returned is then that of the reports and these wrong records
+//' @param fixed_r optional: for each report, the fatal cases dated by onset
+//' reported by it
+//' @param fixed_d optional: the same for those dated by death
 //'
 //' @return as \code{joint_path_forward_cpp}
 // [[Rcpp::export]]
@@ -247,9 +279,13 @@ List joint_path_exact_forward_cpp(NumericVector cases, NumericVector deaths,
                                   NumericVector p_dated, NumericVector g,
                                   NumericVector q, NumericVector lambda,
                                   NumericVector w, double delta,
-                                  int max_erroneous, double negligible = 1e-12) {
+                                  int max_erroneous, double negligible = 1e-12,
+                                  IntegerVector fixed_wrong = IntegerVector(0),
+                                  IntegerVector fixed_r = IntegerVector(0),
+                                  IntegerVector fixed_d = IntegerVector(0)) {
   JointPathExact path(cases, deaths, fatal, dated, survivors, p, p_fatal,
-                      p_dated, g, q, lambda, w, delta, max_erroneous);
+                      p_dated, g, q, lambda, w, delta, max_erroneous,
+                      fixed_wrong, fixed_r, fixed_d);
   std::vector<double> alpha;
   double logp = path.forward(alpha, negligible);
   return List::create(Named("logp") = logp, Named("alpha") = wrap(alpha));
@@ -277,9 +313,13 @@ NumericMatrix joint_path_exact_backward_cpp(NumericVector alpha,
                                             NumericVector g, NumericVector q,
                                             NumericVector lambda,
                                             NumericVector w, double delta,
-                                            int max_erroneous) {
+                                            int max_erroneous,
+                                            IntegerVector fixed_wrong = IntegerVector(0),
+                                            IntegerVector fixed_r = IntegerVector(0),
+                                            IntegerVector fixed_d = IntegerVector(0)) {
   JointPathExact path(cases, deaths, fatal, dated, survivors, p, p_fatal,
-                      p_dated, g, q, lambda, w, delta, max_erroneous);
+                      p_dated, g, q, lambda, w, delta, max_erroneous,
+                      fixed_wrong, fixed_r, fixed_d);
   int n_reports = path.n_reports;
   int n_wrong = path.n_wrong;
   int n_r = path.r_max + 1;

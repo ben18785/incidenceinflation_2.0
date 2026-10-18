@@ -864,11 +864,15 @@ joint_path_backward <- function(forward) {
 #' are dated by onset
 #' @param fatal_dated the number which are dated by death
 #' @param survivals as returned by \code{joint_survivals}
+#' @param fixed optional: a list which may hold, for each report, 'wrong' (the
+#' wrong records present, as returned by \code{exact_fixed_wrong}), 'r' (the
+#' fatal cases dated by onset reported by it) and 'd' (those dated by death).
+#' The probability is then that of the reports and of what is fixed.
 #'
 #' @return as \code{joint_path_forward}
 joint_path_exact_forward <- function(cases_reported, deaths_reported, fatal_onset,
                                      fatal_dated, survivors_true, survivals,
-                                     wrong=NULL) {
+                                     wrong=NULL, fixed=NULL) {
   n_reports <- length(cases_reported)
   if(any(deaths_reported > cases_reported))
     stop("Reported deaths must not exceed reported cases.")
@@ -885,13 +889,14 @@ joint_path_exact_forward <- function(cases_reported, deaths_reported, fatal_onse
     g=probabilities$g, q=probabilities$q,
     lambda=as.numeric(wrong$lambda), w=as.numeric(wrong$w), delta=wrong$delta,
     max_erroneous=as.integer(wrong$max_erroneous))
+  for(name in c("wrong", "r", "d"))
+    if(!is.null(fixed[[name]]))
+      arguments[[paste0("fixed_", name)]] <- as.integer(fixed[[name]])
   if(fatal_onset < 0 | fatal_dated < 0 | survivors_true < 0)
     return(list(logp=-Inf, alpha=NULL, arguments=arguments))
-  forward <- do.call(joint_path_exact_forward_cpp, arguments)
-  # states of negligible probability are dropped for speed; if that leaves
-  # nothing, none are dropped
-  if(!is.finite(forward$logp))
-    forward <- do.call(joint_path_exact_forward_cpp, c(arguments, list(negligible=0)))
+  # no states are dropped as negligible: one unlikely given the reports so far
+  # may be the only one which later reports allow
+  forward <- do.call(joint_path_exact_forward_cpp, c(arguments, list(negligible=0)))
   forward$arguments <- arguments
   forward
 }
@@ -904,8 +909,10 @@ joint_path_exact_forward <- function(cases_reported, deaths_reported, fatal_onse
 #' @return as \code{joint_path_backward}, where the fatal cases and the
 #' deaths are those dated by onset, with vectors 'dated_new' and
 #' 'dated_before' added for the fatal cases dated by death (those newly
-#' reported in each report and those reported by the report before), and
-#' 'is_exact' (TRUE)
+#' reported in each report and those reported by the report before),
+#' 'fatal_reported' and 'dated_reported' (those of each kind reported by each
+#' report), 'wrong_alive' and 'wrong_dead' (the wrong records present in each
+#' report shown as alive and as dead) and 'is_exact' (TRUE)
 joint_path_exact_backward <- function(forward) {
   arguments <- forward$arguments
   drawn <- do.call(joint_path_exact_backward_cpp,
@@ -931,7 +938,49 @@ joint_path_exact_backward <- function(forward) {
     wrong_entered_dead=wrong_dead - f_before(wrong_dead) + drawn[, 6],
     dated_new=dated - f_before(dated),
     dated_before=f_before(dated),
+    fatal_reported=fatal, dated_reported=dated,
+    wrong_alive=wrong_alive, wrong_dead=wrong_dead,
     is_exact=TRUE)
+}
+
+#' The wrong records present in each report of a path drawn in the exact form
+#'
+#' @param path as returned by \code{joint_path_exact_backward}
+#'
+#' @return for each report, the index (counted from zero) of the pair (shown
+#' as alive, shown as dead) used by \code{joint_path_exact_forward_cpp}; NULL
+#' if the path does not hold them
+exact_fixed_wrong <- function(path) {
+  if(is.null(path$wrong_alive))
+    return(NULL)
+  total <- path$wrong_alive + path$wrong_dead
+  as.integer(total * (total + 1) / 2 + path$wrong_dead)
+}
+
+#' Draws a path in the exact form in two parts: the fatal cases of each kind
+#' reported given the wrong records, then the wrong records given those
+#'
+#' Following the wrong records together with the fatal cases of both kinds
+#' makes the filter slow, so the first is drawn given the wrong records of the
+#' path before and the second given the fatal cases just drawn, which leaves
+#' the distribution of all of them unchanged.
+#'
+#' @param forward as returned by \code{joint_path_exact_forward} with the wrong
+#' records fixed (if they are not, the path is drawn as one)
+#'
+#' @return as \code{joint_path_exact_backward}
+joint_path_exact_redraw <- function(forward) {
+  path <- joint_path_exact_backward(forward)
+  arguments <- forward$arguments
+  if(is.null(arguments$fixed_wrong))
+    return(path)
+  arguments$fixed_wrong <- NULL
+  arguments$fixed_r <- as.integer(path$fatal_reported)
+  arguments$fixed_d <- as.integer(path$dated_reported)
+  forward_wrong <- do.call(joint_path_exact_forward_cpp,
+                           c(arguments, list(negligible=0)))
+  forward_wrong$arguments <- arguments
+  joint_path_exact_backward(forward_wrong)
 }
 
 #' Log-probability, given how many of the cases in each report are fatal, of
@@ -1228,13 +1277,18 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
           (cases_true[k] - dated$out[k] + dated$into[k]) * l_units[[k]]$unit,
         w=l_units[[k]]$w, delta=state$delta, max_erroneous=max_erroneous)
     }
+    # in the exact form the wrong records are held at those of the path
+    # before, which is much faster, and drawn afterwards given the rest
+    fixed <- NULL
+    if(is_exact && is_wrong)
+      fixed <- list(wrong=exact_fixed_wrong(state$paths[[k]]))
     f_forward <- function(deaths_true) {
       fatal_recorded <- deaths_true - dated$out[k] + dated$into[k]
       if(is_exact)
         return(joint_path_exact_forward(
           reports$cases_reported, reports$deaths_reported,
           deaths_true - dated$out[k], dated$into[k], cases_true[k] - deaths_true,
-          survivals, wrong))
+          survivals, wrong, fixed))
       joint_path_forward(
         reports$cases_reported, reports$deaths_reported, fatal_recorded,
         cases_true[k] - deaths_true,
@@ -1248,6 +1302,11 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
       stats::dbinom(dated$out[k], deaths_true, dated$fraction[k], log=TRUE)
     deaths_true <- state$deaths_true[k]
     forward <- f_forward(deaths_true)
+    # if the wrong records held are impossible now, they are not held
+    if(!is.finite(forward$logp) && !is.null(fixed$wrong)) {
+      fixed <- NULL
+      forward <- f_forward(deaths_true)
+    }
     if(!is.finite(forward$logp))
       stop(paste0("The reports of cases and deaths are impossible given the true cases and deaths (onset time ",
                   state$onset_times[k], ": ", cases_true[k], " cases, ", deaths_true,
@@ -1265,7 +1324,7 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
       }
     }
     state$deaths_true[k] <- deaths_true
-    paths[[k]] <- if(is_exact) joint_path_exact_backward(forward)
+    paths[[k]] <- if(is_exact) joint_path_exact_redraw(forward)
     else joint_path_backward(forward)
     l_survivals[[k]] <- survivals
     l_wrong[k] <- list(wrong)

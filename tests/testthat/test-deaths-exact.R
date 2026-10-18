@@ -173,3 +173,49 @@ test_that("mcmc_single runs with the exact form for fatal cases dated by death",
     dplyr::summarise(dated=sum(dated_by_death))
   expect_true(length(unique(totals$dated)) > 3)
 })
+
+test_that("the exact form with the wrong records or the counts held sums to the free form", {
+  days <- c(3, 4, 6, 8)
+  cases <- c(2, 4, 5, 6)
+  deaths <- c(1, 2, 1, 3)
+  survivals <- joint_survivals(days, 2, list(mean=4, sd=3), list(mean=6, sd=4),
+                               dated_reporting_parameters=list(mean=1.5, sd=1),
+                               nu=-0.3)
+  wrong <- list(lambda=c(0.3, 0.2, 0.1, 0.3), w=c(0, 0.3, 0.5, 0.4), delta=0.4,
+                max_erroneous=1)
+  f_sum <- function(logps) {
+    logps <- logps[is.finite(logps)]
+    max(logps) + log(sum(exp(logps - max(logps))))
+  }
+  free <- joint_path_exact_forward(cases, deaths, 3, 1, 3, survivals, wrong)$logp
+  # over every path of the wrong records (three pairs each report)
+  paths_wrong <- as.matrix(expand.grid(rep(list(0:2), 4)))
+  logps <- apply(paths_wrong, 1, function(x)
+    joint_path_exact_forward(cases, deaths, 3, 1, 3, survivals, wrong,
+                             list(wrong=x))$logp)
+  expect_equal(f_sum(logps), free, tolerance=1e-8)
+  # over every path of the fatal cases of each kind reported
+  paths_r <- as.matrix(expand.grid(rep(list(0:3), 4)))
+  paths_r <- paths_r[apply(paths_r, 1, function(x) all(diff(x) >= 0)), ]
+  paths_d <- as.matrix(expand.grid(rep(list(0:1), 4)))
+  paths_d <- paths_d[apply(paths_d, 1, function(x) all(diff(x) >= 0)), ]
+  logps <- unlist(lapply(seq_len(nrow(paths_r)), function(i)
+    sapply(seq_len(nrow(paths_d)), function(j)
+      joint_path_exact_forward(cases, deaths, 3, 1, 3, survivals, wrong,
+                               list(r=paths_r[i, ], d=paths_d[j, ]))$logp)))
+  expect_equal(f_sum(logps), free, tolerance=1e-8)
+
+  # a path drawn in two parts keeps what it holds fixed consistent
+  set.seed(3)
+  forward <- joint_path_exact_forward(cases, deaths, 3, 1, 3, survivals, wrong)
+  path <- joint_path_exact_backward(forward)
+  for(i in 1:20) {
+    forward <- joint_path_exact_forward(cases, deaths, 3, 1, 3, survivals, wrong,
+                                        list(wrong=exact_fixed_wrong(path)))
+    expect_true(is.finite(forward$logp))
+    path <- joint_path_exact_redraw(forward)
+    expect_equal(cumsum(path$fatal_new + path$dated_new + path$survivors_new) +
+                   path$wrong_alive + path$wrong_dead, cases)
+    expect_equal(cumsum(path$deaths_new + path$dated_new) + path$wrong_dead, deaths)
+  }
+})

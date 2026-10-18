@@ -62,10 +62,17 @@ joint_path_backward_cpp <- function(alpha, cases, deaths, fatal, survivors, p, p
 #' @param p_dated the same for a fatal case dated by death
 #' @param g for each report, the probability a fatal case dated by onset
 #' which is newly reported in it is shown as dead in it
+#' @param fixed_wrong optional: for each report, the wrong records present,
+#' as an index counted from zero of the pairs (shown as alive, shown as dead)
+#' ordered by their total and then by those shown as dead; the probability
+#' returned is then that of the reports and these wrong records
+#' @param fixed_r optional: for each report, the fatal cases dated by onset
+#' reported by it
+#' @param fixed_d optional: the same for those dated by death
 #'
 #' @return as \code{joint_path_forward_cpp}
-joint_path_exact_forward_cpp <- function(cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous, negligible = 1e-12) {
-    .Call(`_incidenceinflation_joint_path_exact_forward_cpp`, cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous, negligible)
+joint_path_exact_forward_cpp <- function(cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous, negligible = 1e-12, fixed_wrong = integer(0), fixed_r = integer(0), fixed_d = integer(0)) {
+    .Call(`_incidenceinflation_joint_path_exact_forward_cpp`, cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous, negligible, fixed_wrong, fixed_r, fixed_d)
 }
 
 #' Samples backwards over the reports of the cases recorded for one day,
@@ -79,8 +86,8 @@ joint_path_exact_forward_cpp <- function(cases, deaths, fatal, dated, survivors,
 #' dated by onset reported by it, those dated by death reported by it, the
 #' wrong records present which are shown as alive and as dead, and the wrong
 #' records of each kind removed since the report before
-joint_path_exact_backward_cpp <- function(alpha, cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous) {
-    .Call(`_incidenceinflation_joint_path_exact_backward_cpp`, alpha, cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous)
+joint_path_exact_backward_cpp <- function(alpha, cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous, fixed_wrong = integer(0), fixed_r = integer(0), fixed_d = integer(0)) {
+    .Call(`_incidenceinflation_joint_path_exact_backward_cpp`, alpha, cases, deaths, fatal, dated, survivors, p, p_fatal, p_dated, g, q, lambda, w, delta, max_erroneous, fixed_wrong, fixed_r, fixed_d)
 }
 
 #' Forward recursion for observation process allowing downward revisions

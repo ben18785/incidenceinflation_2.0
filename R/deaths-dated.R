@@ -340,10 +340,15 @@ dated_logp <- function(state, cases_true, cohorts=seq_along(state$onset_times),
 #' @return as \code{joint_path_exact_forward}
 dated_exact_forward <- function(state, cases_true, t) {
   reports <- state$reports[[t]]
+  wrong <- state$wrong[[t]]
+  # the wrong records are held at those of the current path (see
+  # deaths_paths_step)
+  fixed <- if(!is.null(wrong) && wrong$max_erroneous > 0)
+    list(wrong=exact_fixed_wrong(state$paths[[t]]))
   joint_path_exact_forward(
     reports$cases_reported, reports$deaths_reported,
     state$deaths_true[t] - state$dated$out[t], state$dated$into[t],
-    cases_true[t] - state$deaths_true[t], state$survivals[[t]], state$wrong[[t]])
+    cases_true[t] - state$deaths_true[t], state$survivals[[t]], wrong, fixed)
 }
 
 #' Applies a change to the fatal cases dated by death
@@ -474,7 +479,7 @@ deaths_dated_step <- function(state, cases_true, renewal) {
       # again for the onset time whose numbers changed
       if(dated$exact)
         for(t in proposed$days)
-          state$paths[[t]] <- joint_path_exact_backward(
+          state$paths[[t]] <- joint_path_exact_redraw(
             dated_exact_forward(state, cases_true, t))
     }
   }

@@ -180,10 +180,12 @@ initial_dated_state <- function(state, dated, cases_before=NULL) {
         pmax(diff(c(0, reports$cases_reported)), 0),
         pmax(diff(c(0, reports$deaths_reported)), 0))))
     # where a death is recorded only after the time from onset to death, a
-    # death shown on the day itself must be that of a case dated by death
-    if(identical(dated$reporting, "recording") &&
-       any(reports$deaths_reported[reports$time_reported == state$onset_times[t]] > 0))
-      n_dated <- max(n_dated, 1)
+    # death shown on the day itself must be that of a case dated by death (in
+    # the exact form, every such death)
+    shown_same_day <- max(c(0, reports$deaths_reported[
+      reports$time_reported == state$onset_times[t]]))
+    if(identical(dated$reporting, "recording") && shown_same_day > 0)
+      n_dated <- max(n_dated, ifelse(isTRUE(dated$exact), shown_same_day, 1))
     weights <- h * (seq_len(max_lag) < t)
     weight_inflow <- (inflow_weight[t] > 0) * sum(h[seq_len(max_lag) >= t])
     if(n_dated == 0 | sum(weights) + weight_inflow == 0)

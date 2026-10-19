@@ -1411,6 +1411,24 @@ deaths_wrong_mean <- function(state, k, revision_parameters=NULL) {
   revision_parameters$eta * state$wrong_units[[k]]$unit
 }
 
+#' Log-probabilities of the recording of deaths and of the true fatal cases
+#' at the current state
+#'
+#' @inheritParams deaths_paths_step
+#'
+#' @return a named vector: 'recording', the log-probability of the deaths
+#' recorded given the delay from onset to a death being recorded and what
+#' acts on it; and 'fatal', that of the true fatal cases of each onset time
+#' given the true cases and the case fatality ratio
+deaths_log_likelihood <- function(state, cases_true) {
+  piece <- segment_indices(state$recording$starts, length(state$onset_times))
+  f_logl <- deaths_recording_logp_function(state)
+  recording <- sum(vapply(seq_len(nrow(state$recording$parameters)), function(j)
+    f_logl(which(piece == j), state$recording$parameters[j, ]), numeric(1)))
+  c(recording=recording,
+    fatal=sum(stats::dbinom(state$deaths_true, cases_true, state$cfr, log=TRUE)))
+}
+
 #' Samples the true fatal cases of every onset time given the true cases
 #'
 #' @inheritParams deaths_paths_step

@@ -1209,7 +1209,9 @@ metropolis_step_revisions <- function(
 #' has been reported and its death recorded, the latter after its own delay
 #' from onset, which can also change. The results then include "deaths" (the
 #' true fatal cases, case fatality ratio and delay for each onset time) and
-#' "deaths_parameters". The list can also contain 'uncorrected': a tibble
+#' "deaths_parameters", and "log_likelihood" (the terms of the log-likelihood
+#' at the end of each iteration, see \code{deaths_log_likelihood}, to compare
+#' where chains are). The list can also contain 'uncorrected': a tibble
 #' with columns time_onset, time_reported, cases_reported and deaths_reported
 #' holding reports made before a report which corrected the records of those
 #' onset times (see \code{split_corrected_reports}); these inform the delays
@@ -1320,6 +1322,7 @@ mcmc_single <- function(
     }
     deaths_samples <- vector("list", niterations)
     deaths_parameters_samples <- vector("list", niterations)
+    log_likelihood_samples <- vector("list", niterations)
   }
 
   if(!is.null(cases_before)) {
@@ -2043,6 +2046,21 @@ mcmc_single <- function(
           dplyr::bind_rows(overdipersion_tmp)
     }
 
+    # the terms of the log-likelihood at the end of the iteration (priors left
+    # out), to compare where chains are: the reports given the paths and the
+    # reporting delay, the recording of deaths, the renewal of the true cases
+    # and the true fatal cases given the true cases
+    if(is_deaths) {
+      terms <- deaths_log_likelihood(deaths_state, deaths_cases_true)
+      log_likelihood_samples[[i]] <- dplyr::tibble(
+        iteration=i,
+        reports=sum(reporting_state$logl),
+        recording=terms[["recording"]],
+        renewal=if(is_negative_binomial) logp_overdispersion - logp_prior
+        else NA_real_,
+        fatal=terms[["fatal"]])
+    }
+
     # store cases
     cases_history_df <- cases_history_df %>%
       dplyr::select(-Rt_index) %>%
@@ -2130,6 +2148,7 @@ mcmc_single <- function(
   if(is_deaths) {
     list_results$deaths <- dplyr::bind_rows(deaths_samples)
     list_results$deaths_parameters <- dplyr::bind_rows(deaths_parameters_samples)
+    list_results$log_likelihood <- dplyr::bind_rows(log_likelihood_samples)
     if(is_uncorrected)
       list_results$deaths_uncorrected <- dplyr::bind_rows(uncorrected_samples)
   }

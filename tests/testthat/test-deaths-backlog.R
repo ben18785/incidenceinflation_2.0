@@ -176,6 +176,72 @@ test_that("the backlog is sampled with the exact form of fatal cases dated by de
   expect_true(all(both$deaths_true <= both$cases_true))
   expect_true(all(fit$deaths$dated_by_death <= fit$deaths$deaths_recorded))
   expect_true(all(is.finite(fit$deaths_parameters$triggered)))
+  # without negative binomial renewal, that term is missing
+  expect_equal(fit$log_likelihood$iteration, 1:5)
+  expect_true(all(is.na(fit$log_likelihood$renewal)))
+  expect_true(all(is.finite(fit$log_likelihood$reports)))
+})
+
+test_that("the terms of the log-likelihood are those of the state at the end of each iteration", {
+  example <- backlog_example()
+  snapshots <- example$snapshots
+  set.seed(15)
+  fit <- mcmc_single(
+    niterations=4,
+    snapshot_with_Rt_index_df=snapshots %>%
+      dplyr::select(time_onset, time_reported, cases_reported) %>%
+      dplyr::mutate(Rt_index=1),
+    priors=list(Rt=list(shape=1, rate=1),
+                reporting=list(mean_mu=6, mean_sigma=5, sd_mu=4, sd_sigma=4),
+                max_cases=300, overdispersion=list(mean=20, sd=20),
+                Rt_changepoints=list(),
+                reporting_changepoints=list(min_length=14)),
+    serial_parameters=example$serial_parameters,
+    initial_cases_true=example$initial_cases,
+    initial_reporting_parameters=list(mean=6, sd=4),
+    initial_Rt=dplyr::tibble(Rt_index=1, Rt=1),
+    print_to_screen=FALSE, is_negative_binomial=TRUE, initial_overdispersion=10,
+    cases_before=example$cases_before, return_state=TRUE,
+    deaths=list(
+      snapshot=snapshots %>%
+        dplyr::select(time_onset, time_reported, deaths_reported),
+      settings=list(onset_to_death=list(mean=9.3, sd=5.5), fatal_delay=FALSE,
+                    triggered=list(), recording_backlog=list(hold_days=5),
+                    dated_by_death=list(fraction=list(), exact=TRUE))))
+  logl <- fit$log_likelihood
+  expect_equal(logl$iteration, 1:4)
+  expect_true(all(is.finite(as.matrix(logl[, c("reports", "recording", "renewal", "fatal")]))))
+  v <- fit$state$variables
+  last <- logl[4, ]
+  terms <- deaths_log_likelihood(v$deaths_state, v$deaths_cases_true)
+  expect_equal(last$reports, sum(v$reporting_state$logl))
+  expect_equal(last$recording, terms[["recording"]])
+  expect_equal(last$fatal, terms[["fatal"]])
+  expect_equal(last$renewal, v$logp_overdispersion - v$logp_prior)
+  # carried on, the iterations are numbered on
+  more <- mcmc_single(
+    niterations=2,
+    snapshot_with_Rt_index_df=snapshots %>%
+      dplyr::select(time_onset, time_reported, cases_reported) %>%
+      dplyr::mutate(Rt_index=1),
+    priors=list(Rt=list(shape=1, rate=1),
+                reporting=list(mean_mu=6, mean_sigma=5, sd_mu=4, sd_sigma=4),
+                max_cases=300, overdispersion=list(mean=20, sd=20),
+                Rt_changepoints=list(),
+                reporting_changepoints=list(min_length=14)),
+    serial_parameters=example$serial_parameters,
+    initial_cases_true=example$initial_cases,
+    initial_reporting_parameters=list(mean=6, sd=4),
+    initial_Rt=dplyr::tibble(Rt_index=1, Rt=1),
+    print_to_screen=FALSE, is_negative_binomial=TRUE, initial_overdispersion=10,
+    cases_before=example$cases_before, resume_from=fit$state,
+    deaths=list(
+      snapshot=snapshots %>%
+        dplyr::select(time_onset, time_reported, deaths_reported),
+      settings=list(onset_to_death=list(mean=9.3, sd=5.5), fatal_delay=FALSE,
+                    triggered=list(), recording_backlog=list(hold_days=5),
+                    dated_by_death=list(fraction=list(), exact=TRUE))))
+  expect_equal(more$log_likelihood$iteration, 5:6)
 })
 
 test_that("the probability a death in the backlog is not recorded is at most one", {

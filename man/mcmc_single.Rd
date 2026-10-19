@@ -169,7 +169,9 @@ can change at unknown onset times. A fatal case is shown as dead once it
 has been reported and its death recorded, the latter after its own delay
 from onset, which can also change. The results then include "deaths" (the
 true fatal cases, case fatality ratio and delay for each onset time) and
-"deaths_parameters". The list can also contain 'uncorrected': a tibble
+"deaths_parameters", and "log_likelihood" (the terms of the log-likelihood
+at the end of each iteration, see \code{deaths_log_likelihood}, to compare
+where chains are). The list can also contain 'uncorrected': a tibble
 with columns time_onset, time_reported, cases_reported and deaths_reported
 holding reports made before a report which corrected the records of those
 onset times (see \code{split_corrected_reports}); these inform the delays

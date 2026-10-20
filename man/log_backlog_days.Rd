@@ -23,7 +23,8 @@ a vector of log-probabilities
 \description{
 The death happens z days after onset with probability h_z (or on the onset
 day itself, where there is no 'before'). Its record waits from the middle
-of the day of death to the end of each day:
-\deqn{\sum_{z > k} h_z + \sum_{z \le k} h_z \exp(-[L(t') - L(d) + \lambda_d / 2])}
+of the day m days after the day of death (m the holding period) to the end
+of each day:
+\deqn{\sum_{z > k} h_z + \sum_{z \le k} h_z \exp(-\max[0, L(t') - L(d + m) + \lambda_{d + m} / 2])}
 with k = t' - t, d = t + z and L the summed hazard.
 }

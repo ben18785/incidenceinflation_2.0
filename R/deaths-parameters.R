@@ -67,6 +67,7 @@ deaths_recording_weekday_step <- function(state, settings) {
     return(state)
   delays <- deaths_delay_by_onset(state)
   sub <- uncorrected_state(state)
+  cache <- new_lag_cache()
   f_effects <- function(log_effects) {
     effects$weekday_log_effects <- log_effects
     update_report_multipliers(effects)
@@ -74,9 +75,9 @@ deaths_recording_weekday_step <- function(state, settings) {
   f_logl <- function(log_effects) {
     proposed <- f_effects(log_effects)
     sum(purrr::map_dbl(seq_along(state$onset_times), function(k)
-      deaths_recording_day_logp(state, k, delay_of_onset(delays, k), proposed))) +
+      deaths_recording_day_logp(state, k, delay_of_onset(delays, k), proposed, cache))) +
       sum(purrr::map_dbl(seq_along(sub$onset_times), function(k)
-        deaths_recording_day_logp(sub, k, delay_of_onset(sub$delays, k), proposed)))
+        deaths_recording_day_logp(sub, k, delay_of_onset(sub$delays, k), proposed, cache)))
   }
   current <- list(log_effects=effects$weekday_log_effects)
   current$logl <- f_logl(current$log_effects)
@@ -113,11 +114,12 @@ deaths_recording_report_step <- function(state, report) {
     return(state)
   delays <- deaths_delay_by_onset(state)
   sub <- uncorrected_state(state)
+  cache <- new_lag_cache()
   f_logl <- function(effects)
     sum(purrr::map_dbl(seq_along(state$onset_times), function(k)
-      deaths_recording_day_logp(state, k, delay_of_onset(delays, k), effects))) +
+      deaths_recording_day_logp(state, k, delay_of_onset(delays, k), effects, cache))) +
     sum(purrr::map_dbl(seq_along(sub$onset_times), function(k)
-      deaths_recording_day_logp(sub, k, delay_of_onset(sub$delays, k), effects)))
+      deaths_recording_day_logp(sub, k, delay_of_onset(sub$delays, k), effects, cache)))
   logl <- f_logl(effects)
   n_reports <- length(effects$report_log_effects)
   f_accept <- function(proposed, log_ratio_prior) {
@@ -181,13 +183,14 @@ deaths_recording_tail_step <- function(state, tail) {
     return(state)
   delays <- deaths_delay_by_onset(state)
   sub <- uncorrected_state(state)
+  cache <- new_lag_cache()
   f_logp <- function(value) {
     effects <- state$recording_effects
     effects$tail <- value
     sum(purrr::map_dbl(seq_along(state$onset_times), function(k)
-      deaths_recording_day_logp(state, k, delay_of_onset(delays, k), effects))) +
+      deaths_recording_day_logp(state, k, delay_of_onset(delays, k), effects, cache))) +
       sum(purrr::map_dbl(seq_along(sub$onset_times), function(k)
-        deaths_recording_day_logp(sub, k, delay_of_onset(sub$delays, k), effects))) +
+        deaths_recording_day_logp(sub, k, delay_of_onset(sub$delays, k), effects, cache))) +
       stats::dbeta(value$weight, tail$weight_alpha, tail$weight_beta, log=TRUE) +
       stats::dgamma(value$mean, shape=tail$mean_mu^2 / tail$mean_sigma^2,
                     rate=tail$mean_mu / tail$mean_sigma^2, log=TRUE) +

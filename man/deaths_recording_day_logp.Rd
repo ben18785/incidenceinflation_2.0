@@ -9,7 +9,8 @@ deaths_recording_day_logp(
   state,
   k,
   death_parameters,
-  recording_effects = state$recording_effects
+  recording_effects = state$recording_effects,
+  cache = NULL
 )
 }
 \arguments{
@@ -21,6 +22,9 @@ deaths_recording_day_logp(
 from onset to a death being recorded}
 
 \item{recording_effects}{see \code{joint_survivals}}
+
+\item{cache}{NULL, or a cache shared by the calls of one update (see
+\code{new_lag_cache})}
 }
 \value{
 a log-probability

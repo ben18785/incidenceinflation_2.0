@@ -19,8 +19,11 @@ for the sd of its steps over seven days), 'initial_share', 'initial_rate',
 'initial_share_rw_sd', 'initial_rate_rw_sd' (the starting share may be one
 value for each onset day, and the starting hazard one for each day), the
 steps proposed ('share_step', 'rate_step', 'rw_sd_step', 'ridge_step'),
-'n_blocks', 'n_steps' and 'sampler' ('slice', the default, or 'metropolis';
-see \code{deaths_recording_backlog_step})
+'n_blocks', 'n_steps', 'sampler' ('slice', the default, or 'metropolis';
+see \code{deaths_recording_backlog_step}), 'hold_days' (the days after a
+death before a death in the backlog can be recorded; 0 by default) and
+'rate_days' (NULL, the default, for a hazard which can change at every
+report; or the days over which it is held: see \code{backlog_knots})
 }
 \description{
 Default settings of the backlog

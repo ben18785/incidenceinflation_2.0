@@ -78,6 +78,21 @@ log_undetected_days <- function(days, day_onset, reporting_parameters,
     log_survival_after_event(round(days_tmp - day_onset),
                              before$lag_probabilities, f_log_delay)
   }
+  # this depends on the days only through the whole days since onset, so a
+  # cache can hold it for every number of days, for all the onset days with
+  # the same delay
+  cache <- revision_parameters$lag_cache
+  if(is.environment(cache) && all(days - day_onset == round(days - day_onset)))
+    f_log_base <- function(days_tmp) {
+      lags <- round(days_tmp - day_onset)
+      lag_cache_values(cache, reporting_parameters, tail, before, max(lags),
+                       function(lags) {
+                         if(is.null(before))
+                           return(f_log_delay(lags + 0.5))
+                         log_survival_after_event(lags, before$lag_probabilities,
+                                                  f_log_delay)
+                       })[lags + 1]
+    }
 
   multipliers <- revision_parameters$report_multipliers
   n_days <- round(max(days) - day_onset)
@@ -92,6 +107,43 @@ log_undetected_days <- function(days, day_onset, reporting_parameters,
   values[is_within] <- multipliers$values[index[is_within]]
   log_effective <- log_base[1] - c(0, cumsum(values * -diff(log_base)))
   log_effective[round(days - day_onset) + 1]
+}
+
+#' A cache of the log-probabilities of remaining undetected by the days
+#' since onset, for \code{log_undetected_days}
+#'
+#' Put in revision_parameters as the element 'lag_cache', it lets onset days
+#' with the same delay share one calculation. The values are held by the
+#' delay and what alters it, so the cache stays right when these change;
+#' it is meant to last for one update of the parameters.
+#'
+#' @return an environment
+new_lag_cache <- function() new.env(parent=emptyenv())
+
+#' The log-probabilities of remaining undetected for days 0 to at least
+#' max_lag after onset, from the cache or calculated
+#'
+#' @param cache as returned by \code{new_lag_cache}
+#' @inheritParams log_undetected_days
+#' @param tail,before the elements of revision_parameters
+#' @param max_lag the most days since onset wanted
+#' @param f_log_lags the log-probabilities for a vector of days since onset
+#'
+#' @return a vector of log-probabilities for days 0, 1, ..., at least max_lag
+lag_cache_values <- function(cache, reporting_parameters, tail, before, max_lag,
+                             f_log_lags) {
+  # the key is exact: the hexadecimal form of each number
+  key <- paste(delay_family(), is.null(tail), is.null(before),
+               paste(sprintf("%a", c(reporting_parameters$mean, reporting_parameters$sd,
+                                     tail$weight, tail$mean,
+                                     before$lag_probabilities)),
+                     collapse=","))
+  values <- cache[[key]]
+  if(is.null(values) || length(values) < max_lag + 1) {
+    values <- f_log_lags(0:max_lag)
+    assign(key, values, envir=cache)
+  }
+  values
 }
 
 #' Log-probability that something which follows an event of a case by a

@@ -22,7 +22,8 @@
 # - 'share': the share for each onset day 1, 2, ...;
 # - 'log_rate': the log of the hazard for each report interval (the first is
 #   that of every day up to the first report);
-# - 'report_days': the days of the reports;
+# - 'report_days': the days of the reports (or, with setting 'rate_days', the
+#   last report of each block of days over which the hazard is held);
 # - 'cumulative': the hazard summed over days 1, 2, ..., to the last report;
 # - 'share_rw_sd' and 'rate_rw_sd': the standard deviations of the steps of
 #   the two random walks (that of the hazard for seven days);
@@ -38,6 +39,8 @@
 #' @return the element 'backlog' of the effects on recording
 initial_backlog <- function(n_days, report_days, backlog) {
   report_days <- sort(unique(report_days))
+  if(!is.null(backlog$rate_days))
+    report_days <- backlog_knots(report_days, backlog$rate_days)
   week_of_day <- (seq_len(n_days) - 1) %/% backlog$share_week + 1
   # a single starting value, or one for each onset day (the mean of each
   # week is taken) or each day (the mean of each report interval)
@@ -53,6 +56,21 @@ initial_backlog <- function(n_days, report_days, backlog) {
     hold_days=backlog$hold_days,
     share_rw_sd=backlog$initial_share_rw_sd,
     rate_rw_sd=backlog$initial_rate_rw_sd))
+}
+
+#' The reports at which the hazard of the backlog may change, where it is
+#' held over blocks of days
+#'
+#' Counting back from the last report, the reports are put in blocks of
+#' rate_days days, and the hazard changes only at the last report of each.
+#'
+#' @param report_days the days of the reports, in increasing order
+#' @param rate_days the days in a block
+#'
+#' @return the last report day of each block, in increasing order
+backlog_knots <- function(report_days, rate_days) {
+  block <- floor((max(report_days) - report_days) / rate_days)
+  sort(unique(as.vector(tapply(report_days, block, max))))
 }
 
 #' Recomputes the share of each onset day and the summed hazard of each day
@@ -129,13 +147,14 @@ log_backlog_days <- function(days, day_onset, backlog, before=NULL) {
   # the summed hazard from the middle of the day the holding period ends
   start <- backlog_cumulative(backlog, days_start) - rates_start / 2
   end <- backlog_cumulative(backlog, days)
-  vapply(seq_along(days), function(i) {
-    k <- lags[i]
-    z <- 0:min(k, z_max)
-    alive <- if(k < z_max) sum(h[(k + 2):(z_max + 1)]) else 0
-    p <- alive + sum(h[z + 1] * exp(-pmax(0, end[i] - start[z + 1])))
-    log(max(p, 1e-300))
-  }, numeric(1))
+  # for all the days at once: a row for each day and a column for each z,
+  # with the deaths after the day left out
+  is_dead <- outer(lags, 0:z_max, ">=")
+  recorded_not <- exp(-pmax(0, outer(end, start, "-"))) * is_dead
+  # the probability that the death has not happened by the end of the day
+  alive <- c(rev(cumsum(rev(h))), 0)[pmin(lags, z_max) + 2]
+  p <- alive + as.vector(recorded_not %*% h)
+  log(pmax(p, 1e-300))
 }
 
 #' Log-probability that a death has not been recorded, where a share of
@@ -190,13 +209,15 @@ deaths_recording_backlog_step <- function(state, settings) {
     return(state)
   delays <- deaths_delay_by_onset(state)
   sub <- uncorrected_state(state)
+  # the delay is held, so its part is calculated once for the whole update
+  cache <- new_lag_cache()
   f_logl <- function(effects, ks) {
     out <- sum(purrr::map_dbl(ks, function(k)
-      deaths_recording_day_logp(state, k, delay_of_onset(delays, k), effects)))
+      deaths_recording_day_logp(state, k, delay_of_onset(delays, k), effects, cache)))
     ks_sub <- which(sub$day %in% ks)
     if(length(ks_sub) > 0)
       out <- out + sum(purrr::map_dbl(ks_sub, function(k)
-        deaths_recording_day_logp(sub, k, delay_of_onset(sub$delays, k), effects)))
+        deaths_recording_day_logp(sub, k, delay_of_onset(sub$delays, k), effects, cache)))
     out
   }
   backlog <- effects$backlog
@@ -409,15 +430,18 @@ backlog_slice_steps <- function(backlog, settings, f_logl, f_log_prior_share,
 #' value for each onset day, and the starting hazard one for each day), the
 #' steps proposed ('share_step', 'rate_step', 'rw_sd_step', 'ridge_step'),
 #' 'n_blocks', 'n_steps', 'sampler' ('slice', the default, or 'metropolis';
-#' see \code{deaths_recording_backlog_step}) and 'hold_days' (the days after a
-#' death before a death in the backlog can be recorded; 0 by default)
+#' see \code{deaths_recording_backlog_step}), 'hold_days' (the days after a
+#' death before a death in the backlog can be recorded; 0 by default) and
+#' 'rate_days' (NULL, the default, for a hazard which can change at every
+#' report; or the days over which it is held: see \code{backlog_knots})
 backlog_settings <- function(supplied) {
   backlog <- list(share_mu=stats::qlogis(0.2), share_sd=1, share_rw_sd_scale=0.5,
                   share_week=7, rate_mu=log(1 / 60), rate_sd=1,
                   rate_rw_sd_scale=0.5, initial_share=0.2, initial_rate=1 / 60,
                   initial_share_rw_sd=0.2, initial_rate_rw_sd=0.2,
                   share_step=0.4, rate_step=0.3, rw_sd_step=0.3, n_blocks=6,
-                  n_steps=1, sampler="slice", ridge_step=0.5, hold_days=0)
+                  n_steps=1, sampler="slice", ridge_step=0.5, hold_days=0,
+                  rate_days=NULL)
   if(isTRUE(supplied))
     supplied <- list()
   unknown <- setdiff(names(supplied), names(backlog))
@@ -433,6 +457,10 @@ backlog_settings <- function(supplied) {
     stop("The scales, starting values, steps and blocks of the backlog must be positive.")
   if(backlog$hold_days < 0 | backlog$hold_days != round(backlog$hold_days))
     stop("The holding period of the backlog must be a whole number of days, 0 or more.")
+  if(!is.null(backlog$rate_days) &&
+     (length(backlog$rate_days) != 1 || backlog$rate_days < 1 ||
+      backlog$rate_days != round(backlog$rate_days)))
+    stop("The days over which the hazard of the backlog is held must be a whole number, 1 or more.")
   if(!backlog$sampler %in% c("slice", "metropolis"))
     stop("The sampler of the backlog must be 'slice' or 'metropolis'.")
   if(any(backlog$initial_share <= 0 | backlog$initial_share >= 1))

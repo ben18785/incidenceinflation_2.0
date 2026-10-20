@@ -653,3 +653,33 @@ test_that("mcmc recovers an effect of the day of the week", {
                      effects$weekday_4, effects$weekday_5))
   expect_true(weekend < 0.5 * weekdays)
 })
+
+test_that("with a cache the probabilities of remaining undetected are the same", {
+  before <- list(lag_probabilities=diff(stats::pgamma(0:30, 4, 0.4)))
+  multipliers <- report_multipliers(c(12, 15, 19, 26, 33, 40),
+                                    weekday_log_effects=stats::setNames(c(0.3, -0.1, -0.2, 0.1, 0, 0.2, -0.3), 1:7),
+                                    report_log_effects=c(0.2, -0.3, 0.1, 0, 0.4, -0.2))
+  backlog <- initial_backlog(40, c(12, 19, 26, 40), backlog_settings(TRUE))
+  settings <- list(
+    list(),
+    list(before=before),
+    list(report_multipliers=multipliers),
+    list(before=before, report_multipliers=multipliers),
+    list(tail=list(weight=0.2, mean=15)),
+    list(before=before, tail=list(weight=0.2, mean=15),
+         report_multipliers=multipliers),
+    list(before=before, report_multipliers=multipliers, backlog=backlog))
+  cache <- new_lag_cache()
+  for(revision_parameters in settings)
+    for(onset in c(3, 10, 25))
+      for(parameters in list(list(mean=8, sd=6), list(mean=12, sd=5))) {
+        days <- onset + c(0, 2, 5, 9, 20)
+        cached <- revision_parameters
+        cached$lag_cache <- cache
+        expect_identical(log_undetected_days(days, onset, parameters, cached),
+                         log_undetected_days(days, onset, parameters, revision_parameters))
+      }
+  # one set of values for each delay and what alters it, without the
+  # multipliers or the backlog
+  expect_equal(length(ls(cache)), 2 * 4)
+})

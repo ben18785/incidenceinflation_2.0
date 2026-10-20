@@ -1585,10 +1585,15 @@ deaths_reporting_logp_function <- function(state, cases_true,
 #' @param death_parameters named list of the 'mean' and 'sd' of the delay
 #' from onset to a death being recorded
 #' @param recording_effects see \code{joint_survivals}
+#' @param cache NULL, or a cache shared by the calls of one update (see
+#' \code{new_lag_cache})
 #'
 #' @return a log-probability
 deaths_recording_day_logp <- function(state, k, death_parameters,
-                                      recording_effects=state$recording_effects) {
+                                      recording_effects=state$recording_effects,
+                                      cache=NULL) {
+  if(!is.null(cache))
+    recording_effects$lag_cache <- cache
   path <- state$paths[[k]]
   dated <- purrr::map(dated_counts(state), k)
   survivals <- state$survivals[[k]]
@@ -1624,13 +1629,14 @@ deaths_recording_day_logp <- function(state, k, death_parameters,
 #' parameters of the delay from onset to a death being recorded)
 deaths_recording_logp_function <- function(state) {
   sub <- uncorrected_state(state)
+  cache <- new_lag_cache()
   function(indices, reporting_parameters) {
     if(reporting_parameters$mean <= 0 | reporting_parameters$sd <= 0)
       return(-Inf)
     sum(purrr::map_dbl(indices, function(k)
-      deaths_recording_day_logp(state, k, reporting_parameters))) +
+      deaths_recording_day_logp(state, k, reporting_parameters, cache=cache))) +
       sum(purrr::map_dbl(which(sub$day %in% indices), function(k)
-        deaths_recording_day_logp(sub, k, reporting_parameters)))
+        deaths_recording_day_logp(sub, k, reporting_parameters, cache=cache)))
   }
 }
 

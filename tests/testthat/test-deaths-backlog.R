@@ -109,7 +109,22 @@ backlog_example <- function() {
          dplyr::summarise(cases_true=max(cases_reported) + 2))
 }
 
-for(sampler in c("slice", "metropolis")) test_that(paste("the backlog is sampled by", sampler), {
+test_that("the hazard of the backlog can be held over blocks of days", {
+  # blocks of days 18 to 24, 11 to 17, 4 to 10 and up to 3
+  expect_equal(backlog_knots(c(3, 5, 9, 12, 16, 17, 20, 24), 7), c(3, 9, 17, 24))
+  expect_equal(backlog_knots(1:10, 1), 1:10)
+  expect_error(backlog_settings(list(rate_days=2.5)), "whole number")
+  backlog <- initial_backlog(30, c(3, 5, 9, 12, 16, 17, 20, 24),
+                             backlog_settings(list(rate_days=7)))
+  expect_equal(backlog$report_days, c(3, 9, 17, 24))
+  expect_length(backlog$log_rate, 4)
+  # the hazard changes only after the last report of each block
+  backlog$log_rate <- log(c(0.1, 0.2, 0.3, 0.4))
+  expect_equal(backlog_daily_rates(backlog), rep(c(0.1, 0.2, 0.3, 0.4), c(3, 6, 8, 7)))
+})
+
+for(sampler in c("slice", "metropolis", "slice, weekly hazard")) test_that(paste("the backlog is sampled by", sampler), {
+  is_weekly <- sampler == "slice, weekly hazard"
   example <- backlog_example()
   snapshots <- example$snapshots
   set.seed(13)
@@ -133,11 +148,15 @@ for(sampler in c("slice", "metropolis")) test_that(paste("the backlog is sampled
       snapshot=snapshots %>%
         dplyr::select(time_onset, time_reported, deaths_reported),
       settings=list(onset_to_death=list(mean=9.3, sd=5.5), fatal_delay=FALSE,
-                    triggered=list(), recording_backlog=list(sampler=sampler),
+                    triggered=list(),
+                    recording_backlog=if(is_weekly) list(rate_days=7)
+                    else list(sampler=sampler),
                     dated_by_death=list(fraction=list()))))
   parameters <- fit$deaths_parameters
   rates <- parameters[, grepl("^backlog_rate_[0-9]+$", names(parameters))]
-  expect_equal(ncol(rates), length(unique(snapshots$time_reported)))
+  report_days <- sort(unique(snapshots$time_reported))
+  expect_equal(ncol(rates), if(is_weekly) length(backlog_knots(report_days, 7))
+               else length(report_days))
   expect_true(all(as.matrix(rates) > 0))
   expect_gt(length(unique(rates[[1]])), 1)
   share <- fit$deaths$backlog_share
@@ -305,4 +324,36 @@ test_that("with a holding period, deaths in the backlog are recorded only after 
   # still to come
   expect_gt(expected[shown$time_reported == 14], 0.4)
   expect_error(backlog_settings(list(hold_days=-1)), "whole number")
+})
+
+test_that("the backlog's probability for all days at once is that of each day in turn", {
+  set.seed(3)
+  f_each <- function(days, day_onset, backlog, before) {
+    h <- if(is.null(before)) 1 else c(0, before$lag_probabilities)
+    z_max <- length(h) - 1
+    days_start <- day_onset + 0:z_max + backlog$hold_days
+    rates_start <- backlog_cumulative(backlog, days_start) -
+      backlog_cumulative(backlog, days_start - 1)
+    start <- backlog_cumulative(backlog, days_start) - rates_start / 2
+    end <- backlog_cumulative(backlog, days)
+    vapply(seq_along(days), function(i) {
+      k <- round(days[i] - day_onset)
+      alive <- if(k < z_max) sum(h[(k + 2):(z_max + 1)]) else 0
+      z <- 0:min(k, z_max)
+      log(alive + sum(h[z + 1] * exp(-pmax(0, end[i] - start[z + 1]))))
+    }, numeric(1))
+  }
+  for(trial in 1:30) {
+    report_days <- sort(sample(5:150, sample(3:40, 1)))
+    backlog <- initial_backlog(140, report_days,
+                               backlog_settings(list(hold_days=sample(0:5, 1))))
+    backlog$log_rate <- stats::rnorm(length(backlog$log_rate), log(0.05), 2)
+    backlog <- refresh_backlog(backlog)
+    onset <- sample(1:140, 1)
+    days <- sort(unique(onset + sample(0:60, sample(1:30, 1))))
+    before <- if(trial %% 4 > 0)
+      list(lag_probabilities=diff(stats::pgamma(0:sample(5:50, 1), 3, 0.3)))
+    expect_equal(log_backlog_days(days, onset, backlog, before),
+                 f_each(days, onset, backlog, before), tolerance=1e-12)
+  }
 })

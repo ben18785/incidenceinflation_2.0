@@ -37,6 +37,11 @@
 #' the fatal cases dated by onset and by death among those reported are
 #' followed separately, which is exact and slower; by default each fatal
 #' case recorded for a day is taken to be dated by death with a probability)
+#' and 'collapse_fraction' (if TRUE, and the fraction is estimated, the
+#' changes to which fatal cases are dated by death are made with the fraction
+#' integrated out, and the fraction is then drawn exactly given them: see
+#' \code{dated_fraction_marginal}. By default FALSE, the changes are made at
+#' the current fraction)
 #' @param onset_to_death NULL, or the element of that name of the result of
 #' \code{deaths_settings}: the time from onset to death of every fatal case
 #'
@@ -72,7 +77,7 @@ dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
   }
   unknown <- setdiff(names(dated),
                      c("fraction", "mean", "sd", "max_lag", "reporting", "n_moves",
-                       "exact"))
+                       "exact", "collapse_fraction"))
   if(length(unknown) > 0)
     stop(paste0("Unknown settings for dated_by_death: ",
                 paste(unknown, collapse=", "), "."))
@@ -83,6 +88,9 @@ dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
     stop("The fraction dated by death must lie between 0 and 1.")
   if(all(fraction == 0) & is.null(fraction_prior))
     return(NULL)
+  is_collapsed <- isTRUE(dated$collapse_fraction)
+  if(is_collapsed & is.null(fraction_prior))
+    stop("The fraction dated by death can be integrated out only if it is estimated.")
   if(is.null(dated$mean) || is.null(dated$sd) || dated$mean <= 0 || dated$sd <= 0)
     stop("A positive mean and sd of the time from onset to death must be given.")
   shape <- dated$mean^2 / dated$sd^2
@@ -112,7 +120,8 @@ dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
        lag_probabilities=lag_probabilities / sum(lag_probabilities),
        reporting=reporting,
        n_moves=n_moves,
-       exact=is_exact)
+       exact=is_exact,
+       collapse_fraction=is_collapsed)
 }
 
 #' Adds fatal cases dated by death to the starting state of the model of
@@ -288,10 +297,13 @@ x_log_y <- function(x, y) {
 #' @param cases_true a vector of the true cases of each onset time
 #' @param cohorts the days of onset to include, counted from one
 #' @param days the recorded days to include, counted from one
+#' @param collapsed if TRUE, the factors in which the fraction dated by death
+#'   appears are left out (they are those of \code{dated_fraction_terms},
+#'   which \code{dated_fraction_marginal} integrates over the fraction)
 #'
 #' @return a log-probability (-Inf if the state is impossible)
 dated_logp <- function(state, cases_true, cohorts=seq_along(state$onset_times),
-                       days=seq_along(state$onset_times)) {
+                       days=seq_along(state$onset_times), collapsed=FALSE) {
   dated <- state$dated
   if(any(cases_true < 0))
     return(-Inf)
@@ -303,11 +315,12 @@ dated_logp <- function(state, cases_true, cohorts=seq_along(state$onset_times),
     by_onset <- fatal - sum(lags) - unseen
     if(by_onset < 0 | fatal > cases_true[k] | any(lags < 0) | unseen < 0)
       return(-Inf)
-    fraction <- dated$fraction[k]
+    # with the fraction left out, the factors f^(dated) (1 - f)^(by onset)
+    fraction <- if(collapsed) 1 else dated$fraction[k]
     logp <- logp +
       lgamma(fatal + 1) - lgamma(by_onset + 1) - sum(lgamma(lags + 1)) -
       lgamma(unseen + 1) +
-      x_log_y(by_onset, 1 - fraction) +
+      (if(collapsed) 0 else x_log_y(by_onset, 1 - fraction)) +
       sum(x_log_y(lags, fraction * dated$lag_probabilities)) +
       x_log_y(unseen, fraction * dated$tail[k]) +
       stats::dbinom(fatal, cases_true[k], state$cfr[k], log=TRUE)
@@ -315,10 +328,14 @@ dated_logp <- function(state, cases_true, cohorts=seq_along(state$onset_times),
   for(t in days) {
     if(dated$inflow[t] < 0)
       return(-Inf)
-    if(dated$inflow[t] > 0 | dated$inflow_weight[t] > 0)
-      logp <- logp + stats::dpois(
-        dated$inflow[t],
-        dated$inflow_weight[t] * state$cfr[1] * dated$fraction[1], log=TRUE)
+    if(dated$inflow[t] > 0 | dated$inflow_weight[t] > 0) {
+      mean_inflow <- dated$inflow_weight[t] * state$cfr[1]
+      # with the fraction left out, the factors f^(inflow) exp(-mean f)
+      logp <- logp + if(collapsed)
+        x_log_y(dated$inflow[t], mean_inflow) - lgamma(dated$inflow[t] + 1)
+      else
+        stats::dpois(dated$inflow[t], mean_inflow * dated$fraction[1], log=TRUE)
+    }
     # in the exact form a change of kind is impossible given how many of each
     # kind are in each report, so that is summed out
     if(dated$exact)
@@ -453,6 +470,10 @@ deaths_dated_step <- function(state, cases_true, renewal) {
   f_one <- function(values) values[sample.int(length(values), 1)]
   f_lag <- function() sample.int(dated$max_lag, 1, prob=dated$lag_probabilities)
   logp_renewal <- dated_renewal_logp(cases_true, renewal)
+  # with the fraction integrated out, each change alters the total numbers of
+  # each kind, and so the marginal of the fraction's factors
+  collapsed <- isTRUE(dated$collapse_fraction) & !is.null(dated$fraction_prior)
+  logp_marginal <- if(collapsed) dated_fraction_marginal(state)$log_marginal else 0
   for(i in seq_len(dated$n_moves)) {
     type <- types[sample.int(4, 1, prob=type_weights)]
     move <- list(
@@ -464,17 +485,20 @@ deaths_dated_step <- function(state, cases_true, renewal) {
     if(is.null(proposed))
       next
     logp_proposed <- dated_logp(proposed$state, proposed$cases_true,
-                                proposed$cohorts, proposed$days)
+                                proposed$cohorts, proposed$days, collapsed)
     if(!is.finite(logp_proposed))
       next
     logp_renewal_proposed <- dated_renewal_logp(proposed$cases_true, renewal)
-    log_ratio <- logp_proposed + logp_renewal_proposed -
-      dated_logp(state, cases_true, proposed$cohorts, proposed$days) -
-      logp_renewal
+    logp_marginal_proposed <- if(collapsed)
+      dated_fraction_marginal(proposed$state)$log_marginal else 0
+    log_ratio <- logp_proposed + logp_renewal_proposed + logp_marginal_proposed -
+      dated_logp(state, cases_true, proposed$cohorts, proposed$days, collapsed) -
+      logp_renewal - logp_marginal
     if(is.finite(log_ratio) && log(stats::runif(1)) < log_ratio) {
       state <- proposed$state
       cases_true <- proposed$cases_true
       logp_renewal <- logp_renewal_proposed
+      logp_marginal <- logp_marginal_proposed
       # in the exact form, how many of each kind are in each report is drawn
       # again for the onset time whose numbers changed
       if(dated$exact)
@@ -484,6 +508,87 @@ deaths_dated_step <- function(state, cases_true, renewal) {
     }
   }
   list(state=state, cases_true=cases_true)
+}
+
+#' The factors of the model in which the fraction dated by death appears
+#'
+#' Given how many fatal cases are dated by death and by onset, and how many
+#' recorded for the first days had their onset before the first day, these
+#' factors, with the fraction's beta prior, are
+#'   f^(A - 1) (1 - f)^(B - 1) exp(-r f),
+#' where A is the prior's alpha plus the fatal cases dated by death and those
+#' from before the first day, B its beta plus the fatal cases dated by onset,
+#' and r the expected number from before the first day for each unit of the
+#' fraction.
+#'
+#' @inheritParams deaths_delay_by_onset
+#'
+#' @return a named list of 'A', 'B' and 'r'
+dated_fraction_terms <- function(state) {
+  dated <- state$dated
+  prior <- dated$fraction_prior
+  n_dated <- sum(dated$out)
+  list(A=prior$alpha + n_dated + sum(dated$inflow),
+       B=prior$beta + sum(state$deaths_true) - n_dated,
+       r=sum(dated$inflow_weight) * state$cfr[1])
+}
+
+#' The fraction dated by death integrated out
+#'
+#' The integral over the fraction of the factors of
+#' \code{dated_fraction_terms} (with the beta prior's normalising constant)
+#' is exact: since exp(-r f) = exp(-r) sum_j r^j (1 - f)^j / j!,
+#'   integral = exp(-r) sum_j r^j / j! B(A, B + j) / B(alpha, beta),
+#' a beta function times Kummer's function 1F1(B; A + B; r) exp(-r), whose
+#' terms are all positive and summed until the rest is negligible. The terms
+#' also give the distribution of the fraction as a mixture of beta
+#' distributions, Beta(A, B + j) with weights proportional to them.
+#'
+#' @inheritParams deaths_delay_by_onset
+#'
+#' @return a named list of 'log_marginal' (the log of the integral), 'A', 'B'
+#' and 'log_weights' (the log of the unnormalised weight of each j from 0)
+dated_fraction_marginal <- function(state) {
+  terms <- dated_fraction_terms(state)
+  A <- terms$A
+  B <- terms$B
+  r <- terms$r
+  prior <- state$dated$fraction_prior
+  log_weights <- 0
+  if(r > 0) {
+    # the terms rise while (B + j) r / ((A + B + j) (j + 1)) > 1, so at most
+    # until j = r, then fall faster than r^j / j!
+    n <- ceiling(r + 12 * sqrt(r) + 40)
+    repeat {
+      j <- 0:n
+      log_weights <- lgamma(B + j) - lgamma(B) - lgamma(A + B + j) +
+        lgamma(A + B) + j * log(r) - lgamma(j + 1)
+      if(log_weights[n + 1] < max(log_weights) - 40)
+        break
+      n <- 2 * n
+    }
+  }
+  log_sum <- max(log_weights) + log(sum(exp(log_weights - max(log_weights))))
+  list(log_marginal=lbeta(A, B) - lbeta(prior$alpha, prior$beta) - r + log_sum,
+       A=A, B=B, log_weights=log_weights)
+}
+
+#' Draws the fraction dated by death exactly given which fatal cases are
+#'
+#' The distribution is the mixture of beta distributions of
+#' \code{dated_fraction_marginal}: j is drawn with probability proportional
+#' to its weight, then the fraction from Beta(A, B + j).
+#'
+#' @inheritParams deaths_delay_by_onset
+#'
+#' @return a value of the fraction
+dated_fraction_draw <- function(state) {
+  marginal <- dated_fraction_marginal(state)
+  weights <- exp(marginal$log_weights - max(marginal$log_weights))
+  j <- sample.int(length(weights), 1, prob=weights) - 1
+  value <- stats::rbeta(1, marginal$A, marginal$B + j)
+  # a draw at either end (with a very large count) is kept inside
+  min(max(value, .Machine$double.eps), 1 - .Machine$double.eps)
 }
 
 #' Updates the fraction of fatal cases which are dated by death
@@ -505,6 +610,12 @@ deaths_dated_fraction_step <- function(state, n_steps=2) {
   prior <- dated$fraction_prior
   if(is.null(dated) || is.null(prior))
     return(state)
+  # after changes made with the fraction integrated out, the fraction must be
+  # drawn exactly from its distribution given them
+  if(isTRUE(dated$collapse_fraction)) {
+    state$dated$fraction <- rep(dated_fraction_draw(state), length(dated$fraction))
+    return(state)
+  }
   n_dated <- sum(dated$out)
   # log density: a log(f) + b log(1 - f) - rate f
   a <- prior$alpha - 1 + n_dated + sum(dated$inflow)

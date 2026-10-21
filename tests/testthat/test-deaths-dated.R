@@ -243,3 +243,102 @@ test_that("mcmc_single runs with fatal cases dated by death", {
   # but cases are only moved between days, so that the totals are close
   expect_true(abs(sum(last_cases$cases_true) / sum(latest$cases) - 1) < 0.1)
 })
+
+# a state in which the fraction is estimated and some fatal cases recorded
+# for the first days had their onset before the first day
+dated_collapsed_state <- function() {
+  set.seed(21)
+  test <- dated_test_state(cases_before=rep(30, 20))
+  state <- test$state
+  state$dated$fraction_prior <- list(alpha=2, beta=3)
+  state$dated$collapse_fraction <- TRUE
+  c(test, list(collapsed=state))
+}
+
+test_that("the factors left out with the fraction integrated out are those of dated_fraction_terms", {
+  test <- dated_collapsed_state()
+  state <- test$collapsed
+  expect_true(sum(state$dated$inflow_weight) > 0)
+  terms <- dated_fraction_terms(state)
+  prior <- state$dated$fraction_prior
+  collapsed <- dated_logp(state, test$cases_true, collapsed=TRUE)
+  for(f in c(0.2, 0.55)) {
+    state$dated$fraction[] <- f
+    full <- dated_logp(state, test$cases_true)
+    expect_equal(full - collapsed,
+                 (terms$A - prior$alpha) * log(f) + (terms$B - prior$beta) * log(1 - f) -
+                   terms$r * f)
+  }
+})
+
+test_that("dated_fraction_marginal is the integral over the fraction, and dated_fraction_draw draws from it", {
+  test <- dated_collapsed_state()
+  state <- test$collapsed
+  prior <- state$dated$fraction_prior
+  for(r_scale in c(0, 1, 40)) {
+    state$dated$inflow_weight <- test$collapsed$dated$inflow_weight * r_scale
+    if(r_scale == 0)
+      state$dated$inflow[] <- 0
+    terms <- dated_fraction_terms(state)
+    f_log_density <- function(f) (terms$A - 1) * log(f) + (terms$B - 1) * log(1 - f) -
+      terms$r * f - lbeta(prior$alpha, prior$beta)
+    # integrated about the mode, scaled to avoid underflow
+    mode <- stats::optimize(f_log_density, c(0, 1), maximum=TRUE)$maximum
+    peak <- f_log_density(mode)
+    integral <- stats::integrate(function(f) exp(f_log_density(f) - peak), 0, 1,
+                                 rel.tol=1e-10)$value
+    marginal <- dated_fraction_marginal(state)
+    expect_equal(marginal$log_marginal, peak + log(integral), tolerance=1e-8)
+    mean_f <- stats::integrate(function(f) f * exp(f_log_density(f) - peak), 0, 1,
+                               rel.tol=1e-10)$value / integral
+    sd_f <- sqrt(stats::integrate(function(f) (f - mean_f)^2 * exp(f_log_density(f) - peak),
+                                  0, 1, rel.tol=1e-10)$value / integral)
+    set.seed(22)
+    draws <- replicate(4000, dated_fraction_draw(state))
+    expect_lt(abs(mean(draws) - mean_f), 4 * sd_f / sqrt(4000))
+    expect_equal(stats::sd(draws), sd_f, tolerance=0.05)
+  }
+})
+
+test_that("with the fraction integrated out the changes give the right change in log-probability", {
+  test <- dated_collapsed_state()
+  state <- test$collapsed
+  cases_true <- test$cases_true
+  f_full <- function(s, c) dated_logp(s, c, collapsed=TRUE) +
+    dated_fraction_marginal(s)$log_marginal
+  set.seed(23)
+  n_checked <- 0
+  for(i in 1:200) {
+    type <- sample(c("relabel", "redate", "unseen", "inflow"), 1)
+    move <- list(type=type, day=sample.int(25, 1), lag=sample.int(5, 1),
+                 lag_to=sample.int(5, 1), sign=sample(c(-1, 1), 1))
+    proposed <- dated_apply_move(state, cases_true, move)
+    if(is.null(proposed) || !is.finite(f_full(proposed$state, proposed$cases_true)))
+      next
+    n_checked <- n_checked + 1
+    expect_equal(
+      dated_logp(proposed$state, proposed$cases_true, proposed$cohorts, proposed$days,
+                 TRUE) + dated_fraction_marginal(proposed$state)$log_marginal -
+        dated_logp(state, cases_true, proposed$cohorts, proposed$days, TRUE) -
+        dated_fraction_marginal(state)$log_marginal,
+      f_full(proposed$state, proposed$cases_true) - f_full(state, cases_true))
+  }
+  expect_gt(n_checked, 20)
+  # the step runs, keeps the recorded counts, and the fraction is then drawn
+  stepped <- deaths_dated_step(state, cases_true, test$renewal)
+  expect_dated_consistent(stepped$state, stepped$cases_true, test$recorded)
+  drawn <- deaths_dated_fraction_step(stepped$state)
+  expect_false(identical(drawn$dated$fraction, stepped$state$dated$fraction))
+  expect_true(all(drawn$dated$fraction == drawn$dated$fraction[1]))
+})
+
+test_that("the fraction can be integrated out only if it is estimated", {
+  expect_error(dated_by_death_settings(10, list(fraction=0.3, mean=5, sd=3,
+                                                collapse_fraction=TRUE)),
+               "only if it is estimated")
+  settings <- dated_by_death_settings(10, list(fraction=list(alpha=1, beta=1), mean=5,
+                                               sd=3, collapse_fraction=TRUE))
+  expect_true(settings$collapse_fraction)
+  expect_false(dated_by_death_settings(10, list(fraction=list(alpha=1, beta=1), mean=5,
+                                                sd=3))$collapse_fraction)
+})

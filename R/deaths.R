@@ -1703,6 +1703,9 @@ deaths_draws <- function(state, iteration) {
     triggered=ifelse(is.null(state$triggered), 0, state$triggered),
     dated_fraction=ifelse(is.null(state$dated), 0, state$dated$fraction[1]),
     wrong_dead=state$delta)
+  if(!is.null(state$dated$ridge))
+    parameters$ridge_accepted <- ifelse(is.null(state$ridge_accepted), 0,
+                                        state$ridge_accepted)
   if(!is.null(state$recording_effects$tail)) {
     parameters$recording_tail_weight <- state$recording_effects$tail$weight
     parameters$recording_tail_mean <- state$recording_effects$tail$mean

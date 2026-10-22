@@ -1642,6 +1642,19 @@ mcmc_single <- function(
             overdispersion_current, is_negative_binomial, serial_parameters,
             serial_max, cases_before))
         deaths_state <- deaths_dated_fraction_step(deaths_dated$state)
+        # the fraction and the delay to a death being recorded together
+        if(!is.null(deaths_state$dated$ridge)) {
+          deaths_ridge <- deaths_ridge_step(
+            deaths_state, deaths_dated$cases_true,
+            dated_renewal(
+              deaths_Rt_df$Rt[match(deaths_state$onset_times, deaths_Rt_df$time_onset)],
+              overdispersion_current, is_negative_binomial, serial_parameters,
+              serial_max, cases_before),
+            deaths_running_df, revision_current, deaths_options)
+          deaths_state <- deaths_ridge$state
+          deaths_state$ridge_accepted <- deaths_ridge$accepted
+          deaths_dated$cases_true <- deaths_ridge$cases_true
+        }
         df_running$cases_true <- deaths_dated$cases_true[
           match(df_running$time_onset, deaths_state$onset_times)]
       }

@@ -41,7 +41,9 @@
 #' changes to which fatal cases are dated by death are made with the fraction
 #' integrated out, and the fraction is then drawn exactly given them: see
 #' \code{dated_fraction_marginal}. By default FALSE, the changes are made at
-#' the current fraction)
+#' the current fraction) and 'ridge' (NULL, the default, or TRUE or a named
+#' list of settings for the joint move of \code{deaths_ridge_step}, which
+#' needs the exact form: see \code{ridge_settings})
 #' @param onset_to_death NULL, or the element of that name of the result of
 #' \code{deaths_settings}: the time from onset to death of every fatal case
 #'
@@ -77,7 +79,7 @@ dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
   }
   unknown <- setdiff(names(dated),
                      c("fraction", "mean", "sd", "max_lag", "reporting", "n_moves",
-                       "exact", "collapse_fraction"))
+                       "exact", "collapse_fraction", "ridge"))
   if(length(unknown) > 0)
     stop(paste0("Unknown settings for dated_by_death: ",
                 paste(unknown, collapse=", "), "."))
@@ -113,6 +115,9 @@ dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
   n_moves <- dated$n_moves
   if(is.null(n_moves))
     n_moves <- ifelse(is_exact, 1, 4) * n_days
+  ridge <- ridge_settings(dated$ridge)
+  if(!is.null(ridge) & !is_exact)
+    stop("The joint move of the fraction dated by death and the delay to a death being recorded needs the exact form.")
   list(fraction=rep_len(fraction, n_days),
        fraction_prior=fraction_prior,
        mean=dated$mean, sd=dated$sd,
@@ -121,7 +126,8 @@ dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
        reporting=reporting,
        n_moves=n_moves,
        exact=is_exact,
-       collapse_fraction=is_collapsed)
+       collapse_fraction=is_collapsed,
+       ridge=ridge)
 }
 
 #' Adds fatal cases dated by death to the starting state of the model of

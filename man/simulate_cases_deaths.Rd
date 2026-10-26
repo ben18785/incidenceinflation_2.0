@@ -85,10 +85,11 @@ mean, in place of the delay of death_parameters}
 
 \item{recording_backlog}{an optional named list of 'share' (a single value
 or one for each onset time) and 'rate' (a single value or one for each day
-1, 2, ...; later days have the last). That share of deaths join a backlog in
-place of the delay of death_parameters, and a death in the backlog is
-recorded on each day with that hazard, counted from the middle of the day
-of death. The share of a case dated by death is that of the day it is
+1, 2, ...; later days have the last), and optionally 'hold_days' (0 by
+default). That share of deaths join a backlog in place of the delay of
+death_parameters, and a death in the backlog is recorded on each day with
+that hazard, counted from the middle of the day hold_days after the day of
+death. The share of a case dated by death is that of the day it is
 recorded for. Needs onset_to_death}
 }
 \value{

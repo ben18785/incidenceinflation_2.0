@@ -20,7 +20,10 @@ joint_path_exact_forward_cpp(
   w,
   delta,
   max_erroneous,
-  negligible = 1e-12
+  negligible = 1e-12,
+  fixed_wrong = integer(0),
+  fixed_r = integer(0),
+  fixed_d = integer(0)
 )
 }
 \arguments{
@@ -62,6 +65,16 @@ report before has been removed}
 
 \item{negligible}{states whose probability given the reports so far is
 less than this multiple of that of the most probable state are dropped}
+
+\item{fixed_wrong}{optional: for each report, the wrong records present,
+as an index counted from zero of the pairs (shown as alive, shown as dead)
+ordered by their total and then by those shown as dead; the probability
+returned is then that of the reports and these wrong records}
+
+\item{fixed_r}{optional: for each report, the fatal cases dated by onset
+reported by it}
+
+\item{fixed_d}{optional: the same for those dated by death}
 }
 \value{
 as \code{joint_path_forward_cpp}

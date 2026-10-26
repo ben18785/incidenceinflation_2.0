@@ -50,7 +50,8 @@ changes proposed in it, and 'n_steps'); 'triggered' (FALSE, the default,
 if a death never brings about the report of its case; otherwise a named
 list of 'alpha' and 'beta', the parameters of the beta prior for the
 proportion of fatal cases which are reported when their death is recorded
-if not before, 'initial', the value to start from, 'step', the standard
+if not before, 'initial', the value to start from (which may be 1 if
+'n_steps' is 0, so that it is held there), 'step', the standard
 deviation of the changes proposed in its logit, and 'n_steps');
 'recording_weekday' (whether the
 delay to a death being recorded has its own effects of the day of the

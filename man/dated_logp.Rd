@@ -9,7 +9,8 @@ dated_logp(
   state,
   cases_true,
   cohorts = seq_along(state$onset_times),
-  days = seq_along(state$onset_times)
+  days = seq_along(state$onset_times),
+  collapsed = FALSE
 )
 }
 \arguments{
@@ -20,6 +21,10 @@ dated_logp(
 \item{cohorts}{the days of onset to include, counted from one}
 
 \item{days}{the recorded days to include, counted from one}
+
+\item{collapsed}{if TRUE, the factors in which the fraction dated by death
+appears are left out (they are those of \code{dated_fraction_terms},
+which \code{dated_fraction_marginal} integrates over the fraction)}
 }
 \value{
 a log-probability (-Inf if the state is impossible)

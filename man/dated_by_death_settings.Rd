@@ -29,7 +29,14 @@ reporting delay of other cases, counted from the day of death) and
 four for each onset time, or one in the exact form) and 'exact' (if TRUE,
 the fatal cases dated by onset and by death among those reported are
 followed separately, which is exact and slower; by default each fatal
-case recorded for a day is taken to be dated by death with a probability)}
+case recorded for a day is taken to be dated by death with a probability)
+and 'collapse_fraction' (if TRUE, and the fraction is estimated, the
+changes to which fatal cases are dated by death are made with the fraction
+integrated out, and the fraction is then drawn exactly given them: see
+\code{dated_fraction_marginal}. By default FALSE, the changes are made at
+the current fraction) and 'ridge' (NULL, the default, or TRUE or a named
+list of settings for the joint move of \code{deaths_ridge_step}, which
+needs the exact form: see \code{ridge_settings})}
 
 \item{onset_to_death}{NULL, or the element of that name of the result of
 \code{deaths_settings}: the time from onset to death of every fatal case}

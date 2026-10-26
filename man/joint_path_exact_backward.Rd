@@ -14,8 +14,10 @@ joint_path_exact_backward(forward)
 as \code{joint_path_backward}, where the fatal cases and the
 deaths are those dated by onset, with vectors 'dated_new' and
 'dated_before' added for the fatal cases dated by death (those newly
-reported in each report and those reported by the report before), and
-'is_exact' (TRUE)
+reported in each report and those reported by the report before),
+'fatal_reported' and 'dated_reported' (those of each kind reported by each
+report), 'wrong_alive' and 'wrong_dead' (the wrong records present in each
+report shown as alive and as dead) and 'is_exact' (TRUE)
 }
 \description{
 Samples backwards over the reports of the cases recorded for one day,

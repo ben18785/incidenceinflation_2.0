@@ -12,7 +12,8 @@ joint_path_exact_forward(
   fatal_dated,
   survivors_true,
   survivals,
-  wrong = NULL
+  wrong = NULL,
+  fixed = NULL
 )
 }
 \arguments{
@@ -35,6 +36,11 @@ number of wrong records entered since the report before and the
 probability one present at the report before has been removed), 'delta'
 (the probability a wrong record is shown as dead) and 'max_erroneous' (the
 largest number present at once)}
+
+\item{fixed}{optional: a list which may hold, for each report, 'wrong' (the
+wrong records present, as returned by \code{exact_fixed_wrong}), 'r' (the
+fatal cases dated by onset reported by it) and 'd' (those dated by death).
+The probability is then that of the reports and of what is fixed.}
 }
 \value{
 as \code{joint_path_forward}

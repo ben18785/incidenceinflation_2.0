@@ -905,6 +905,10 @@ observation_process_all_times_logp <- function(
 #' @param kappa an overdispersion parameter value (if <= 0, returns -Inf)
 #' @param cases_history_rt_df a tibble with three columns: 'time_onset',
 #' 'cases_true' and 'Rt'
+#' @param cases_before a vector of known true case counts for the days
+#' immediately before the first onset time, from the earliest to the latest
+#' (optional), which enter the renewal equation as the history of the first
+#' onset times
 #' @inheritParams state_process_logp
 #'
 #' @return a log-probability value

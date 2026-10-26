@@ -23,6 +23,11 @@ state_process_nb_logp_all_onsets(
 characterising the serial interval distribution}
 
 \item{serial_max}{number of days over which the serial interval is defined}
+
+\item{cases_before}{a vector of known true case counts for the days
+immediately before the first onset time, from the earliest to the latest
+(optional), which enter the renewal equation as the history of the first
+onset times}
 }
 \value{
 a log-probability value

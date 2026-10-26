@@ -4,7 +4,7 @@ test_that("weights_series returns vector of normalised weights", {
   w <- weights_series(t_max, s_params)
   expect_equal(length(w), t_max)
   expect_equal(sum(w), 1)
-  expect(which.max(w), 5)
+  expect_equal(which.max(w), 5L)
 })
 
 test_that("expected_cases returns reasonable values", {

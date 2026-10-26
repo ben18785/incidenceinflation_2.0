@@ -32,6 +32,11 @@ characterising the serial interval distribution}
 \item{overdispersion_metropolis_sd}{the standard deviation of the proposal kernel}
 
 \item{serial_max}{number of days over which the serial interval is defined}
+
+\item{cases_before}{a vector of known true case counts for the days
+immediately before the first onset time, from the earliest to the latest
+(optional), which enter the renewal equation as the history of the first
+onset times}
 }
 \value{
 a named list with two elements: 'overdispersion', an overdispersion parameter

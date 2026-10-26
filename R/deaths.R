@@ -64,7 +64,8 @@
 #' if a death never brings about the report of its case; otherwise a named
 #' list of 'alpha' and 'beta', the parameters of the beta prior for the
 #' proportion of fatal cases which are reported when their death is recorded
-#' if not before, 'initial', the value to start from, 'step', the standard
+#' if not before, 'initial', the value to start from (which may be 1 if
+#' 'n_steps' is 0, so that it is held there), 'step', the standard
 #' deviation of the changes proposed in its logit, and 'n_steps');
 #' 'recording_weekday' (whether the
 #' delay to a death being recorded has its own effects of the day of the
@@ -168,8 +169,11 @@ deaths_settings <- function(n_days, settings=list()) {
     triggered[names(defaults$triggered)] <- defaults$triggered
     if(triggered$alpha <= 0 | triggered$beta <= 0)
       stop("The parameters of the prior for the proportion of fatal cases reported when their death is recorded must be positive.")
-    if(triggered$initial <= 0 | triggered$initial >= 1)
-      stop("The initial proportion of fatal cases reported when their death is recorded must lie strictly between 0 and 1.")
+    # held at 1 (n_steps of 0), every fatal case not yet reported is reported
+    # when its death is recorded
+    is_fixed_one <- triggered$initial == 1 && triggered$n_steps == 0
+    if((triggered$initial <= 0 | triggered$initial >= 1) && !is_fixed_one)
+      stop("The initial proportion of fatal cases reported when their death is recorded must lie strictly between 0 and 1, or be 1 if it is held fixed (n_steps of 0).")
     if(triggered$step <= 0)
       stop("The standard deviation of the changes proposed in the proportion of fatal cases reported when their death is recorded must be positive.")
     defaults$triggered <- triggered

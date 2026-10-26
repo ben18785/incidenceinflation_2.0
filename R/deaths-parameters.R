@@ -302,7 +302,7 @@ deaths_fatal_delay_step <- function(state, cases_true, reporting_by_onset,
 #' @return the state with element 'triggered' updated
 deaths_triggered_step <- function(state, cases_true, reporting_by_onset,
                                   revision_parameters=NULL, triggered) {
-  if(identical(triggered, FALSE) | is.null(triggered))
+  if(identical(triggered, FALSE) | is.null(triggered) || triggered$n_steps == 0)
     return(state)
   f_logp <- function(value)
     deaths_reporting_logp(state, cases_true, reporting_by_onset,

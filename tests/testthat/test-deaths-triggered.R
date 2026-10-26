@@ -73,6 +73,7 @@ test_that("the settings for fatal cases reported at death are checked", {
   expect_error(deaths_settings(30, list(triggered=list(gamma=1))), "Unknown settings")
   expect_error(deaths_settings(30, list(triggered=list(alpha=0))), "must be positive")
   expect_error(deaths_settings(30, list(triggered=list(initial=1))), "strictly between")
+  expect_equal(deaths_settings(30, list(triggered=list(initial=1, n_steps=0)))$triggered$initial, 1)
 })
 
 triggered_example <- function() {
@@ -131,6 +132,20 @@ test_that("the proportion of fatal cases reported at death is sampled", {
   set.seed(5)
   fit <- triggered_fit(example, 3, triggered=FALSE)
   expect_equal(fit$deaths_parameters$triggered, rep(0, 3))
+})
+
+test_that("the proportion of fatal cases reported at death can be held at 1", {
+  example <- triggered_example()
+  set.seed(5)
+  fit <- triggered_fit(example, 3, triggered=list(initial=1, n_steps=0))
+  expect_equal(fit$deaths_parameters$triggered, rep(1, 3))
+  expect_true(all(is.finite(fit$log_likelihood$recording)))
+  expect_true(all(is.finite(fit$deaths$cfr)))
+  # the likelihood at 1 is the limit of that just below it
+  survivals <- list(log_recorded=log(c(0.9, 0.5, 0.2)))
+  example_logp <- function(value)
+    incidenceinflation:::log_add_exp(rep(log1p(-value), 3), log(value) + survivals$log_recorded)
+  expect_equal(example_logp(1), example_logp(1 - 1e-12), tolerance=1e-9)
 })
 
 test_that("a fit with fatal cases reported at death can be taken up again", {

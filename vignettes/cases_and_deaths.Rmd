@@ -1,0 +1,238 @@
+---
+title: "Fitting the model to cases and deaths"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{cases_and_deaths}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4
+)
+```
+
+```{r setup, message = FALSE}
+library(incidenceinflation)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+```
+
+This vignette fits the model to reports of both cases and deaths. Each
+report gives, for every onset day, the cases recorded so far and how many
+of them are shown as dead. The model adds to the model of cases:
+
+- a case fatality ratio (CFR), the probability that a case dies, which can
+  change at unknown onset days;
+- a delay from death to the death being recorded, after a time from onset
+  to death;
+- a fraction of fatal cases which are recorded for their day of death
+  rather than their day of onset.
+
+We simulate an outbreak in which the CFR falls, fit the model to its
+reports, and compare the estimates with the truth.
+
+## Simulating an outbreak
+
+The true cases arise by renewal, with $R_t$ falling from 1.2 to 0.9 on day
+30. The CFR falls from 0.5 to 0.3 on the same day. Cases are reported after
+a gamma delay (mean 7, sd 4 days). A fatal case dies a gamma time after
+onset (mean 9, sd 5 days), and its death is recorded a further gamma delay
+later (mean 4, sd 3 days). A quarter of fatal cases are recorded for their
+day of death. A report is made every third day.
+
+```{r simulate}
+set.seed(1)
+n_days <- 60
+serial <- list(mean = 5, sd = 3)
+Rt <- function(t) ifelse(t < 30, 1.2, 0.9)
+# 40 days before the first onset day give the renewal its history
+cases_all <- true_cases(n_days + 40, function(t) Rt(t - 40), kappa = 1000, serial,
+                        initial_parameters = list(mean = 4, length = 10))
+cases_before <- cases_all[1:40]
+cfr <- ifelse(seq_len(n_days) < 30, 0.5, 0.3)
+sim <- simulate_cases_deaths(
+  cases_all[41:(n_days + 40)],
+  report_days = seq(3, n_days, by = 3),
+  reporting_parameters = list(mean = 7, sd = 4),
+  cfr = cfr,
+  death_parameters = list(mean = 4, sd = 3),
+  onset_to_death = list(mean = 9, sd = 5),
+  dated_by_death = list(fraction = 0.25))
+snapshots <- sim$snapshots
+head(snapshots)
+```
+
+`sim$truth` holds, for each onset day, the true cases and fatal cases
+recorded for it (`cases_true`, `deaths_true`), the CFR and how many of the
+fatal cases are dated by death.
+
+The counts of an onset day grow from report to report. Here are the cases
+and deaths of every onset day in four of the reports, against the final
+truth:
+
+```{r reports, fig.height = 5}
+shown <- c(15, 30, 45, 60)
+snapshots %>%
+  filter(time_reported %in% shown) %>%
+  pivot_longer(c(cases_reported, deaths_reported), names_to = "series", values_to = "count") %>%
+  mutate(series = ifelse(series == "cases_reported", "Cases", "Deaths")) %>%
+  ggplot(aes(time_onset, count)) +
+  geom_line(data = sim$truth %>%
+              pivot_longer(c(cases_true, deaths_true), names_to = "series", values_to = "count") %>%
+              mutate(series = ifelse(series == "cases_true", "Cases", "Deaths")),
+            colour = "black") +
+  geom_line(aes(colour = factor(time_reported))) +
+  facet_wrap(~series, scales = "free_y", ncol = 1) +
+  scale_colour_brewer(palette = "Blues", name = "Report on day") +
+  labs(x = "Onset day", y = "Count") +
+  theme_minimal()
+```
+
+The recent onset days of each report are far from complete, for deaths
+even more than for cases.
+
+## Fitting the model
+
+`mcmc_single()` runs one chain. The cases enter as for the model of cases
+alone; the deaths enter through its `deaths` argument, a list of the
+reported deaths (`snapshot`) and the `settings` of the model of deaths (see
+`deaths_settings()`). Here those settings give:
+
+- `initial_cfr`: the CFR to start from;
+- `onset_to_death`: the time from onset to death, which is taken as known;
+  the delay estimated is then that from death to the death being recorded,
+  starting from `initial_delay`;
+- `dated_by_death`: a uniform prior on the fraction of fatal cases recorded
+  for their day of death, fitted in its exact form.
+
+The CFR and the delay to a death being recorded can each change at unknown
+onset days, as $R_t$ and the reporting delay can.
+
+```{r fit, eval = FALSE}
+largest <- snapshots %>%
+  group_by(time_onset) %>%
+  summarise(cases_true = max(cases_reported))
+# a starting point for the true cases: the largest count reported, inflated
+# for recent onset days
+days_before_end <- n_days - largest$time_onset
+initial_cases <- largest %>%
+  mutate(cases_true = ceiling(cases_true * (1 + 2 * exp(-days_before_end / 4)) +
+                                5 * (days_before_end < 5)))
+
+fit <- mcmc_single(
+  niterations = 3000,
+  snapshot_with_Rt_index_df = snapshots %>%
+    select(time_onset, time_reported, cases_reported) %>%
+    mutate(Rt_index = 1),
+  priors = list(
+    Rt = list(shape = 1, rate = 1),
+    reporting = list(mean_mu = 7, mean_sigma = 10, sd_mu = 5, sd_sigma = 5),
+    max_cases = ceiling(4 * max(initial_cases$cases_true) + 50),
+    Rt_changepoints = list(),
+    reporting_changepoints = list(min_length = 14, n_partition_moves = 20)),
+  serial_parameters = serial,
+  initial_cases_true = initial_cases,
+  initial_reporting_parameters = list(mean = 7, sd = 4),
+  initial_Rt = tibble(Rt_index = 1, Rt = 1),
+  cases_before = cases_before,
+  deaths = list(
+    snapshot = snapshots %>% select(time_onset, time_reported, deaths_reported),
+    settings = list(
+      initial_cfr = 0.4,
+      onset_to_death = list(mean = 9, sd = 5),
+      dated_by_death = list(fraction = list(alpha = 1, beta = 1, initial = 0.25),
+                            exact = TRUE),
+      initial_delay = list(mean = 4, sd = 3))))
+```
+
+The result is a list of tables of draws, each with a column `iteration`.
+Among them:
+
+- `fit$cases`: the true cases of each onset day (`cases_true`);
+- `fit$Rt`: $R_t$ of each onset day;
+- `fit$deaths`: for each onset day, the true fatal cases (`deaths_true`),
+  the CFR (`cfr`) and the delay to a death being recorded;
+- `fit$deaths_parameters`: for each iteration, the number of changes in the
+  CFR (`n_cfr_changes`) and the fraction dated by death (`dated_fraction`),
+  among others.
+
+A fit like this takes about half an hour, too long to run when this
+vignette is built. So we ran four chains of 3000 iterations from different
+starting values, kept the second half of each, and saved a summary of the
+draws, which we load here. The chains were fitted by
+`data-raw/vignette_cases_and_deaths.R`, which simulates the same reports.
+
+```{r results}
+results <- readRDS("cases_and_deaths_results.rds")
+stopifnot(isTRUE(all.equal(results$snapshots, snapshots)))
+results$iterations
+round(results$rhat, 2)
+```
+
+The R-hat values compare the four chains for a few quantities; values close
+to 1 mean the chains agree.
+
+## The estimates
+
+The CFR and $R_t$ by onset day (median and 90% interval), against the
+values used to simulate:
+
+```{r cfr-Rt, fig.height = 5}
+truth <- tibble(time_onset = seq_len(n_days), CFR = cfr, Rt = Rt(seq_len(n_days))) %>%
+  pivot_longer(c(CFR, Rt), names_to = "quantity", values_to = "value")
+bind_rows(mutate(results$cfr, quantity = "CFR"), mutate(results$Rt, quantity = "Rt")) %>%
+  ggplot(aes(time_onset)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), fill = "steelblue", alpha = 0.3) +
+  geom_line(aes(y = median), colour = "steelblue4") +
+  geom_line(data = truth, aes(y = value), linetype = "dashed") +
+  facet_wrap(~quantity, scales = "free_y", ncol = 1) +
+  labs(x = "Onset day", y = NULL) +
+  theme_minimal()
+```
+
+The true cases and fatal cases recorded for each onset day, against the
+last report (grey) and the truth (black):
+
+```{r nowcast, fig.height = 5}
+last <- snapshots %>%
+  filter(time_reported == max(time_reported)) %>%
+  pivot_longer(c(cases_reported, deaths_reported), names_to = "series", values_to = "count") %>%
+  mutate(series = ifelse(series == "cases_reported", "Cases", "Deaths"))
+truth_counts <- sim$truth %>%
+  pivot_longer(c(cases_true, deaths_true), names_to = "series", values_to = "count") %>%
+  mutate(series = ifelse(series == "cases_true", "Cases", "Deaths"))
+bind_rows(mutate(results$cases, series = "Cases"), mutate(results$deaths, series = "Deaths")) %>%
+  ggplot(aes(time_onset)) +
+  geom_col(data = last, aes(y = count), fill = "grey80") +
+  geom_ribbon(aes(ymin = lower, ymax = upper), fill = "steelblue", alpha = 0.3) +
+  geom_line(aes(y = median), colour = "steelblue4") +
+  geom_line(data = truth_counts, aes(y = count)) +
+  facet_wrap(~series, scales = "free_y", ncol = 1) +
+  labs(x = "Onset day", y = "Count") +
+  theme_minimal()
+```
+
+The fraction of fatal cases recorded for their day of death (simulated:
+0.25), and the number of changes in the CFR (simulated: one):
+
+```{r parameters}
+quantile(results$dated_fraction, c(0.05, 0.5, 0.95))
+table(results$n_cfr_changes) / length(results$n_cfr_changes)
+```
+
+## Other parts of the model
+
+The model of deaths has other parts, each switched on through the
+`settings` of `deaths` (see `deaths_settings()`):
+
+- wrong records, which are later withdrawn
+  (`initial_revision_parameters` of `mcmc_single()`);
+- deaths which bring about the report of their case (`triggered`);
+- a different reporting delay for fatal cases (`fatal_delay`);
+- a backlog of deaths recorded long after they happen (`recording_backlog`).

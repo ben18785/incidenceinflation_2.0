@@ -1,0 +1,69 @@
+# Precomputes the fit shown in vignettes/cases_and_deaths.Rmd (see
+# data-raw/vignette_cases_and_deaths.R): each chain is a job, and a last job
+# summarises them into cases_and_deaths_results.rds, uploaded as the artifact
+# vignette-results, to be committed to vignettes/. Started by hand, or by a
+# push which changes the script.
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: "Iterations of each chain"
+        required: false
+        default: "3000"
+  push:
+    paths:
+      - data-raw/vignette_cases_and_deaths.R
+
+name: vignette-precompute
+
+jobs:
+  chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        chain: [1, 2, 3, 4]
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+          extra-repositories: https://stan-dev.r-universe.dev
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: local::., any::posterior, any::tidyr
+      - name: Fit the chain
+        run: Rscript data-raw/vignette_cases_and_deaths.R chain ${{ matrix.chain }} ${{ inputs.iterations || '3000' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vignette-chain-${{ matrix.chain }}
+          path: vignette_chain_${{ matrix.chain }}.rds
+
+  combine:
+    needs: chain
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+          extra-repositories: https://stan-dev.r-universe.dev
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: local::., any::posterior, any::tidyr
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vignette-chain-*
+          path: chains
+      - name: Summarise the chains
+        run: Rscript data-raw/vignette_cases_and_deaths.R combine
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vignette-results
+          path: vignettes/cases_and_deaths_results.rds

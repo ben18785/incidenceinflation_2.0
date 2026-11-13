@@ -89,7 +89,7 @@ snapshots %>%
             colour = "black") +
   geom_line(aes(colour = factor(time_reported))) +
   facet_wrap(~series, scales = "free_y", ncol = 1) +
-  scale_colour_brewer(palette = "Blues", name = "Report on day") +
+  scale_colour_viridis_d(end = 0.85, name = "Report on day") +
   labs(x = "Onset day", y = "Count") +
   theme_minimal()
 ```

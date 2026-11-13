@@ -114,7 +114,7 @@ reported deaths (`snapshot`) and the `settings` of the model of deaths (see
 The CFR and the delay to a death being recorded can each change at unknown
 onset days, as $R_t$ and the reporting delay can.
 
-```{r fit, eval = FALSE}
+```{r fit}
 largest <- snapshots %>%
   group_by(time_onset) %>%
   summarise(cases_true = max(cases_reported))
@@ -125,8 +125,9 @@ initial_cases <- largest %>%
   mutate(cases_true = ceiling(cases_true * (1 + 2 * exp(-days_before_end / 4)) +
                                 5 * (days_before_end < 5)))
 
+niterations <- 400
 fit <- mcmc_single(
-  niterations = 3000,
+  niterations = niterations,
   snapshot_with_Rt_index_df = snapshots %>%
     select(time_onset, time_reported, cases_reported) %>%
     mutate(Rt_index = 1),
@@ -141,6 +142,7 @@ fit <- mcmc_single(
   initial_reporting_parameters = list(mean = 7, sd = 4),
   initial_Rt = tibble(Rt_index = 1, Rt = 1),
   cases_before = cases_before,
+  print_to_screen = FALSE,
   deaths = list(
     snapshot = snapshots %>% select(time_onset, time_reported, deaths_reported),
     settings = list(
@@ -162,21 +164,28 @@ Among them:
   CFR (`n_cfr_changes`) and the fraction dated by death (`dated_fraction`),
   among others.
 
-A fit like this takes about half an hour, too long to run when this
-vignette is built. So we ran four chains of 3000 iterations from different
-starting values, kept the second half of each, and saved a summary of the
-draws, which we load here. The chains were fitted by
-`data-raw/vignette_cases_and_deaths.R`, which simulates the same reports.
+This short chain of `r niterations` iterations takes a few minutes. We
+keep its second half and summarise the draws for each onset day by their
+median and 90% interval:
 
-```{r results}
-results <- readRDS("cases_and_deaths_results.rds")
-stopifnot(isTRUE(all.equal(results$snapshots, snapshots)))
-results$iterations
-round(results$rhat, 2)
+```{r summarise}
+kept <- function(df) filter(df, iteration > niterations / 2)
+by_day <- function(df, column) df %>%
+  kept() %>%
+  group_by(time_onset) %>%
+  summarise(median = median(.data[[column]]), lower = quantile(.data[[column]], 0.05),
+            upper = quantile(.data[[column]], 0.95), .groups = "drop")
+results <- list(cfr = by_day(fit$deaths, "cfr"), Rt = by_day(fit$Rt, "Rt"),
+                cases = by_day(fit$cases, "cases_true"),
+                deaths = by_day(fit$deaths, "deaths_true"),
+                parameters = kept(fit$deaths_parameters))
 ```
 
-The R-hat values compare the four chains for a few quantities; values close
-to 1 mean the chains agree.
+A chain this short is enough to show what the model does, but not for
+inference. For that, run several chains from different starting values
+(for example, different `initial_cfr` and `initial_delay`), each for
+thousands of iterations, and check that they agree (for example with
+`posterior::rhat()`).
 
 ## The estimates
 
@@ -222,8 +231,8 @@ The fraction of fatal cases recorded for their day of death (simulated:
 0.25), and the number of changes in the CFR (simulated: one):
 
 ```{r parameters}
-quantile(results$dated_fraction, c(0.05, 0.5, 0.95))
-table(results$n_cfr_changes) / length(results$n_cfr_changes)
+quantile(results$parameters$dated_fraction, c(0.05, 0.5, 0.95))
+table(results$parameters$n_cfr_changes) / nrow(results$parameters)
 ```
 
 ## Other parts of the model

@@ -1,0 +1,39 @@
+# Builds the vignettes changed on a branch and uploads them as the artifact
+# vignettes-html, to be read before the branch is merged (R-CMD-check builds
+# them only on main and pull requests, and keeps no output). Started by a
+# push to a branch other than main which changes a vignette, or by hand.
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [main, master]
+    paths:
+      - vignettes/*.Rmd
+
+name: vignette-render
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-pandoc@v2
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+          extra-repositories: https://stan-dev.r-universe.dev
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: local::., any::rmarkdown, any::knitr
+      - name: Build the vignettes
+        run: |
+          mkdir -p html
+          for f in vignettes/*.Rmd; do
+            Rscript -e "t0 <- Sys.time(); rmarkdown::render('$f', output_dir = 'html'); cat('$f took', round(as.numeric(Sys.time() - t0, units = 'mins'), 1), 'minutes\n')"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vignettes-html
+          path: html

@@ -9,5 +9,3 @@
 ^inst/stan/.*\.hpp$
 ^\.positai$
 ^\.claude$
-^data-raw$
-^vignette_chain_.*\.rds$

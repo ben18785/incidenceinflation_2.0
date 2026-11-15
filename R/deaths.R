@@ -756,27 +756,31 @@ reports_stream_logp <- function(counts_new, counts_before, totals, p) {
 #' reporting delay (see \code{log_undetected_days})
 #'
 #' @return a named list of vectors with an element for each report: 'unit'
-#' (the expected number of wrong records entered since the report before, for
-#' each genuine case recorded for the day and each unit of eta; for the first
-#' report, of those entered since the onset day which are still present) and
-#' 'w' (the probability a wrong record present at the report before has been
-#' removed)
+#' (the expected number of wrong records entered since the report before, or
+#' for the first report since the onset day, which are still present at the
+#' report, for each genuine case recorded for the day and each unit of eta:
+#' those entered on day k are the genuine cases newly reported that day times
+#' eta, and each is still present at the report on day d with probability
+#' (1 - rho)^(d - k)) and 'w' (the probability a wrong record present at the
+#' report before has been removed)
 wrong_entry_units <- function(days, day_onset, reporting_parameters,
                               revision_parameters) {
   rho <- revision_parameters$rho
-  undetected <- exp(log_undetected_days(days, day_onset, reporting_parameters,
+  # the probability of remaining unreported at the end of each day from the
+  # onset day to the last report, and the probability of being newly reported
+  # on each day after the onset day
+  days_all <- seq(day_onset, max(day_onset, days[length(days)]))
+  undetected <- exp(log_undetected_days(days_all, day_onset, reporting_parameters,
                                         revision_parameters))
-  unit_first <- 0
-  n_days <- floor(days[1] - day_onset)
-  if(n_days >= 1) {
-    days_before <- day_onset + seq_len(n_days)
-    undetected_before <- exp(log_undetected_days(
-      c(day_onset, days_before), day_onset, reporting_parameters,
-      revision_parameters))
-    unit_first <- sum(-diff(undetected_before) * (1 - rho)^(days[1] - days_before))
-  }
-  list(unit=c(unit_first, -diff(undetected)),
-       w=c(0, 1 - (1 - rho)^diff(days)))
+  newly <- -diff(undetected)
+  days_before <- c(day_onset, days[-length(days)])
+  unit <- vapply(seq_along(days), function(j) {
+    k <- seq_len(round(days[j] - days_before[j])) + round(days_before[j] - day_onset)
+    if(length(k) == 0)
+      return(0)
+    sum(newly[k] * (1 - rho)^(round(days[j] - day_onset) - k))
+  }, numeric(1))
+  list(unit=unit, w=c(0, 1 - (1 - rho)^diff(days)))
 }
 
 #' Filters forwards over the reports of the cases recorded for one day,

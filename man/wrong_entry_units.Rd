@@ -20,11 +20,13 @@ reporting delay (see \code{log_undetected_days})}
 }
 \value{
 a named list of vectors with an element for each report: 'unit'
-(the expected number of wrong records entered since the report before, for
-each genuine case recorded for the day and each unit of eta; for the first
-report, of those entered since the onset day which are still present) and
-'w' (the probability a wrong record present at the report before has been
-removed)
+(the expected number of wrong records entered since the report before, or
+for the first report since the onset day, which are still present at the
+report, for each genuine case recorded for the day and each unit of eta:
+those entered on day k are the genuine cases newly reported that day times
+eta, and each is still present at the report on day d with probability
+(1 - rho)^(d - k)) and 'w' (the probability a wrong record present at the
+report before has been removed)
 }
 \description{
 Wrong records are entered in proportion to the genuine cases being

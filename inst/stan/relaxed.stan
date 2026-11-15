@@ -137,6 +137,7 @@ functions {
   // expected numbers of records of cases of neighbouring onset days which are
   // misdated to an onset day: element 1 is the number present at its first
   // report, and element j + 1 the number entered between reports j and j + 1
+  // which are not yet corrected at report j + 1
   vector misdated_entries(int day_onset, array[] int days, vector cases_true,
                           matrix log_undetected, real rho, real p_misdated,
                           array[] int shifts, vector shift_probs) {
@@ -153,9 +154,14 @@ functions {
                        - undetected_at(log_undetected, day_true, k))
                     * pow(1 - rho, days[1] - k);
         }
+        // those entered since the report before which are not yet corrected
         for (j in 2:n) {
-          out[j] += rate * (undetected_at(log_undetected, day_true, days[j - 1])
-                            - undetected_at(log_undetected, day_true, days[j]));
+          for (k in (days[j - 1] + 1):days[j]) {
+            out[j] += rate
+                      * (undetected_at(log_undetected, day_true, k - 1)
+                         - undetected_at(log_undetected, day_true, k))
+                      * pow(1 - rho, days[j] - k);
+          }
         }
       }
     }
@@ -207,9 +213,14 @@ functions {
       int k_before = days[j - 1] - day_onset + 1;
       int k_after = days[j] - day_onset + 1;
       real p_reported = 1 - unrecorded[k_after] / unrecorded[k_before];
-      real mean_entered = eta * cases_true * (exp(log_undetected[k_before])
-                                              - exp(log_undetected[k_after]))
-                          + entries_extra[j];
+      // wrong records entered on each day since the report before which are
+      // still present: one entered on day k with probability (1 - rho)^(days[j] - k)
+      real unit = 0;
+      for (k in (days[j - 1] + 1):days[j]) {
+        unit += (exp(log_undetected[k - day_onset]) - exp(log_undetected[k - day_onset + 1]))
+                * pow(1 - rho, days[j] - k);
+      }
+      real mean_entered = eta * cases_true * unit + entries_extra[j];
       real p_removed = 1 - pow(1 - rho, days[j] - days[j - 1]);
       int change = counts[j] - counts[j - 1];
       vector[max_erroneous + 1] log_alpha_new = rep_vector(negative_infinity(),
@@ -682,9 +693,10 @@ functions {
   }
 
   // For each row of the reports, the expected number of wrong records entered
-  // since the report before, for each case of the onset day and each unit of
-  // eta; for the first report of an onset day, of those entered since the
-  // onset day which are still present. Where the delay changes at unknown
+  // since the report before (for the first report of an onset day, since the
+  // onset day) which are still present, for each case of the onset day and
+  // each unit of eta: one entered on day k is still present at the report on
+  // day d with probability (1 - rho)^(d - k). Where the delay changes at unknown
   // onset days, the delays of its segments are weighted by the probability
   // that the onset day belongs to each (weights, a row for each onset day).
   vector wrong_entry_units(int n_days, array[] int obs_day, array[] int obs_start,
@@ -710,14 +722,10 @@ functions {
         }
         for (i in 1:obs_n[t]) {
           int row = obs_start[t] + i - 1;
-          if (i == 1) {
-            for (k in (t + 1):obs_day[row]) {
-              out[row] += (undetected[k - t] - undetected[k - t + 1])
-                          * pow(1 - rho, obs_day[row] - k);
-            }
-          } else {
-            out[row] = undetected[obs_day[row - 1] - t + 1]
-                       - undetected[obs_day[row] - t + 1];
+          int day_before = i == 1 ? t : obs_day[row - 1];
+          for (k in (day_before + 1):obs_day[row]) {
+            out[row] += (undetected[k - t] - undetected[k - t + 1])
+                        * pow(1 - rho, obs_day[row] - k);
           }
         }
       }

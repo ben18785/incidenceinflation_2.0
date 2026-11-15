@@ -9,6 +9,7 @@ revisions_logp_cpp(
   observation_cases,
   p_detect,
   p_newly_detected,
+  unit_entered,
   p_withdrawn,
   eta,
   mean_entered_extra,
@@ -28,7 +29,12 @@ revisions_logp_cpp(
 the probability a genuine case not yet recorded is recorded}
 
 \item{p_newly_detected}{vector giving, for each interval, the probability
-a genuine case is detected in it}
+a genuine case is detected in it (the rate at which batch records are
+entered, per unit of phi and per true case)}
+
+\item{unit_entered}{vector giving, for each interval, the expected number
+of wrong records entered in it which are still present at its end, per
+unit of eta and per true case (see wrong_entry_units)}
 
 \item{p_withdrawn}{vector giving, for each interval, the probability an
 erroneous record is withdrawn}

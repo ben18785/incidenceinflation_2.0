@@ -528,9 +528,13 @@ paths of genuine reports, erroneous entries and withdrawals", {
       return(1)
     p_detect <- detected_after_unobserved_prob(days[period + 1], days[period],
                                                day_onset, reporting_parameters)
-    p_newly_detected <-
-      undetected_prob(days[period] + 0.5, day_onset, reporting_parameters) -
-      undetected_prob(days[period + 1] + 0.5, day_onset, reporting_parameters)
+    # wrong records entered on each day of the interval and still present at
+    # its end
+    days_in <- seq(days[period] + 1, days[period + 1])
+    p_newly_detected <- sum(
+      (exp(log_undetected_prob(days_in - 0.5, day_onset, reporting_parameters)) -
+         exp(log_undetected_prob(days_in + 0.5, day_onset, reporting_parameters))) *
+        (1 - revision_parameters$rho)^(days[period + 1] - days_in))
     p_withdrawn <- 1 - (1 - revision_parameters$rho)^(days[period + 1] - days[period])
     change <- cases[period + 1] - cases[period]
     prob <- 0

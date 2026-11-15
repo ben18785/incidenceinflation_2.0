@@ -86,6 +86,11 @@ paths", {
       p_detect <- detected_after_unobserved_prob(days[period + 1], days[period],
                                                  day_onset, reporting_parameters)
       p_new <- f_undetected(days[period]) - f_undetected(days[period + 1])
+      # wrong records entered on each day of the interval and still present
+      # at its end (batch records are not withdrawn until the batch is detected)
+      days_in <- seq(days[period] + 1, days[period + 1])
+      unit_new <- sum((sapply(days_in - 1, f_undetected) - sapply(days_in, f_undetected)) *
+                        (1 - revision_parameters$rho)^(days[period + 1] - days_in))
       p_withdrawn <- 1 - (1 - revision_parameters$rho)^(days[period + 1] - days[period])
       change <- cases[period + 1] - cases[period]
       is_detected <- days[period + 1] >= time_detected
@@ -103,7 +108,7 @@ paths", {
             prob_batch <- if(was_detected | is_detected) 1
             else dpois(batch_change, phi * case_true * p_new)
             prob_step <- dbinom(withdrawn, erroneous, p_withdrawn) *
-              dpois(entered, revision_parameters$eta * case_true * p_new) *
+              dpois(entered, revision_parameters$eta * case_true * unit_new) *
               prob_batch *
               dbinom(newly_reported, case_true - genuine, p_detect)
             prob <- prob + prob_step * f_path(period + 1,

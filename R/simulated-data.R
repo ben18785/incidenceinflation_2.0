@@ -140,12 +140,14 @@ observed_cases_trajectory <- function(cases_true, days_reporting, day_onset,
                                        day_onset,
                                        reporting_parameters)
     if(!is.null(revision_parameters)) {
-      p_newly_detected <-
-        undetected_prob(day_previous_report + 0.5, day_onset, reporting_parameters) -
-        undetected_prob(days_reporting[i] + 0.5, day_onset, reporting_parameters)
       p_withdrawn <- 1 - (1 - revision_parameters$rho)^(days_reporting[i] - day_previous_report)
       withdrawn <- stats::rbinom(1, I_erroneous, p_withdrawn)
-      entered <- stats::rpois(1, revision_parameters$eta * cases_true * p_newly_detected)
+      # entered on each day since the report before, and still present
+      days <- seq(day_previous_report + 1, days_reporting[i])
+      p_newly_detected <- -diff(exp(log_undetected_prob(
+        c(day_previous_report, days) + 0.5, day_onset, reporting_parameters)))
+      entered <- stats::rpois(1, revision_parameters$eta * cases_true * sum(
+        p_newly_detected * (1 - revision_parameters$rho)^(days_reporting[i] - days)))
       I_erroneous <- I_erroneous + entered - withdrawn
     }
     I_genuine <- I_genuine + new_cases

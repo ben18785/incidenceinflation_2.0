@@ -61,7 +61,7 @@ test_that("the forward filter of wrong records includes the first report", {
         d <- 4 - 3 - entered + m
         if(d < 0) next
         total <- total + p1 * stats::dbinom(m, e1, p_withdrawn) *
-          stats::dpois(entered, 0.3 * n * (s[4] - s[8])) *
+          stats::dpois(entered, 0.3 * n * sum((s[4:7] - s[5:8]) * (1 - 0.2)^(8 - 5:8))) *
           stats::dbinom(d, n - d1, 1 - s[8] / s[4])
       }
     }

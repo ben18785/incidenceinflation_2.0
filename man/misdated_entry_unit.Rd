@@ -34,11 +34,13 @@ between successive reporting days
 }
 \description{
 A case with onset day (day_onset - shift) which is detected and misdated by
-shift is recorded under day_onset. For each interval between reporting days,
-the expected number of such records entered per case is:
-\deqn{pi * h(shift) * (S(day_1) - S(day_2))}
-where S is the probability a case arising on the neighbouring day remains
-undetected. Also calculated is the expected number present on the first
+shift is recorded under day_onset, and each such record is corrected with
+probability rho on each later day. For each interval between reporting days,
+the expected number of such records entered in it and not yet corrected at
+its end, per case, is:
+\deqn{pi * h(shift) * \sum_k (S(k - 1) - S(k)) * (1 - rho)^(day_2 - k)}
+over the days k after day_1 up to day_2, where S is the probability a case
+arising on the neighbouring day remains undetected. Also calculated is the expected number present on the first
 reporting day: those entered on days after day_onset which have not yet
 been corrected.
 }

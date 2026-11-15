@@ -376,8 +376,8 @@ deaths_wrong_step <- function(state, cases_true, reporting_by_onset,
       entered_alive + entered_dead,
     rate=prior_parameters$eta_mu / prior_parameters$eta_sigma^2 + exposure)
 
-  # rho acts on the removal of wrong records and on how many of those entered
-  # before the first report are still present at it
+  # rho acts on the removal of wrong records present at a report and on how
+  # many of those entered since the report before are still present
   f_logp <- function(rho) {
     proposed <- revision_parameters
     proposed$rho <- rho
@@ -387,8 +387,8 @@ deaths_wrong_step <- function(state, cases_true, reporting_by_onset,
                                  onset_times[k],
                                  delay_of_onset(reporting_by_onset, k), proposed)
       sum(dbinom_log_recycled(path$wrong_removed, path$wrong_before, units$w)) +
-        stats::dpois(path$wrong_entered_alive[1] + path$wrong_entered_dead[1],
-                     proposed$eta * cases_recorded[k] * units$unit[1], log=TRUE)
+        sum(stats::dpois(path$wrong_entered_alive + path$wrong_entered_dead,
+                         proposed$eta * cases_recorded[k] * units$unit, log=TRUE))
     }))
     logl + stats::dbeta(rho, prior_parameters$rho_alpha,
                         prior_parameters$rho_beta, log=TRUE) +

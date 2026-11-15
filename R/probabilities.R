@@ -143,11 +143,13 @@ unrecorded_prob <- function(days, day_onset, reporting_parameters,
 #' neighbouring onset day
 #'
 #' A case with onset day (day_onset - shift) which is detected and misdated by
-#' shift is recorded under day_onset. For each interval between reporting days,
-#' the expected number of such records entered per case is:
-#' \deqn{pi * h(shift) * (S(day_1) - S(day_2))}
-#' where S is the probability a case arising on the neighbouring day remains
-#' undetected. Also calculated is the expected number present on the first
+#' shift is recorded under day_onset, and each such record is corrected with
+#' probability rho on each later day. For each interval between reporting days,
+#' the expected number of such records entered in it and not yet corrected at
+#' its end, per case, is:
+#' \deqn{pi * h(shift) * \sum_k (S(k - 1) - S(k)) * (1 - rho)^(day_2 - k)}
+#' over the days k after day_1 up to day_2, where S is the probability a case
+#' arising on the neighbouring day remains undetected. Also calculated is the expected number present on the first
 #' reporting day: those entered on days after day_onset which have not yet
 #' been corrected.
 #'
@@ -178,8 +180,14 @@ misdated_entry_unit <- function(observation_days, day_onset, shift,
     initial <- rate * sum(
       p_newly_detected * (1 - revision_parameters$rho)^(observation_days[1] - days))
   }
-  list(initial=initial,
-       periods=rate * -diff(f_undetected(observation_days)))
+  # those entered between successive reports which are not yet corrected at
+  # the later one: one entered on day k with probability (1 - rho)^(day_2 - k)
+  periods <- vapply(seq_len(length(observation_days) - 1), function(i) {
+    days <- seq(observation_days[i] + 1, observation_days[i + 1])
+    rate * sum((f_undetected(days - 1) - f_undetected(days)) *
+                 (1 - revision_parameters$rho)^(observation_days[i + 1] - days))
+  }, numeric(1))
+  list(initial=initial, periods=periods)
 }
 
 #' Expected misdated records entered for an onset day from all neighbouring
@@ -399,6 +407,10 @@ observation_process_revisions_logp <- function(observation_df, cases_true,
     p_unrecorded <- unrecorded_prob(observation_days, day_onset,
                                     reporting_parameters, revision_parameters)
 
+  # wrong records entered between reports which are still present at the
+  # later one, per true case and unit of eta
+  units_entered <- wrong_entry_units(observation_days, day_onset, reporting_parameters,
+                                     revision_parameters)$unit[-1]
   for(i in seq_len(num_periods)) {
     day_1 <- observation_days[i]
     day_2 <- observation_days[i + 1]
@@ -407,8 +419,6 @@ observation_process_revisions_logp <- function(observation_df, cases_true,
     else
       p_detect <- detected_after_unobserved_prob(day_2, day_1, day_onset,
                                                  reporting_parameters)
-    p_newly_detected <- undetected_prob(day_1 + 0.5, day_onset, reporting_parameters) -
-      undetected_prob(day_2 + 0.5, day_onset, reporting_parameters)
     p_withdrawn <- 1 - (1 - rho)^(day_2 - day_1)
     change_cases <- observation_cases[i + 1] - observation_cases[i]
 
@@ -417,7 +427,7 @@ observation_process_revisions_logp <- function(observation_df, cases_true,
                                     p_withdrawn, log=TRUE)
     logp_entered <- stats::dpois(
       entered,
-      eta * cases_true_long * p_newly_detected +
+      eta * cases_true_long * units_entered[i] +
         rep(mean_entered_extra[, i], n_transitions),
       log=TRUE)
     # genuine cases remaining are those not among the non-erroneous records
@@ -502,6 +512,8 @@ observation_process_revisions_compiled_logp <- function(
     observation_cases=as.numeric(observation_cases),
     p_detect=p_detect,
     p_newly_detected=-diff(p_undetected),
+    unit_entered=wrong_entry_units(observation_days, day_onset, reporting_parameters,
+                                   revision_parameters)$unit[-1],
     p_withdrawn=1 - (1 - revision_parameters$rho)^diff(observation_days),
     eta=revision_parameters$eta,
     mean_entered_extra=mean_entered_extra,

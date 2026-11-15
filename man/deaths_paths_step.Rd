@@ -53,5 +53,9 @@ number of fatal cases is therefore first updated with the split of the
 reported cases summed out: a change is proposed and accepted with the
 Metropolis probability, using the probability of the reports from
 \code{joint_path_forward}. The split is then drawn given the result. The
-fatal cases dated by death, into and out of the day, are held fixed.
+fatal cases dated by death, into and out of the day, are held fixed. If the
+reports are impossible given the current true fatal cases, as at the start,
+where these are set without the delays, they are first drawn from their
+distribution given the reports, the case fatality ratio and the delays
+(see \code{possible_fatal_start}).
 }

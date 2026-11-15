@@ -1228,6 +1228,36 @@ is_wrong_records <- function(revision_parameters) {
   !is.null(revision_parameters$eta)
 }
 
+#' Draws a number of true fatal cases of one onset time which the reports
+#' allow
+#'
+#' Every number from those dated by death to the true cases is tried, and one
+#' is drawn with probability proportional to its probability given the
+#' reports, the case fatality ratio and the delays.
+#'
+#' @param f_forward a function of the true fatal cases which filters forwards
+#' over the reports, returning a list with element 'logp'
+#' @param f_logp a function of the true fatal cases and the result of
+#' f_forward which returns the log-probability of both
+#' @param smallest the fewest true fatal cases allowed
+#' @param largest the most true fatal cases allowed
+#'
+#' @return NULL if no number is possible, otherwise a named list of
+#' 'deaths_true' and 'forward' (the result of f_forward for it)
+possible_fatal_start <- function(f_forward, f_logp, smallest, largest) {
+  if(largest < smallest)
+    return(NULL)
+  values <- seq(smallest, largest)
+  forwards <- lapply(values, f_forward)
+  logp <- purrr::map2_dbl(values, forwards, f_logp)
+  if(!any(is.finite(logp)))
+    return(NULL)
+  weights <- exp(logp - max(logp[is.finite(logp)]))
+  weights[!is.finite(logp)] <- 0
+  index <- if(length(values) == 1) 1 else sample.int(length(values), 1, prob=weights)
+  list(deaths_true=values[index], forward=forwards[[index]])
+}
+
 #' Samples how many of the cases in each report are fatal, and how many are
 #' wrong records, for every onset time
 #'
@@ -1252,7 +1282,11 @@ is_wrong_records <- function(revision_parameters) {
 #' reported cases summed out: a change is proposed and accepted with the
 #' Metropolis probability, using the probability of the reports from
 #' \code{joint_path_forward}. The split is then drawn given the result. The
-#' fatal cases dated by death, into and out of the day, are held fixed.
+#' fatal cases dated by death, into and out of the day, are held fixed. If the
+#' reports are impossible given the current true fatal cases, as at the start,
+#' where these are set without the delays, they are first drawn from their
+#' distribution given the reports, the case fatality ratio and the delays
+#' (see \code{possible_fatal_start}).
 #'
 #' @return the state with elements 'deaths_true', 'paths' (see
 #' \code{joint_path_backward}), 'survivals' (see \code{joint_survivals}) and
@@ -1315,11 +1349,22 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
       fixed <- NULL
       forward <- f_forward(deaths_true)
     }
-    if(!is.finite(forward$logp))
-      stop(paste0("The reports of cases and deaths are impossible given the true cases and deaths (onset time ",
-                  state$onset_times[k], ": ", cases_true[k], " cases, ", deaths_true,
-                  " fatal, ", dated$out[k], " of them dated by death, ", dated$into[k],
-                  " dated by death into the day)."))
+    # the true fatal cases are impossible given the reports, which can happen
+    # only at the start (the starting fatal cases are set without the
+    # delays): they are drawn instead from their distribution given the
+    # reports, the case fatality ratio and the delays
+    if(!is.finite(forward$logp)) {
+      start <- possible_fatal_start(f_forward, f_logp, dated$out[k], cases_true[k])
+      if(is.null(start))
+        stop(paste0("The reports of cases and deaths are impossible given the true cases (onset time ",
+                    state$onset_times[k], ": ", cases_true[k], " cases, ",
+                    dated$out[k], " fatal cases of it dated by death, ", dated$into[k],
+                    " dated by death into the day) for any number of fatal cases. ",
+                    "Try a longer initial delay to a death being recorded (initial_delay), ",
+                    "more initial true cases, or a larger max_erroneous."))
+      deaths_true <- start$deaths_true
+      forward <- start$forward
+    }
     for(proposal in seq_len(n_proposals)) {
       proposed <- deaths_true + sample(c(-1, 1), 1) * sample.int(step_max, 1)
       if(proposed < dated$out[k] | proposed > cases_true[k])

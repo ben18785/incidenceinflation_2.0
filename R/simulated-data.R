@@ -129,7 +129,8 @@ observed_cases_trajectory <- function(cases_true, days_reporting, day_onset,
         I_erroneous <- stats::rpois(1, revision_parameters$eta * cases_true * sum(
           p_newly_detected * (1 - revision_parameters$rho)^(days_reporting[1] - days)))
       }
-      I_genuine <- new_cases
+      # as a double, since counts can exceed the largest integer
+      I_genuine <- as.numeric(new_cases)
       I_observed[i] <- I_genuine + I_erroneous
       next
     }

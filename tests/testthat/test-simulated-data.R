@@ -343,7 +343,9 @@ parameters supplied", {
   expect_true(any(purrr::map_lgl(trajectories, ~any(diff(.) < 0))))
   expect_true(any(purrr::map_dbl(trajectories, max) > 20))
   expect_true(all(purrr::map_dbl(trajectories, min) >= 0))
-  expect_true(all(purrr::map_dbl(trajectories, ~.[1]) == 0))
+  # the report on the onset day holds genuine cases only: no wrong record is
+  # entered on the onset day
+  expect_true(all(purrr::map_dbl(trajectories, ~.[1]) <= 20))
   # erroneous records nearly all withdrawn long after onset
   expect_true(mean(purrr::map_dbl(trajectories, dplyr::last) == 20) > 0.9)
 })

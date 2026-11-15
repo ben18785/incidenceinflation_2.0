@@ -16,8 +16,10 @@ metropolis_steps(
 )
 }
 \arguments{
-\item{snapshot_with_true_cases_df}{a tibble with four columns:
-time_onset, time_reported, cases_reported, cases_true}
+\item{snapshot_with_true_cases_df}{a tibble with columns time_onset,
+time_reported, cases_reported, cases_true and reporting_piece_index (the
+piece of the reporting delay of each onset time). reporting_piece_index can
+be left out if the delay has a single piece.}
 
 \item{current_reporting_parameters}{a tibble with column names: "reporting_piece_index", "mean", "sd"}
 

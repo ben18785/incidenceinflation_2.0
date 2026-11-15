@@ -53,7 +53,8 @@ the first onset times but are not themselves estimated, and nothing is
 assumed about how they were reported.}
 }
 \value{
-a tibble with three columns: "Rt_piece_index", "draw_index", "Rt"
+a tibble with three columns: "Rt_index" (the piece of Rt),
+"draw_index" and "Rt"
 }
 \description{
 If the renewal model is specified by a Poisson (the default):

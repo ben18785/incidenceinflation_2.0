@@ -47,7 +47,11 @@ and the number of cases observed between day_1 and day_2:
 It is given by:
 \deqn{binomial(I_obs|I_remaining, p_detect)}
 where p_detect is the probability a thus undetected case is detected between
-day_1 and day_2.
+day_1 and day_2. Every count is taken to be zero at a notional report before
+the first, so the first report contributes
+\deqn{binomial(I_day_first|I_true, 1 - S(day_first))}
+with S the probability a case remains undetected. A single report is
+therefore informative about the true cases and the delay.
 This function calculates the combined probability of all observed cases pertaining
 to a particular onset date.
 }

@@ -76,7 +76,8 @@ model only)}
 
 \item{max_erroneous}{the largest number of erroneous records held for an
 onset time at once; by default one more than the largest fall in a
-reported count, and at least 3}
+reported count, and at least 3. Erroneous records are always part of the
+model (see \code{fit_incidence}).}
 
 \item{days_sampled}{in the relaxed model, the number of the latest onset
 times whose true cases are unknown}

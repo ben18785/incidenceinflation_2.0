@@ -115,8 +115,9 @@ paths", {
       }
       prob
     }
-    # first reported on onset day: no erroneous or batch records
-    f_path(1, cases[1], 0, 0)
+    # first reported on onset day: no erroneous or batch records, and the
+    # cases reported are binomial from a notional report of zero before it
+    dbinom(cases[1], case_true, 1 - f_undetected(days[1])) * f_path(1, cases[1], 0, 0)
   }
 
   days <- c(1, 2, 3, 5, 6, 8)
@@ -181,14 +182,13 @@ reporting days are observed", {
       case_true, 1, reporting_parameters, revision_parameters, max_erroneous,
       batch=batch, max_batch=max_batch))
   }
+  # summing over the cases which would have been reported on days 1 and 2
   f_prob_long_way <- function(cases) {
-    numerator <- 0
-    denominator <- 0
-    for(cases_hidden in 0:max_reported) {
-      numerator <- numerator + f_prob(1:6, c(0, cases_hidden, cases))
-      denominator <- denominator + f_prob(1:3, c(0, cases_hidden, cases[1]))
-    }
-    numerator / denominator
+    total <- 0
+    for(cases_day_1 in 0:case_true)
+      for(cases_hidden in 0:max_reported)
+        total <- total + f_prob(1:6, c(cases_day_1, cases_hidden, cases))
+    total
   }
   l_cases <- list(c(3, 4, 3, 3), c(5, 6, 2, 3), c(2, 3, 1, 2), c(4, 4, 1, 1))
   for(cases in l_cases) {

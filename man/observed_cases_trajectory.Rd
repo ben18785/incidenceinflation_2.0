@@ -38,6 +38,14 @@ a vector of reported case counts of same length as days_reporting
 \description{
 If revision_parameters is supplied, the reported case counts also include
 erroneous records, which are entered and later withdrawn, so that counts can
-be revised downwards (see \code{observation_process_revisions_logp}). No
-erroneous records are entered before the first day on which cases are counted.
+be revised downwards (see \code{observation_process_revisions_logp}).
+}
+\details{
+Every count is zero at a notional report before the first, so a case with
+delay d from onset is in every report made at least d - 0.5 days after
+onset, including one made on the onset day itself. Erroneous records are
+entered on each day after the onset day, at the rate at which genuine cases
+are newly reported that day, and each is withdrawn with probability rho on
+each later day; those present at the first report are those entered on the
+days up to it and not yet withdrawn.
 }

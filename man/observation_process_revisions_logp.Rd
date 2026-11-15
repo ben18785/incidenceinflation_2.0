@@ -74,6 +74,7 @@ erroneous records are entered, where S is the probability a case remains undetec
 erroneous records are withdrawn. The change in reported cases is then:
 \deqn{C_day_2 - C_day_1 = d + n - m}
 E is unobserved so is summed over using a forward recursion, with E
-truncated at max_erroneous. Its distribution on the first reporting day is
-given by \code{erroneous_initial_logp}.
+truncated at max_erroneous. The recursion starts from its joint probability
+with the first report, given by \code{erroneous_initial_logp}, so that the
+first report is part of the probability calculated.
 }

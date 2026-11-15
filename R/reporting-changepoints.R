@@ -33,7 +33,7 @@ reporting_logp_function <- function(snapshot_with_true_cases_df,
     sum(purrr::map_dbl(indices, function(k) {
       onset_time <- onset_times[k]
       observation_df <- l_observations[[as.character(onset_time)]]
-      if(nrow(observation_df) <= 1)
+      if(nrow(observation_df) == 0)
         return(0)
       if(is_misdating)
         observation_process_revisions_logp(

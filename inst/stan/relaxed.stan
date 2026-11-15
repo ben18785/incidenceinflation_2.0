@@ -176,15 +176,19 @@ functions {
     int n = size(days);
     vector[max_erroneous + 1] log_alpha = rep_vector(negative_infinity(),
                                                      max_erroneous + 1);
-    if (n <= 1) {
+    if (n == 0) {
       return 0;
     }
-    // erroneous records present at the first report, given its count
+    // the genuine cases reported by the first report: every count is zero at
+    // a notional report before it
+    real p_detect = 1 - unrecorded[days[1] - day_onset + 1];
+    // erroneous records present at the first report, jointly with its count
     if (days[1] == day_onset || (eta == 0 && entries_extra[1] == 0)) {
-      log_alpha[1] = 0;
+      if (counts[1] <= cases_true) {
+        log_alpha[1] = binomial_real_logp(counts[1], cases_true, p_detect);
+      }
     } else {
       real mean_erroneous = 0;
-      real p_detect = 1 - unrecorded[days[1] - day_onset + 1] / unrecorded[1];
       for (k in (day_onset + 1):days[1]) {
         mean_erroneous += (exp(log_undetected[k - day_onset])
                            - exp(log_undetected[k - day_onset + 1]))
@@ -197,7 +201,6 @@ functions {
                              + binomial_real_logp(counts[1] - e, cases_true, p_detect);
         }
       }
-      log_alpha -= log_sum_exp(log_alpha);
     }
 
     for (j in 2:n) {
@@ -363,7 +366,7 @@ functions {
       }
     }
     for (t in 1:n_days) {
-      if (obs_n[t] > 1) {
+      if (obs_n[t] > 0) {
         array[obs_n[t]] int days = obs_day[obs_start[t]:(obs_start[t] + obs_n[t] - 1)];
         array[obs_n[t]] int counts = obs_count[obs_start[t]:(obs_start[t] + obs_n[t] - 1)];
         int n_after = n_days - t;
@@ -816,7 +819,7 @@ functions {
     int n_columns = is_delay_changepoints ? size(base_N) : 1;
     matrix[n_days, n_columns] ll = rep_matrix(0, n_days, n_columns);
     for (t in 1:n_days) {
-      if (obs_n[t] > 1) {
+      if (obs_n[t] > 0) {
         array[obs_n[t]] int days = obs_day[obs_start[t]:(obs_start[t] + obs_n[t] - 1)];
         array[obs_n[t]] int counts = obs_count[obs_start[t]:(obs_start[t] + obs_n[t] - 1)];
         int n = n_days - t + 1;

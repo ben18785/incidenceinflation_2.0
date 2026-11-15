@@ -36,8 +36,11 @@ delay distribution for each time period}
 
 \item{kappa}{over-dispersion parameter of negative binomial}
 
-\item{days_max_follow_up}{max days at which to simulate reporting case
-trajectory}
+\item{days_max_follow_up}{the most days after onset for which reports
+are simulated. A report is made each day from the onset day, and the last
+onset day is taken as the present: no report is made after it, whatever
+days_max_follow_up is. So onset day t is reported on days t to
+min(length(cases_true), t + days_max_follow_up).}
 
 \item{initial_parameters}{a named list of 'mean' and 'length'
 which is used to generate seed cases by sampling from a negative binomial

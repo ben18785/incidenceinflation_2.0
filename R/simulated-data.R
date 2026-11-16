@@ -93,8 +93,15 @@ observed_cases_single <- function(cases_observed, cases_true, day_2, day_1, day_
 #'
 #' If revision_parameters is supplied, the reported case counts also include
 #' erroneous records, which are entered and later withdrawn, so that counts can
-#' be revised downwards (see \code{observation_process_revisions_logp}). No
-#' erroneous records are entered before the first day on which cases are counted.
+#' be revised downwards (see \code{observation_process_revisions_logp}).
+#'
+#' Every count is zero at a notional report before the first, so a case with
+#' delay d from onset is in every report made at least d - 0.5 days after
+#' onset, including one made on the onset day itself. Erroneous records are
+#' entered on each day after the onset day, at the rate at which genuine cases
+#' are newly reported that day, and each is withdrawn with probability rho on
+#' each later day; those present at the first report are those entered on the
+#' days up to it and not yet withdrawn.
 #'
 #' @inheritParams observed_cases_single
 #' @inheritParams observation_process_revisions_logp
@@ -111,22 +118,37 @@ observed_cases_trajectory <- function(cases_true, days_reporting, day_onset,
   I_erroneous <- 0
   for(i in 1:length(days_reporting)){
     if(i == 1) {
-      day_previous_report <- day_onset
-    } else {
-      day_previous_report <- days_reporting[i - 1]
+      # from the notional report before the first, at which nothing has been
+      # reported
+      new_cases <- stats::rbinom(1, cases_true, -expm1(log_undetected_prob(
+        days_reporting[1] + 0.5, day_onset, reporting_parameters)))
+      if(!is.null(revision_parameters) && days_reporting[1] > day_onset) {
+        days <- seq(day_onset + 1, days_reporting[1])
+        p_newly_detected <- -diff(exp(log_undetected_prob(
+          c(day_onset, days) + 0.5, day_onset, reporting_parameters)))
+        I_erroneous <- stats::rpois(1, revision_parameters$eta * cases_true * sum(
+          p_newly_detected * (1 - revision_parameters$rho)^(days_reporting[1] - days)))
+      }
+      # as a double, since counts can exceed the largest integer
+      I_genuine <- as.numeric(new_cases)
+      I_observed[i] <- I_genuine + I_erroneous
+      next
     }
+    day_previous_report <- days_reporting[i - 1]
     new_cases <- observed_cases_single(I_genuine, cases_true,
                                        days_reporting[i],
                                        day_previous_report,
                                        day_onset,
                                        reporting_parameters)
-    if(!is.null(revision_parameters) & i > 1) {
-      p_newly_detected <-
-        undetected_prob(day_previous_report + 0.5, day_onset, reporting_parameters) -
-        undetected_prob(days_reporting[i] + 0.5, day_onset, reporting_parameters)
+    if(!is.null(revision_parameters)) {
       p_withdrawn <- 1 - (1 - revision_parameters$rho)^(days_reporting[i] - day_previous_report)
       withdrawn <- stats::rbinom(1, I_erroneous, p_withdrawn)
-      entered <- stats::rpois(1, revision_parameters$eta * cases_true * p_newly_detected)
+      # entered on each day since the report before, and still present
+      days <- seq(day_previous_report + 1, days_reporting[i])
+      p_newly_detected <- -diff(exp(log_undetected_prob(
+        c(day_previous_report, days) + 0.5, day_onset, reporting_parameters)))
+      entered <- stats::rpois(1, revision_parameters$eta * cases_true * sum(
+        p_newly_detected * (1 - revision_parameters$rho)^(days_reporting[i] - days)))
       I_erroneous <- I_erroneous + entered - withdrawn
     }
     I_genuine <- I_genuine + new_cases
@@ -247,8 +269,11 @@ create_reporting_from_single_parameters_df <- function(time_onsets,
 #' distribution indicating a single reporting delay distribution for the whole period
 #' or a tibble with columns: 'time_onset', 'mean', 'sd' indicating the reporting
 #' delay distribution for each time period
-#' @param days_max_follow_up max days at which to simulate reporting case
-#' trajectory
+#' @param days_max_follow_up the most days after onset for which reports
+#' are simulated. A report is made each day from the onset day, and the last
+#' onset day is taken as the present: no report is made after it, whatever
+#' days_max_follow_up is. So onset day t is reported on days t to
+#' min(length(cases_true), t + days_max_follow_up).
 #' @inheritParams observed_cases_trajectory
 #'
 #' @return a tibble with observed case trajectories for each time of onset
@@ -538,7 +563,6 @@ observed_cases_revisions <- function(cases_true, reporting_parameters,
   m_misdated <- matrix(0, nrow=d_max, ncol=max(n_shifts, 1))
   l_batch <- purrr::map(seq_len(d_max), ~batch_for_onset(., batches))
   m_reported <- matrix(NA, nrow=d_max, ncol=d_max)
-  diag(m_reported) <- 0
 
   # log-probability that a case arising on each onset day (rows) remains
   # undetected at the end of each day (columns), allowing for any tail to the
@@ -549,6 +573,15 @@ observed_cases_revisions <- function(cases_true, reporting_parameters,
       t:d_max, t,
       list(mean=reporting_parameters$mean[t], sd=reporting_parameters$sd[t]),
       revision_parameters)
+
+  # the report made on each onset day holds the cases reported within half a
+  # day of onset (every count being zero at a notional report before it); no
+  # erroneous or misdated record is entered on the onset day
+  for(t in seq_len(d_max)) {
+    I_detected[t] <- stats::rbinom(1, cases_true[t], -expm1(m_log_undetected[t, t]))
+    I_genuine[t] <- I_detected[t]
+    m_reported[t, t] <- I_genuine[t]
+  }
 
   for(day in seq_len(d_max)[-1]) {
     for(t in 1:(day - 1)) {
@@ -631,12 +664,12 @@ observed_cases_revisions <- function(cases_true, reporting_parameters,
 #' report; zero (the default) for no random effects
 #'
 #' @return a named list of 'report_log_effects', the log of the random effect
-#' of each report; and 'report_multipliers', a named list of 'day_first' and
+#' of each report (all zero if report_sd is zero); and 'report_multipliers', a named list of 'day_first' and
 #' 'values' as required within the revision parameters
 #' @export
 simulate_report_multipliers <- function(report_days, weekday_log_effects=NULL,
                                         report_sd=0, weekday_first=1) {
-  report_log_effects <- NULL
+  report_log_effects <- rep(0, length(report_days))
   if(report_sd > 0)
     report_log_effects <- stats::rnorm(length(report_days), 0, report_sd)
   list(report_log_effects=report_log_effects,

@@ -86,6 +86,11 @@ paths", {
       p_detect <- detected_after_unobserved_prob(days[period + 1], days[period],
                                                  day_onset, reporting_parameters)
       p_new <- f_undetected(days[period]) - f_undetected(days[period + 1])
+      # wrong records entered on each day of the interval and still present
+      # at its end (batch records are not withdrawn until the batch is detected)
+      days_in <- seq(days[period] + 1, days[period + 1])
+      unit_new <- sum((sapply(days_in - 1, f_undetected) - sapply(days_in, f_undetected)) *
+                        (1 - revision_parameters$rho)^(days[period + 1] - days_in))
       p_withdrawn <- 1 - (1 - revision_parameters$rho)^(days[period + 1] - days[period])
       change <- cases[period + 1] - cases[period]
       is_detected <- days[period + 1] >= time_detected
@@ -103,7 +108,7 @@ paths", {
             prob_batch <- if(was_detected | is_detected) 1
             else dpois(batch_change, phi * case_true * p_new)
             prob_step <- dbinom(withdrawn, erroneous, p_withdrawn) *
-              dpois(entered, revision_parameters$eta * case_true * p_new) *
+              dpois(entered, revision_parameters$eta * case_true * unit_new) *
               prob_batch *
               dbinom(newly_reported, case_true - genuine, p_detect)
             prob <- prob + prob_step * f_path(period + 1,
@@ -115,8 +120,9 @@ paths", {
       }
       prob
     }
-    # first reported on onset day: no erroneous or batch records
-    f_path(1, cases[1], 0, 0)
+    # first reported on onset day: no erroneous or batch records, and the
+    # cases reported are binomial from a notional report of zero before it
+    dbinom(cases[1], case_true, 1 - f_undetected(days[1])) * f_path(1, cases[1], 0, 0)
   }
 
   days <- c(1, 2, 3, 5, 6, 8)
@@ -181,14 +187,13 @@ reporting days are observed", {
       case_true, 1, reporting_parameters, revision_parameters, max_erroneous,
       batch=batch, max_batch=max_batch))
   }
+  # summing over the cases which would have been reported on days 1 and 2
   f_prob_long_way <- function(cases) {
-    numerator <- 0
-    denominator <- 0
-    for(cases_hidden in 0:max_reported) {
-      numerator <- numerator + f_prob(1:6, c(0, cases_hidden, cases))
-      denominator <- denominator + f_prob(1:3, c(0, cases_hidden, cases[1]))
-    }
-    numerator / denominator
+    total <- 0
+    for(cases_day_1 in 0:case_true)
+      for(cases_hidden in 0:max_reported)
+        total <- total + f_prob(1:6, c(cases_day_1, cases_hidden, cases))
+    total
   }
   l_cases <- list(c(3, 4, 3, 3), c(5, 6, 2, 3), c(2, 3, 1, 2), c(4, 4, 1, 1))
   for(cases in l_cases) {

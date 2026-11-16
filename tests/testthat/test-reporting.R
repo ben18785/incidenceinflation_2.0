@@ -175,10 +175,12 @@ of binomial probabilities when there are no erroneous records", {
   for(revision_parameters in l_revision_parameters) {
     log_s <- log_undetected_days(1:6, 1, reporting_parameters, revision_parameters)
     p_detect <- 1 - exp(diff(log_s))
+    # the first report is binomial from a notional report of zero before it
     expected <- purrr::map_dbl(cases_true, function(case_true) {
-      sum(dbinom(diff(observation_df$cases_reported),
-                 case_true - observation_df$cases_reported[1:5],
-                 p_detect, log=TRUE))
+      dbinom(observation_df$cases_reported[1], case_true, 1 - exp(log_s[1]), log=TRUE) +
+        sum(dbinom(diff(observation_df$cases_reported),
+                   case_true - observation_df$cases_reported[1:5],
+                   p_detect, log=TRUE))
     })
     logp <- observation_process_logp(observation_df, cases_true, 1,
                                      reporting_parameters,
@@ -219,9 +221,9 @@ and to misdating", {
                                       revision_parameters, max_erroneous=3)
   p_undetected <- exp(log_undetected_days(2:5, 2, reporting_parameters, revision_parameters))
   mean_erroneous <- 0.2 * 8 * sum(-diff(p_undetected) * 0.7^(2:0))
-  p_detect <- 1 - p_undetected[4] / p_undetected[1]
+  p_detect <- 1 - p_undetected[4]
   probs <- dpois(0:3, mean_erroneous) * dbinom(6 - 0:3, 8, p_detect)
-  expect_equal(exp(log_alpha[1, ]), probs / sum(probs))
+  expect_equal(exp(log_alpha[1, ]), probs)
 
   # probability of not yet being recorded under the onset day with misdating
   revision_parameters$pi <- 0.3
@@ -312,7 +314,7 @@ test_that("generate_snapshots allows extensions to reporting", {
   # no reporting at weekends (days 6 and 7 of each week)
   weekday_log_effects <- c("1"=0, "2"=0, "3"=0, "4"=0, "5"=0, "6"=-Inf, "7"=-Inf)
   simulated <- simulate_report_multipliers(1:days_total, weekday_log_effects)
-  expect_null(simulated$report_log_effects)
+  expect_equal(simulated$report_log_effects, rep(0, days_total))
   expect_equal(simulated$report_multipliers$values[1:8], c(1, 1, 1, 1, 1, 0, 0, 1))
   df <- generate_snapshots(
     days_total, Rt_function, list(mean=5, sd=3), list(mean=4, sd=2),

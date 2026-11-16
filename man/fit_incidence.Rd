@@ -86,4 +86,12 @@ take seconds but can be poor, particularly where Rt or the delay changes at
 unknown times.
 }
 Options which a version of the model does not have give an error.
+
+Both versions always allow for erroneous records, which are entered and
+later withdrawn so that reported counts can fall (see
+\code{observation_process_revisions_logp}): their rate, eta, and the daily
+probability of their withdrawal, rho, are fitted with the priors of
+\code{model_priors} (eta_mu, eta_sigma, rho_alpha and rho_beta), and are in
+the 'parameters' of the result. Where the reports give no sign of erroneous
+records, eta is estimated close to zero.
 }

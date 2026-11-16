@@ -49,7 +49,7 @@ the first reporting day (a single value or one for each element of cases_true)}
 day and which has not been detected by the first reporting day (zero if none).
 The count of its records, X, on the first reporting day has prior distribution:
 \deqn{X \sim Poisson(phi * I_true * (S(day_onset) - S(day_first)))}
-and the distribution calculated is then that of (E, X) conditional on the
+and the probability calculated is then that of (E, X) jointly with the
 cases first reported, C = D + E + X.}
 
 \item{max_batch}{maximum count of batch records (zero if there is no batch)}
@@ -70,7 +70,9 @@ records on the first reporting day then has prior distribution:
 \deqn{E \sim Poisson(eta * I_true * \sum_k (S(k - 1) - S(k)) * (1 - rho)^(day_first - k))}
 where the sum is over days after the onset day up to the first reporting day.
 Independently, the genuine cases reported by then are:
-\deqn{D \sim binomial(I_true, p_detect)}
-This calculates the distribution of E conditional on the cases first
-reported, C = D + E, with E truncated at max_erroneous.
+\deqn{D \sim binomial(I_true, 1 - S(day_first))}
+since every count is zero at a notional report before the first. This
+calculates the joint probability of each count of erroneous records and the
+cases first reported, C = D + E, with E truncated at max_erroneous: summed
+over E, it is the probability of the first report.
 }

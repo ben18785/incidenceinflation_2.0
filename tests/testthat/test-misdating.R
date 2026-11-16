@@ -45,7 +45,9 @@ test_that("misdated_entry_unit matches direct calculation", {
   unit <- misdated_entry_unit(observation_days, 4, 1, reporting_parameters,
                               revision_parameters)
   f_s <- function(day) undetected_prob(day + 0.5, 3, reporting_parameters)
-  expect_equal(unit$periods, 0.3 * 0.4 * c(f_s(6) - f_s(7), f_s(7) - f_s(9)))
+  # those entered on each day of an interval and not yet corrected at its end
+  expect_equal(unit$periods, 0.3 * 0.4 * c(f_s(6) - f_s(7),
+                                           (f_s(7) - f_s(8)) * 0.7 + (f_s(8) - f_s(9))))
   expect_equal(unit$initial,
                0.3 * 0.4 * ((f_s(4) - f_s(5)) * 0.7 + (f_s(5) - f_s(6))))
 
@@ -96,11 +98,12 @@ test_that("simulated reported cases match unrecorded_prob and misdated entries",
       df$cases_reported[df$time_onset == time_onset &
                           df$time_reported == time_reported]))
 
-  # cases recorded under their own onset day
+  # cases recorded under their own onset day, counted from a notional report
+  # of zero before the first
   p_unrecorded <- unrecorded_prob(c(5, 8, 12), 5, reporting_parameters,
                                   revision_parameters)
   for(i in 2:3) {
-    expected <- 400 * (1 - p_unrecorded[i] / p_unrecorded[1])
+    expected <- 400 * (1 - p_unrecorded[i])
     expect_equal(f_mean_reported(5, c(8, 12)[i - 1]), expected, tolerance=0.02)
   }
 
@@ -115,8 +118,7 @@ test_that("simulated reported cases match unrecorded_prob and misdated entries",
   totals <- purrr::map_dbl(l_reported, function(df)
     sum(df$cases_reported[df$time_reported == 12]))
   expect_true(all(totals <= 400))
-  p_detected <- 1 - undetected_prob(12.5, 5, reporting_parameters) /
-    undetected_prob(5.5, 5, reporting_parameters)
+  p_detected <- 1 - undetected_prob(12.5, 5, reporting_parameters)
   expect_equal(mean(totals), 400 * p_detected, tolerance=0.02)
 })
 

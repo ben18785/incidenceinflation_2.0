@@ -66,6 +66,28 @@ dbinom_log_safe <- function(x, size, prob) {
   logp
 }
 
+#' Binomial log-probability with the probability of failure given on the log
+#' scale
+#'
+#' Used where that probability, of a case remaining unreported, can underflow
+#' to zero long after onset, so that counts above those reported keep a
+#' finite (if very small) probability.
+#'
+#' @param x number of successes (cases reported)
+#' @param size number of trials (true cases): a single value or a vector
+#' @param log_s log of the probability of failure (of remaining unreported)
+#'
+#' @return a vector of log-probabilities, -Inf where x is impossible
+dbinom_log_survival <- function(x, size, log_s) {
+  x <- rep(x, length.out=length(size))
+  logp <- rep(-Inf, length(size))
+  is_valid <- size >= 0 & x >= 0 & x <= size
+  n_left <- size[is_valid] - x[is_valid]
+  logp[is_valid] <- lchoose(size[is_valid], x[is_valid]) +
+    x[is_valid] * log1p(-exp(log_s)) + ifelse(n_left == 0, 0, n_left * log_s)
+  logp
+}
+
 #' Probability that a genuine case is misdated
 #'
 #' @param revision_parameters named list which may contain an element 'pi'
@@ -121,11 +143,13 @@ unrecorded_prob <- function(days, day_onset, reporting_parameters,
 #' neighbouring onset day
 #'
 #' A case with onset day (day_onset - shift) which is detected and misdated by
-#' shift is recorded under day_onset. For each interval between reporting days,
-#' the expected number of such records entered per case is:
-#' \deqn{pi * h(shift) * (S(day_1) - S(day_2))}
-#' where S is the probability a case arising on the neighbouring day remains
-#' undetected. Also calculated is the expected number present on the first
+#' shift is recorded under day_onset, and each such record is corrected with
+#' probability rho on each later day. For each interval between reporting days,
+#' the expected number of such records entered in it and not yet corrected at
+#' its end, per case, is:
+#' \deqn{pi * h(shift) * \sum_k (S(k - 1) - S(k)) * (1 - rho)^(day_2 - k)}
+#' over the days k after day_1 up to day_2, where S is the probability a case
+#' arising on the neighbouring day remains undetected. Also calculated is the expected number present on the first
 #' reporting day: those entered on days after day_onset which have not yet
 #' been corrected.
 #'
@@ -156,8 +180,14 @@ misdated_entry_unit <- function(observation_days, day_onset, shift,
     initial <- rate * sum(
       p_newly_detected * (1 - revision_parameters$rho)^(observation_days[1] - days))
   }
-  list(initial=initial,
-       periods=rate * -diff(f_undetected(observation_days)))
+  # those entered between successive reports which are not yet corrected at
+  # the later one: one entered on day k with probability (1 - rho)^(day_2 - k)
+  periods <- vapply(seq_len(length(observation_days) - 1), function(i) {
+    days <- seq(observation_days[i] + 1, observation_days[i + 1])
+    rate * sum((f_undetected(days - 1) - f_undetected(days)) *
+                 (1 - revision_parameters$rho)^(observation_days[i + 1] - days))
+  }, numeric(1))
+  list(initial=initial, periods=periods)
 }
 
 #' Expected misdated records entered for an onset day from all neighbouring
@@ -197,9 +227,11 @@ misdated_entries <- function(observation_days, day_onset, cases_by_onset,
 #' \deqn{E \sim Poisson(eta * I_true * \sum_k (S(k - 1) - S(k)) * (1 - rho)^(day_first - k))}
 #' where the sum is over days after the onset day up to the first reporting day.
 #' Independently, the genuine cases reported by then are:
-#' \deqn{D \sim binomial(I_true, p_detect)}
-#' This calculates the distribution of E conditional on the cases first
-#' reported, C = D + E, with E truncated at max_erroneous.
+#' \deqn{D \sim binomial(I_true, 1 - S(day_first))}
+#' since every count is zero at a notional report before the first. This
+#' calculates the joint probability of each count of erroneous records and the
+#' cases first reported, C = D + E, with E truncated at max_erroneous: summed
+#' over E, it is the probability of the first report.
 #'
 #' @param day_first first day on which cases were reported
 #' @param cases_first count of cases reported on day_first
@@ -210,7 +242,7 @@ misdated_entries <- function(observation_days, day_onset, cases_by_onset,
 #' day and which has not been detected by the first reporting day (zero if none).
 #' The count of its records, X, on the first reporting day has prior distribution:
 #' \deqn{X \sim Poisson(phi * I_true * (S(day_onset) - S(day_first)))}
-#' and the distribution calculated is then that of (E, X) conditional on the
+#' and the probability calculated is then that of (E, X) jointly with the
 #' cases first reported, C = D + E + X.
 #' @param max_batch maximum count of batch records (zero if there is no batch)
 #'
@@ -227,10 +259,16 @@ erroneous_initial_logp <- function(day_first, cases_first, cases_true, day_onset
   n_erroneous <- max_erroneous + 1
   log_alpha <- matrix(-Inf, nrow=n_cases, ncol=n_erroneous * (max_batch + 1))
 
+  # the genuine cases reported by the first report: every count is zero at a
+  # notional report before it
+  log_unrecorded <- if(misdating_prob(revision_parameters) > 0)
+    log(unrecorded_prob(day_first, day_onset, reporting_parameters, revision_parameters))
+  else
+    log_undetected_days(day_first, day_onset, reporting_parameters, revision_parameters)
   n_days <- floor(day_first - day_onset)
   if(n_days < 1 | (revision_parameters$eta == 0 & all(mean_erroneous_extra == 0) &
                    phi_batch == 0)) {
-    log_alpha[, 1] <- 0
+    log_alpha[, 1] <- dbinom_log_survival(cases_first, cases_true, log_unrecorded)
     return(log_alpha)
   }
 
@@ -244,22 +282,14 @@ erroneous_initial_logp <- function(day_first, cases_first, cases_true, day_onset
   mean_erroneous <- revision_parameters$eta * cases_true *
     sum(p_newly_detected * p_remaining) + mean_erroneous_extra
 
-  p_unrecorded <- unrecorded_prob(c(day_onset, day_first), day_onset,
-                                  reporting_parameters, revision_parameters)
-  p_detect <- 1 - p_unrecorded[2] / p_unrecorded[1]
   mean_batch <- phi_batch * cases_true * (p_undetected[1] - p_undetected[n_days + 1])
   for(x in 0:max_batch) {
     logp_batch <- if(max_batch > 0) stats::dpois(x, mean_batch, log=TRUE) else 0
     for(e in 0:max_erroneous)
       log_alpha[, 1 + e + n_erroneous * x] <-
         stats::dpois(e, mean_erroneous, log=TRUE) + logp_batch +
-        dbinom_log_safe(rep(cases_first - e - x, n_cases), cases_true, p_detect)
+        dbinom_log_survival(cases_first - e - x, cases_true, log_unrecorded)
   }
-
-  # condition on cases first reported
-  log_normaliser <- matrixStats::rowLogSumExps(log_alpha)
-  log_alpha <- log_alpha - log_normaliser
-  log_alpha[!is.finite(log_normaliser), ] <- -Inf
   log_alpha
 }
 
@@ -278,8 +308,9 @@ erroneous_initial_logp <- function(day_first, cases_first, cases_true, day_onset
 #' erroneous records are withdrawn. The change in reported cases is then:
 #' \deqn{C_day_2 - C_day_1 = d + n - m}
 #' E is unobserved so is summed over using a forward recursion, with E
-#' truncated at max_erroneous. Its distribution on the first reporting day is
-#' given by \code{erroneous_initial_logp}.
+#' truncated at max_erroneous. The recursion starts from its joint probability
+#' with the first report, given by \code{erroneous_initial_logp}, so that the
+#' first report is part of the probability calculated.
 #'
 #' @param observation_df a two-column data frame with columns 'time_reported' and 'cases_reported'
 #' @param cases_true true case count(s) originating on day_onset: can be a single value or vector
@@ -376,6 +407,10 @@ observation_process_revisions_logp <- function(observation_df, cases_true,
     p_unrecorded <- unrecorded_prob(observation_days, day_onset,
                                     reporting_parameters, revision_parameters)
 
+  # wrong records entered between reports which are still present at the
+  # later one, per true case and unit of eta
+  units_entered <- wrong_entry_units(observation_days, day_onset, reporting_parameters,
+                                     revision_parameters)$unit[-1]
   for(i in seq_len(num_periods)) {
     day_1 <- observation_days[i]
     day_2 <- observation_days[i + 1]
@@ -384,8 +419,6 @@ observation_process_revisions_logp <- function(observation_df, cases_true,
     else
       p_detect <- detected_after_unobserved_prob(day_2, day_1, day_onset,
                                                  reporting_parameters)
-    p_newly_detected <- undetected_prob(day_1 + 0.5, day_onset, reporting_parameters) -
-      undetected_prob(day_2 + 0.5, day_onset, reporting_parameters)
     p_withdrawn <- 1 - (1 - rho)^(day_2 - day_1)
     change_cases <- observation_cases[i + 1] - observation_cases[i]
 
@@ -394,7 +427,7 @@ observation_process_revisions_logp <- function(observation_df, cases_true,
                                     p_withdrawn, log=TRUE)
     logp_entered <- stats::dpois(
       entered,
-      eta * cases_true_long * p_newly_detected +
+      eta * cases_true_long * units_entered[i] +
         rep(mean_entered_extra[, i], n_transitions),
       log=TRUE)
     # genuine cases remaining are those not among the non-erroneous records
@@ -454,6 +487,12 @@ observation_process_revisions_compiled_logp <- function(
                                       reporting_parameters, revision_parameters,
                                       max_erroneous, mean_initial_extra,
                                       phi, max_batch)
+  # the recursion starts from the distribution of the states given the first
+  # report, which keeps it within the range of doubles; the probability of
+  # the first report is added back at the end
+  log_first <- matrixStats::rowLogSumExps(log_alpha)
+  log_alpha <- log_alpha - log_first
+  log_alpha[!is.finite(log_first), ] <- -Inf
 
   log_p_undetected <- log_undetected_days(observation_days, day_onset,
                                           reporting_parameters,
@@ -468,11 +507,13 @@ observation_process_revisions_compiled_logp <- function(
     p_detect <- -expm1(diff(log_p_undetected))
   }
 
-  revisions_logp_cpp(
+  log_first + revisions_logp_cpp(
     cases_true=as.numeric(cases_true),
     observation_cases=as.numeric(observation_cases),
     p_detect=p_detect,
     p_newly_detected=-diff(p_undetected),
+    unit_entered=wrong_entry_units(observation_days, day_onset, reporting_parameters,
+                                   revision_parameters)$unit[-1],
     p_withdrawn=1 - (1 - revision_parameters$rho)^diff(observation_days),
     eta=revision_parameters$eta,
     mean_entered_extra=mean_entered_extra,
@@ -493,7 +534,11 @@ observation_process_revisions_compiled_logp <- function(
 #' It is given by:
 #' \deqn{binomial(I_obs|I_remaining, p_detect)}
 #' where p_detect is the probability a thus undetected case is detected between
-#' day_1 and day_2.
+#' day_1 and day_2. Every count is taken to be zero at a notional report before
+#' the first, so the first report contributes
+#' \deqn{binomial(I_day_first|I_true, 1 - S(day_first))}
+#' with S the probability a case remains undetected. A single report is
+#' therefore informative about the true cases and the delay.
 #' This function calculates the combined probability of all observed cases pertaining
 #' to a particular onset date.
 #'
@@ -527,10 +572,17 @@ observation_process_logp <- function(observation_df, cases_true,
   change_cases <- diff(observation_cases)
   if(any(change_cases < 0))
     stop("reported cases in observation matrix must be increasing.")
+  if(length(observation_days) == 0)
+    return(rep(0, length(cases_true)))
 
+  # the first report: every count is zero at a notional report before it, so
+  # the cases reported by then are binomial with the probability a case has
+  # been reported by the first report
+  log_p_undetected_first <- log_undetected_prob(observation_days[1] + 0.5, day_onset,
+                                                reporting_parameters)
+  logp <- dbinom_log_survival(observation_cases[1], cases_true, log_p_undetected_first)
   num_periods <- nrow(observation_df) - 1
-  logp <- 0
-  for(i in 1:num_periods) {
+  for(i in seq_len(num_periods)) {
     logp_day <- observation_process_single_logp(cases_true=cases_true,
                                          cases_day_2=observation_cases[i + 1],
                                          cases_day_1=observation_cases[i],
@@ -653,7 +705,7 @@ conditional_cases_logp <- function(cases_true, observation_df, cases_history,
                                    serial_max=40) {
 
   logp_observation <- 0
-  if(nrow(observation_df) > 1) # handling cases arising today which were reported today
+  if(nrow(observation_df) > 0)
     logp_observation <- observation_process_logp(observation_df=observation_df,
                                                  cases_true=cases_true,
                                                  day_onset=day_onset,
@@ -712,14 +764,13 @@ conditional_cases_revisions_logp <- function(cases_true, observation_df, cases_h
                                              f_observation_logp=NULL,
                                              serial_max=40) {
 
-  # a single observation contributes nothing to the log-probability, so this
-  # gives the components due to the renewal process only
-  logps_upper <- conditional_cases_logp(cases_true, observation_df[1, ], cases_history,
+  # the components due to the renewal process only (without observations)
+  logps_upper <- conditional_cases_logp(cases_true, observation_df[0, ], cases_history,
                                         Rt, day_onset, serial_parameters, reporting_parameters,
                                         kappa, is_negative_binomial,
                                         cases_future, Rt_future,
                                         serial_max=serial_max)
-  if(nrow(observation_df) <= 1 & is.null(f_observation_logp))
+  if(nrow(observation_df) == 0 & is.null(f_observation_logp))
     return(logps_upper)
 
   f_observation <- f_observation_logp
@@ -778,7 +829,7 @@ misdating_observation_logp_function <- function(day_onset, l_observations,
   for(shift in revision_parameters$shifts) {
     name_neighbour <- as.character(day_onset + shift)
     neighbour_df <- l_observations[[name_neighbour]]
-    if(is.null(neighbour_df) || nrow(neighbour_df) <= 1)
+    if(is.null(neighbour_df) || nrow(neighbour_df) == 0)
       next
     l_neighbours[[name_neighbour]] <- list(
       day=day_onset + shift,
@@ -795,7 +846,7 @@ misdating_observation_logp_function <- function(day_onset, l_observations,
 
   function(cases) {
     logp <- rep(0, length(cases))
-    if(nrow(observation_df) > 1)
+    if(nrow(observation_df) > 0)
       logp <- observation_process_revisions_logp(
         observation_df, cases, day_onset, l_reporting[[name_onset]],
         revision_parameters, max_erroneous, entries_own)
@@ -815,10 +866,29 @@ misdating_observation_logp_function <- function(day_onset, l_observations,
   }
 }
 
+#' Adds the piece of the reporting delay to reports which do not give it
+#'
+#' @param snapshot_df a tibble of reports, with or without a column
+#' 'reporting_piece_index'
+#' @param reporting_parameters a tibble with a column 'reporting_piece_index'
+#'
+#' @return snapshot_df, with reporting_piece_index set to the single piece of
+#' reporting_parameters if it was absent (an error if there are several)
+with_reporting_piece_index <- function(snapshot_df, reporting_parameters) {
+  if("reporting_piece_index" %in% colnames(snapshot_df))
+    return(snapshot_df)
+  pieces <- unique(reporting_parameters$reporting_piece_index)
+  if(length(pieces) != 1)
+    stop("The reports must have a column 'reporting_piece_index' when the reporting delay has several pieces.")
+  dplyr::mutate(snapshot_df, reporting_piece_index=pieces)
+}
+
 #' Observation probability across all onset times
 #'
-#' @param snapshot_with_true_cases_df a tibble with four columns:
-#' time_onset, time_reported, cases_reported, cases_true
+#' @param snapshot_with_true_cases_df a tibble with columns time_onset,
+#' time_reported, cases_reported, cases_true and reporting_piece_index (the
+#' piece of the reporting delay of each onset time). reporting_piece_index can
+#' be left out if the delay has a single piece.
 #' @param reporting_parameters a tibble with columns: 'reporting_piece_index', 'mean', 'sd'
 #' @inheritParams observation_process_revisions_logp
 #'
@@ -835,6 +905,8 @@ observation_process_all_times_logp <- function(
 
   if(!"reporting_piece_index" %in% colnames(reporting_parameters))
     stop("reporting_parameters must contain a column: 'reporting_piece_index'.")
+  snapshot_with_true_cases_df <- with_reporting_piece_index(
+    snapshot_with_true_cases_df, reporting_parameters)
 
   reporting_parameters <- snapshot_with_true_cases_df %>%
     dplyr::left_join(reporting_parameters, by="reporting_piece_index") %>%
@@ -869,7 +941,7 @@ observation_process_all_times_logp <- function(
     cases_true <- short_df$cases_true[1]
     reporting_parameters_current <- list(mean=reporting_parameters$mean[i],
                                          sd=reporting_parameters$sd[i])
-    if(nrow(short_df) > 1) {# handling cases arising today which were reported today
+    if(nrow(short_df) > 0) {
       if(is_misdating)
         logp_new <- observation_process_revisions_logp(
           short_df,

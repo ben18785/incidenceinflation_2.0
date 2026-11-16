@@ -23,7 +23,11 @@ static inline double dbinom_safe(double x, double size, double prob) {
 //' @param p_detect vector giving, for each interval between reporting days,
 //' the probability a genuine case not yet recorded is recorded
 //' @param p_newly_detected vector giving, for each interval, the probability
-//' a genuine case is detected in it
+//' a genuine case is detected in it (the rate at which batch records are
+//' entered, per unit of phi and per true case)
+//' @param unit_entered vector giving, for each interval, the expected number
+//' of wrong records entered in it which are still present at its end, per
+//' unit of eta and per true case (see wrong_entry_units)
 //' @param p_withdrawn vector giving, for each interval, the probability an
 //' erroneous record is withdrawn
 //' @param eta expected number of spurious records entered per genuine case detected
@@ -46,6 +50,7 @@ NumericVector revisions_logp_cpp(NumericVector cases_true,
                                  NumericVector observation_cases,
                                  NumericVector p_detect,
                                  NumericVector p_newly_detected,
+                                 NumericVector unit_entered,
                                  NumericVector p_withdrawn,
                                  double eta,
                                  NumericMatrix mean_entered_extra,
@@ -93,7 +98,7 @@ NumericVector revisions_logp_cpp(NumericVector cases_true,
       const double p = p_detect[j];
 
       // probability erroneous count moves from e_prev to e
-      const double mean_entered = eta * cases * p_newly_detected[j] +
+      const double mean_entered = eta * cases * unit_entered[j] +
         mean_entered_extra(i, j);
       for(int k = 0; k < n_e; k++)
         p_entered[k] = R::dpois(k, mean_entered, 0);

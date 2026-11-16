@@ -113,8 +113,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // revisions_logp_cpp
-NumericVector revisions_logp_cpp(NumericVector cases_true, NumericVector observation_cases, NumericVector p_detect, NumericVector p_newly_detected, NumericVector p_withdrawn, double eta, NumericMatrix mean_entered_extra, NumericMatrix log_alpha_initial, int max_erroneous, double phi, int period_detected, int max_batch);
-RcppExport SEXP _incidenceinflation_revisions_logp_cpp(SEXP cases_trueSEXP, SEXP observation_casesSEXP, SEXP p_detectSEXP, SEXP p_newly_detectedSEXP, SEXP p_withdrawnSEXP, SEXP etaSEXP, SEXP mean_entered_extraSEXP, SEXP log_alpha_initialSEXP, SEXP max_erroneousSEXP, SEXP phiSEXP, SEXP period_detectedSEXP, SEXP max_batchSEXP) {
+NumericVector revisions_logp_cpp(NumericVector cases_true, NumericVector observation_cases, NumericVector p_detect, NumericVector p_newly_detected, NumericVector unit_entered, NumericVector p_withdrawn, double eta, NumericMatrix mean_entered_extra, NumericMatrix log_alpha_initial, int max_erroneous, double phi, int period_detected, int max_batch);
+RcppExport SEXP _incidenceinflation_revisions_logp_cpp(SEXP cases_trueSEXP, SEXP observation_casesSEXP, SEXP p_detectSEXP, SEXP p_newly_detectedSEXP, SEXP unit_enteredSEXP, SEXP p_withdrawnSEXP, SEXP etaSEXP, SEXP mean_entered_extraSEXP, SEXP log_alpha_initialSEXP, SEXP max_erroneousSEXP, SEXP phiSEXP, SEXP period_detectedSEXP, SEXP max_batchSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -122,6 +122,7 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< NumericVector >::type observation_cases(observation_casesSEXP);
     Rcpp::traits::input_parameter< NumericVector >::type p_detect(p_detectSEXP);
     Rcpp::traits::input_parameter< NumericVector >::type p_newly_detected(p_newly_detectedSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type unit_entered(unit_enteredSEXP);
     Rcpp::traits::input_parameter< NumericVector >::type p_withdrawn(p_withdrawnSEXP);
     Rcpp::traits::input_parameter< double >::type eta(etaSEXP);
     Rcpp::traits::input_parameter< NumericMatrix >::type mean_entered_extra(mean_entered_extraSEXP);
@@ -130,7 +131,7 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type phi(phiSEXP);
     Rcpp::traits::input_parameter< int >::type period_detected(period_detectedSEXP);
     Rcpp::traits::input_parameter< int >::type max_batch(max_batchSEXP);
-    rcpp_result_gen = Rcpp::wrap(revisions_logp_cpp(cases_true, observation_cases, p_detect, p_newly_detected, p_withdrawn, eta, mean_entered_extra, log_alpha_initial, max_erroneous, phi, period_detected, max_batch));
+    rcpp_result_gen = Rcpp::wrap(revisions_logp_cpp(cases_true, observation_cases, p_detect, p_newly_detected, unit_entered, p_withdrawn, eta, mean_entered_extra, log_alpha_initial, max_erroneous, phi, period_detected, max_batch));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -140,7 +141,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_incidenceinflation_joint_path_backward_cpp", (DL_FUNC) &_incidenceinflation_joint_path_backward_cpp, 13},
     {"_incidenceinflation_joint_path_exact_forward_cpp", (DL_FUNC) &_incidenceinflation_joint_path_exact_forward_cpp, 18},
     {"_incidenceinflation_joint_path_exact_backward_cpp", (DL_FUNC) &_incidenceinflation_joint_path_exact_backward_cpp, 18},
-    {"_incidenceinflation_revisions_logp_cpp", (DL_FUNC) &_incidenceinflation_revisions_logp_cpp, 12},
+    {"_incidenceinflation_revisions_logp_cpp", (DL_FUNC) &_incidenceinflation_revisions_logp_cpp, 13},
     {NULL, NULL, 0}
 };
 

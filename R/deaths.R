@@ -756,27 +756,31 @@ reports_stream_logp <- function(counts_new, counts_before, totals, p) {
 #' reporting delay (see \code{log_undetected_days})
 #'
 #' @return a named list of vectors with an element for each report: 'unit'
-#' (the expected number of wrong records entered since the report before, for
-#' each genuine case recorded for the day and each unit of eta; for the first
-#' report, of those entered since the onset day which are still present) and
-#' 'w' (the probability a wrong record present at the report before has been
-#' removed)
+#' (the expected number of wrong records entered since the report before, or
+#' for the first report since the onset day, which are still present at the
+#' report, for each genuine case recorded for the day and each unit of eta:
+#' those entered on day k are the genuine cases newly reported that day times
+#' eta, and each is still present at the report on day d with probability
+#' (1 - rho)^(d - k)) and 'w' (the probability a wrong record present at the
+#' report before has been removed)
 wrong_entry_units <- function(days, day_onset, reporting_parameters,
                               revision_parameters) {
   rho <- revision_parameters$rho
-  undetected <- exp(log_undetected_days(days, day_onset, reporting_parameters,
+  # the probability of remaining unreported at the end of each day from the
+  # onset day to the last report, and the probability of being newly reported
+  # on each day after the onset day
+  days_all <- seq(day_onset, max(day_onset, days[length(days)]))
+  undetected <- exp(log_undetected_days(days_all, day_onset, reporting_parameters,
                                         revision_parameters))
-  unit_first <- 0
-  n_days <- floor(days[1] - day_onset)
-  if(n_days >= 1) {
-    days_before <- day_onset + seq_len(n_days)
-    undetected_before <- exp(log_undetected_days(
-      c(day_onset, days_before), day_onset, reporting_parameters,
-      revision_parameters))
-    unit_first <- sum(-diff(undetected_before) * (1 - rho)^(days[1] - days_before))
-  }
-  list(unit=c(unit_first, -diff(undetected)),
-       w=c(0, 1 - (1 - rho)^diff(days)))
+  newly <- -diff(undetected)
+  days_before <- c(day_onset, days[-length(days)])
+  unit <- vapply(seq_along(days), function(j) {
+    k <- seq_len(round(days[j] - days_before[j])) + round(days_before[j] - day_onset)
+    if(length(k) == 0)
+      return(0)
+    sum(newly[k] * (1 - rho)^(round(days[j] - day_onset) - k))
+  }, numeric(1))
+  list(unit=unit, w=c(0, 1 - (1 - rho)^diff(days)))
 }
 
 #' Filters forwards over the reports of the cases recorded for one day,
@@ -1224,6 +1228,36 @@ is_wrong_records <- function(revision_parameters) {
   !is.null(revision_parameters$eta)
 }
 
+#' Draws a number of true fatal cases of one onset time which the reports
+#' allow
+#'
+#' Every number from those dated by death to the true cases is tried, and one
+#' is drawn with probability proportional to its probability given the
+#' reports, the case fatality ratio and the delays.
+#'
+#' @param f_forward a function of the true fatal cases which filters forwards
+#' over the reports, returning a list with element 'logp'
+#' @param f_logp a function of the true fatal cases and the result of
+#' f_forward which returns the log-probability of both
+#' @param smallest the fewest true fatal cases allowed
+#' @param largest the most true fatal cases allowed
+#'
+#' @return NULL if no number is possible, otherwise a named list of
+#' 'deaths_true' and 'forward' (the result of f_forward for it)
+possible_fatal_start <- function(f_forward, f_logp, smallest, largest) {
+  if(largest < smallest)
+    return(NULL)
+  values <- seq(smallest, largest)
+  forwards <- lapply(values, f_forward)
+  logp <- purrr::map2_dbl(values, forwards, f_logp)
+  if(!any(is.finite(logp)))
+    return(NULL)
+  weights <- exp(logp - max(logp[is.finite(logp)]))
+  weights[!is.finite(logp)] <- 0
+  index <- if(length(values) == 1) 1 else sample.int(length(values), 1, prob=weights)
+  list(deaths_true=values[index], forward=forwards[[index]])
+}
+
 #' Samples how many of the cases in each report are fatal, and how many are
 #' wrong records, for every onset time
 #'
@@ -1248,7 +1282,11 @@ is_wrong_records <- function(revision_parameters) {
 #' reported cases summed out: a change is proposed and accepted with the
 #' Metropolis probability, using the probability of the reports from
 #' \code{joint_path_forward}. The split is then drawn given the result. The
-#' fatal cases dated by death, into and out of the day, are held fixed.
+#' fatal cases dated by death, into and out of the day, are held fixed. If the
+#' reports are impossible given the current true fatal cases, as at the start,
+#' where these are set without the delays, they are first drawn from their
+#' distribution given the reports, the case fatality ratio and the delays
+#' (see \code{possible_fatal_start}).
 #'
 #' @return the state with elements 'deaths_true', 'paths' (see
 #' \code{joint_path_backward}), 'survivals' (see \code{joint_survivals}) and
@@ -1311,11 +1349,22 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
       fixed <- NULL
       forward <- f_forward(deaths_true)
     }
-    if(!is.finite(forward$logp))
-      stop(paste0("The reports of cases and deaths are impossible given the true cases and deaths (onset time ",
-                  state$onset_times[k], ": ", cases_true[k], " cases, ", deaths_true,
-                  " fatal, ", dated$out[k], " of them dated by death, ", dated$into[k],
-                  " dated by death into the day)."))
+    # the true fatal cases are impossible given the reports, which can happen
+    # only at the start (the starting fatal cases are set without the
+    # delays): they are drawn instead from their distribution given the
+    # reports, the case fatality ratio and the delays
+    if(!is.finite(forward$logp)) {
+      start <- possible_fatal_start(f_forward, f_logp, dated$out[k], cases_true[k])
+      if(is.null(start))
+        stop(paste0("The reports of cases and deaths are impossible given the true cases (onset time ",
+                    state$onset_times[k], ": ", cases_true[k], " cases, ",
+                    dated$out[k], " fatal cases of it dated by death, ", dated$into[k],
+                    " dated by death into the day) for any number of fatal cases. ",
+                    "Try a longer initial delay to a death being recorded (initial_delay), ",
+                    "more initial true cases, or a larger max_erroneous."))
+      deaths_true <- start$deaths_true
+      forward <- start$forward
+    }
     for(proposal in seq_len(n_proposals)) {
       proposed <- deaths_true + sample(c(-1, 1), 1) * sample.int(step_max, 1)
       if(proposed < dated$out[k] | proposed > cases_true[k])

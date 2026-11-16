@@ -67,8 +67,10 @@ test_that("wrong_entry_units are those of the model of wrong records", {
   units <- wrong_entry_units(days, 4, reporting, revision)
   undetected <- function(day) exp(log_undetected_days(day, 4, reporting))
   expect_equal(units$w, c(0, 0.3, 1 - 0.7^2))
+  # entered on each day since the report before and still present at the report
   expect_equal(units$unit[2:3],
-               c(undetected(6) - undetected(7), undetected(7) - undetected(9)))
+               c(undetected(6) - undetected(7),
+                 (undetected(7) - undetected(8)) * 0.7 + (undetected(8) - undetected(9))))
   # entered on each day before the first report and still present at it
   expect_equal(units$unit[1],
                (undetected(4) - undetected(5)) * 0.7 +
@@ -287,4 +289,32 @@ test_that("mcmc_single runs with wrong records, effects of the day of the week a
   expect_true(all(both$deaths_true <= both$cases_true))
   # what is not allowed for alongside deaths
   expect_error(f_fit(list(eta=0.05, rho=0.3, pi=0.1)))
+})
+
+test_that("wrong records are withdrawn daily, between reports as before the first", {
+  # the expected number present at each report, followed from report to
+  # report, equals that of entering and withdrawing them day by day
+  reporting <- list(mean=8, sd=6)
+  revision <- list(eta=0.2, rho=0.1)
+  day_onset <- 3
+  days <- day_onset + c(5, 13, 27)
+  units <- wrong_entry_units(days, day_onset, reporting, revision)
+  present <- numeric(length(days))
+  for(j in seq_along(days))
+    present[j] <- (if(j > 1) present[j - 1] * (1 - units$w[j]) else 0) + units$unit[j]
+  undetected <- exp(log_undetected_days(day_onset:max(days), day_onset, reporting))
+  newly <- -diff(undetected)
+  daily <- sapply(days, function(d) {
+    k <- seq_len(d - day_onset)
+    sum(newly[k] * (1 - revision$rho)^(d - day_onset - k))
+  })
+  expect_equal(present, daily)
+  # and the simulator of the reports of one onset day agrees: its mean count
+  # is the genuine cases reported plus the wrong records present
+  set.seed(4)
+  n <- 1000
+  counts <- replicate(1000, observed_cases_trajectory(n, days, day_onset, reporting,
+                                                      revision))
+  expected <- n * (1 - undetected[days - day_onset + 1]) + revision$eta * n * daily
+  expect_equal(rowMeans(counts), expected, tolerance=0.01)
 })

@@ -103,7 +103,11 @@ joint_path_exact_backward_cpp <- function(alpha, cases, deaths, fatal, dated, su
 #' @param p_detect vector giving, for each interval between reporting days,
 #' the probability a genuine case not yet recorded is recorded
 #' @param p_newly_detected vector giving, for each interval, the probability
-#' a genuine case is detected in it
+#' a genuine case is detected in it (the rate at which batch records are
+#' entered, per unit of phi and per true case)
+#' @param unit_entered vector giving, for each interval, the expected number
+#' of wrong records entered in it which are still present at its end, per
+#' unit of eta and per true case (see wrong_entry_units)
 #' @param p_withdrawn vector giving, for each interval, the probability an
 #' erroneous record is withdrawn
 #' @param eta expected number of spurious records entered per genuine case detected
@@ -121,7 +125,7 @@ joint_path_exact_backward_cpp <- function(alpha, cases, deaths, fatal, dated, su
 #'
 #' @return a vector of log-probabilities
 #' @keywords internal
-revisions_logp_cpp <- function(cases_true, observation_cases, p_detect, p_newly_detected, p_withdrawn, eta, mean_entered_extra, log_alpha_initial, max_erroneous, phi, period_detected, max_batch) {
-    .Call(`_incidenceinflation_revisions_logp_cpp`, cases_true, observation_cases, p_detect, p_newly_detected, p_withdrawn, eta, mean_entered_extra, log_alpha_initial, max_erroneous, phi, period_detected, max_batch)
+revisions_logp_cpp <- function(cases_true, observation_cases, p_detect, p_newly_detected, unit_entered, p_withdrawn, eta, mean_entered_extra, log_alpha_initial, max_erroneous, phi, period_detected, max_batch) {
+    .Call(`_incidenceinflation_revisions_logp_cpp`, cases_true, observation_cases, p_detect, p_newly_detected, unit_entered, p_withdrawn, eta, mean_entered_extra, log_alpha_initial, max_erroneous, phi, period_detected, max_batch)
 }
 

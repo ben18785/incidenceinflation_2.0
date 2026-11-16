@@ -42,7 +42,8 @@
 #' model only)
 #' @param max_erroneous the largest number of erroneous records held for an
 #' onset time at once; by default one more than the largest fall in a
-#' reported count, and at least 3
+#' reported count, and at least 3. Erroneous records are always part of the
+#' model (see \code{fit_incidence}).
 #' @param days_sampled in the relaxed model, the number of the latest onset
 #' times whose true cases are unknown
 #'
@@ -522,6 +523,14 @@ fit_diagnostics <- function(result, method) {
 #' unknown times.
 #' }
 #' Options which a version of the model does not have give an error.
+#'
+#' Both versions always allow for erroneous records, which are entered and
+#' later withdrawn so that reported counts can fall (see
+#' \code{observation_process_revisions_logp}): their rate, eta, and the daily
+#' probability of their withdrawal, rho, are fitted with the priors of
+#' \code{model_priors} (eta_mu, eta_sigma, rho_alpha and rho_beta), and are in
+#' the 'parameters' of the result. Where the reports give no sign of erroneous
+#' records, eta is estimated close to zero.
 #'
 #' @param snapshot_df a tibble with columns: time_onset, time_reported,
 #' cases_reported. Onset times must be consecutive and start at 1.

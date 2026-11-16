@@ -180,7 +180,7 @@ observation_logp_by_onset <- function(onset_times, l_observations, cases_by_onse
   purrr::map_dbl(onset_times, function(onset_time) {
     name_onset <- as.character(onset_time)
     observation_df <- l_observations[[name_onset]]
-    if(nrow(observation_df) <= 1)
+    if(nrow(observation_df) == 0)
       return(0)
     entries <- NULL
     if(is_misdating)

@@ -551,7 +551,8 @@ sample_Rt_single_piece <- function(
 #' @param Rt_current a tibble with columns 'Rt_index' and 'Rt' giving the
 #' current value of Rt for each piece, from which Metropolis-Hastings steps
 #' start under a negative binomial model (optional)
-#' @return a tibble with three columns: "Rt_piece_index", "draw_index", "Rt"
+#' @return a tibble with three columns: "Rt_index" (the piece of Rt),
+#' "draw_index" and "Rt"
 #' @export
 sample_Rt <- function(cases_history_df,
                       Rt_prior_parameters,
@@ -941,6 +942,8 @@ sample_reporting <- function(
   revision_parameters=NULL,
   max_erroneous=3) {
 
+  snapshot_with_true_cases_df <- with_reporting_piece_index(
+    snapshot_with_true_cases_df, current_reporting_parameters)
   if(maximise) {
     reporting_parameters <- maximise_reporting_logp(
       snapshot_with_true_cases_df,

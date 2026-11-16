@@ -245,7 +245,11 @@ test_that("observation_process_all_times_logp works ok for single reporting para
   df1 <- df %>% dplyr::filter(time_onset==2)
   logp2 <- observation_process_logp(df1, df1$cases_true[1],
                                     2,r_params)
-  expect_equal(logp, logp1 + logp2)
+  # onset time 3 has a single report, which counts too
+  df1 <- df %>% dplyr::filter(time_onset==3)
+  logp3 <- observation_process_logp(df1, df1$cases_true[1],
+                                    3, r_params)
+  expect_equal(logp, logp1 + logp2 + logp3)
 
   # check -inf if negative mu or sd
   r_params <- r_params %>%
@@ -524,9 +528,13 @@ paths of genuine reports, erroneous entries and withdrawals", {
       return(1)
     p_detect <- detected_after_unobserved_prob(days[period + 1], days[period],
                                                day_onset, reporting_parameters)
-    p_newly_detected <-
-      undetected_prob(days[period] + 0.5, day_onset, reporting_parameters) -
-      undetected_prob(days[period + 1] + 0.5, day_onset, reporting_parameters)
+    # wrong records entered on each day of the interval and still present at
+    # its end
+    days_in <- seq(days[period] + 1, days[period + 1])
+    p_newly_detected <- sum(
+      (exp(log_undetected_prob(days_in - 0.5, day_onset, reporting_parameters)) -
+         exp(log_undetected_prob(days_in + 0.5, day_onset, reporting_parameters))) *
+        (1 - revision_parameters$rho)^(days[period + 1] - days_in))
     p_withdrawn <- 1 - (1 - revision_parameters$rho)^(days[period + 1] - days[period])
     change <- cases[period + 1] - cases[period]
     prob <- 0
@@ -547,19 +555,18 @@ paths of genuine reports, erroneous entries and withdrawals", {
     prob
   }
 
-  # distribution of erroneous records on first reporting day, given that one
-  # day has passed since onset
+  # joint probability of the erroneous records and the cases on the first
+  # reporting day, one day after onset: every count is zero at a notional
+  # report before the first
   f_initial_prob <- function(case_true) {
     p_newly_detected <-
       undetected_prob(day_onset + 0.5, day_onset, reporting_parameters) -
       undetected_prob(days[1] + 0.5, day_onset, reporting_parameters)
-    p_detect <- detected_after_unobserved_prob(days[1], day_onset, day_onset,
-                                               reporting_parameters)
+    p_detect <- 1 - undetected_prob(days[1] + 0.5, day_onset, reporting_parameters)
     erroneous <- 0:max_erroneous
-    probs <- dpois(erroneous, revision_parameters$eta * case_true * p_newly_detected) *
+    dpois(erroneous, revision_parameters$eta * case_true * p_newly_detected) *
       ifelse(cases[1] - erroneous >= 0,
              dbinom(cases[1] - erroneous, case_true, p_detect), 0)
-    probs / sum(probs)
   }
   f_prob <- function(case_true) {
     probs_initial <- f_initial_prob(case_true)
@@ -591,13 +598,15 @@ one across all possible reported cases", {
   max_erroneous <- 7
   max_reported <- case_true + max_erroneous
   total <- 0
-  for(cases_1 in 0:max_reported) {
-    for(cases_2 in 0:max_reported) {
-      observation_matrix <- dplyr::tibble(time_reported=c(1, 2, 4),
-                                          cases_reported=c(0, cases_1, cases_2))
-      total <- total + exp(observation_process_revisions_logp(
-        observation_matrix, case_true, 1, reporting_parameters,
-        revision_parameters, max_erroneous))
+  for(cases_0 in 0:case_true) {
+    for(cases_1 in 0:max_reported) {
+      for(cases_2 in 0:max_reported) {
+        observation_matrix <- dplyr::tibble(time_reported=c(1, 2, 4),
+                                            cases_reported=c(cases_0, cases_1, cases_2))
+        total <- total + exp(observation_process_revisions_logp(
+          observation_matrix, case_true, 1, reporting_parameters,
+          revision_parameters, max_erroneous))
+      }
     }
   }
   expect_true(total <= 1 + 1e-10)
@@ -699,13 +708,17 @@ for all non-negligible case counts", {
   probs_full <- exp(logps_full - matrixStats::logSumExp(logps_full))
   expect_true(sum(probs_full[!is_evaluated]) < 1e-15)
 
-  # single observation contributes nothing
+  # a single observation contributes the probability of the first report
   logps_single <- conditional_cases_revisions_logp(
     cases_true, observation_matrix[1, ], cases_history,
     Rt=1.1, day_onset=6, s_params, reporting_parameters,
     revision_parameters)
-  expect_equal(logps_single,
-               state_process_logp(cases_true, cases_history, 1.1, s_params))
+  is_evaluated <- is.finite(logps_single)
+  expect_equal(logps_single[is_evaluated],
+               (state_process_logp(cases_true, cases_history, 1.1, s_params) +
+                  observation_process_revisions_logp(
+                    observation_matrix[1, ], cases_true, 6, reporting_parameters,
+                    revision_parameters))[is_evaluated])
 })
 
 test_that("observation_process_all_times_logp sums over onset times when
@@ -724,7 +737,9 @@ revisions are allowed", {
   logp_long_way <- observation_process_revisions_logp(
     df[1:3, ], 4, 1, r_list, revision_parameters) +
     observation_process_revisions_logp(
-      df[4:6, ], 6, 2, r_list, revision_parameters)
+      df[4:6, ], 6, 2, r_list, revision_parameters) +
+    observation_process_revisions_logp(
+      df[7, ], 2, 3, r_list, revision_parameters)
   expect_equal(logp, logp_long_way)
 
   # without revision parameters downwards revisions throw error
@@ -738,34 +753,36 @@ first reporting day", {
   cases_true <- c(2, 4, 5, 8, 20)
   max_erroneous <- 3
 
-  # no erroneous records if first reported on onset day or none are entered
+  f_undetected <- function(day) undetected_prob(day + 0.5, 1, reporting_parameters)
+  # no erroneous records if first reported on onset day or none are entered:
+  # then the first report is binomial, from a notional report of zero before it
   log_alpha <- erroneous_initial_logp(1, 2, cases_true, 1, reporting_parameters,
                                       revision_parameters, max_erroneous)
   expect_equal(dim(log_alpha), c(5, 4))
-  expect_equal(exp(log_alpha[, 1]), rep(1, 5))
+  expect_equal(exp(log_alpha[, 1]), dbinom(2, cases_true, 1 - f_undetected(1)))
   expect_equal(exp(log_alpha[, -1]), matrix(0, nrow=5, ncol=3))
   log_alpha <- erroneous_initial_logp(4, 5, cases_true, 1, reporting_parameters,
                                       list(eta=0, rho=0.2), max_erroneous)
-  expect_equal(exp(log_alpha[, 1]), rep(1, 5))
+  expect_equal(exp(log_alpha[, 1]), dbinom(5, cases_true, 1 - f_undetected(4)))
 
-  # otherwise a distribution conditional on cases first reported
+  # otherwise the joint probability of the erroneous records and the cases
+  # first reported
   log_alpha <- erroneous_initial_logp(4, 5, cases_true, 1, reporting_parameters,
                                       revision_parameters, max_erroneous)
-  expect_equal(rowSums(exp(log_alpha)), rep(1, 5))
+  conditional <- exp(log_alpha - matrixStats::rowLogSumExps(log_alpha))
   # five reported cases with two true cases requires three erroneous records
-  expect_equal(exp(log_alpha[1, ]), c(0, 0, 0, 1))
+  expect_equal(conditional[1, ], c(0, 0, 0, 1))
   # more true cases make erroneous records less likely to explain those reported
-  expect_true(all(diff(exp(log_alpha[3:5, 1])) > 0))
+  expect_true(all(diff(conditional[3:5, 1]) > 0))
 
   # matches direct calculation
-  f_undetected <- function(day) undetected_prob(day + 0.5, 1, reporting_parameters)
   mean_erroneous <- 0.3 * 8 * (
     (f_undetected(1) - f_undetected(2)) * 0.8^2 +
       (f_undetected(2) - f_undetected(3)) * 0.8 +
       (f_undetected(3) - f_undetected(4)))
-  p_detect <- 1 - f_undetected(4) / f_undetected(1)
+  p_detect <- 1 - f_undetected(4)
   probs <- dpois(0:3, mean_erroneous) * dbinom(5 - 0:3, 8, p_detect)
-  expect_equal(exp(log_alpha[4, ]), probs / sum(probs))
+  expect_equal(exp(log_alpha[4, ]), probs)
 
   # impossible if reported cases exceed true cases by more than max erroneous
   log_alpha <- erroneous_initial_logp(4, 6, cases_true, 1, reporting_parameters,
@@ -789,16 +806,14 @@ reporting days are observed", {
       revision_parameters, max_erroneous))
   }
 
-  # probability of cases reported on days 4 to 6 given those on day 3, found
-  # by summing over the cases which would have been reported on day 2
+  # probability of cases reported on days 3 to 6, found by summing over the
+  # cases which would have been reported on days 1 and 2
   f_prob_long_way <- function(cases) {
-    numerator <- 0
-    denominator <- 0
-    for(cases_hidden in 0:max_reported) {
-      numerator <- numerator + f_prob(1:6, c(0, cases_hidden, cases))
-      denominator <- denominator + f_prob(1:3, c(0, cases_hidden, cases[1]))
-    }
-    numerator / denominator
+    total <- 0
+    for(cases_day_1 in 0:case_true)
+      for(cases_hidden in 0:max_reported)
+        total <- total + f_prob(1:6, c(cases_day_1, cases_hidden, cases))
+    total
   }
 
   l_cases <- list(c(2, 3, 3, 3), c(3, 2, 3, 3), c(4, 3, 3, 3), c(1, 0, 2, 1),

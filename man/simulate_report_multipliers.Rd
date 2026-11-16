@@ -24,7 +24,7 @@ report; zero (the default) for no random effects}
 }
 \value{
 a named list of 'report_log_effects', the log of the random effect
-of each report; and 'report_multipliers', a named list of 'day_first' and
+of each report (all zero if report_sd is zero); and 'report_multipliers', a named list of 'day_first' and
 'values' as required within the revision parameters
 }
 \description{

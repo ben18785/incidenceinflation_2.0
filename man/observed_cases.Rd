@@ -19,8 +19,11 @@ distribution indicating a single reporting delay distribution for the whole peri
 or a tibble with columns: 'time_onset', 'mean', 'sd' indicating the reporting
 delay distribution for each time period}
 
-\item{days_max_follow_up}{max days at which to simulate reporting case
-trajectory}
+\item{days_max_follow_up}{the most days after onset for which reports
+are simulated. A report is made each day from the onset day, and the last
+onset day is taken as the present: no report is made after it, whatever
+days_max_follow_up is. So onset day t is reported on days t to
+min(length(cases_true), t + days_max_follow_up).}
 
 \item{revision_parameters}{named list of 'eta' (>= 0), the expected number of
 erroneous records entered per genuine case reported; and 'rho' (between 0 and 1),

@@ -1,8 +1,13 @@
 # Runs the validation tests (tests/testthat/test-validation-*.R), which check the
 # samplers and simulators against the model as specified, with expected values from
-# independent code. They are too slow for R-CMD-check, which skips them. Pull requests
-# and pushes to main run the fast and medium tiers (about 30 min); the slow tiers
-# (S2 about 2.5 h, S1 about 1.5 h more) run on demand.
+# independent code. They are too slow for R-CMD-check, which skips them. Each group of
+# tests runs as its own job, in parallel, so each has GitHub's 6-hour limit to itself:
+#   T    T1-T10, the samplers and simulators one at a time (~30 min)
+#   M    M1-M4, whole-sampler runs with exact posteriors (~35 min)
+#   S02  S2, recovery of a deaths-model fit (~5 h)
+#   S01  S1, simulation-based calibration (~3 h)
+# Pull requests and pushes to main run the medium tier (T and M); the slow tiers run on
+# demand: slow adds S02, all adds S01.
 on:
   push:
     branches: [main, master]
@@ -20,12 +25,34 @@ on:
 name: validation
 
 jobs:
+  groups:
+    runs-on: ubuntu-latest
+    outputs:
+      groups: ${{ steps.groups.outputs.groups }}
+    steps:
+      - id: groups
+        run: |
+          case "${{ inputs.tier || 'medium' }}" in
+            fast)   groups='["T"]' ;;
+            medium) groups='["T", "M"]' ;;
+            slow)   groups='["T", "M", "S02"]' ;;
+            all)    groups='["T", "M", "S02", "S01"]' ;;
+          esac
+          echo "groups=$groups" >> "$GITHUB_OUTPUT"
+
   validation:
+    needs: groups
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    name: validation (${{ matrix.group }})
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ${{ fromJSON(needs.groups.outputs.groups) }}
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-      VALIDATION_TIER: ${{ inputs.tier || 'medium' }}
+      # the group's files are chosen by the filter; the tier only has to allow them
+      VALIDATION_TIER: all
 
     steps:
       - uses: actions/checkout@v4
@@ -44,8 +71,9 @@ jobs:
       - name: Run the validation tests
         shell: Rscript {0}
         run: |
-          cat("Validation tier:", Sys.getenv("VALIDATION_TIER"), "\n")
-          res <- devtools::test(filter = "validation", reporter = "summary",
+          group <- "${{ matrix.group }}"
+          cat("Validation group:", group, "\n")
+          res <- devtools::test(filter = paste0("validation-", group), reporter = "summary",
                                 stop_on_failure = FALSE)
           df <- as.data.frame(res)
           print(df[, c("file", "test", "nb", "failed", "skipped", "error", "real")],

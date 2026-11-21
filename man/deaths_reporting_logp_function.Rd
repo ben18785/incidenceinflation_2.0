@@ -14,10 +14,10 @@ deaths_reporting_logp_function(state, cases_true, revision_parameters = NULL)
 
 \item{revision_parameters}{NULL, or a named list which can contain 'eta'
 and 'rho' (if wrong records are allowed for: see
-\code{observation_process_revisions_logp}), or 'background_rate' in place
-of 'eta' for another form of the rate at which they are entered (see
-deaths-wrong-rate.R), and anything which alters the reporting delay (see
-\code{log_undetected_days})}
+\code{observation_process_revisions_logp}), or 'background_rate' or
+'wrong_walk' in place of 'eta' for another form of the rate at which they
+are entered (see deaths-wrong-rate.R), and anything which alters the
+reporting delay (see \code{log_undetected_days})}
 }
 \value{
 a function of 'indices' and 'reporting_parameters' (see

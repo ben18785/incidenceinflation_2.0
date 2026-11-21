@@ -13,7 +13,7 @@ wrong_rate_form(revision_parameters)
 runs happens one day, two days, ... after onset); or NULL}
 }
 \value{
-"cases" or "constant" (see the start of deaths-wrong-rate.R)
+"cases", "constant" or "walk" (see the start of deaths-wrong-rate.R)
 }
 \description{
 The form of the rate at which wrong records are entered

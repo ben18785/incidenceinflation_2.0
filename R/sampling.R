@@ -1224,14 +1224,22 @@ metropolis_step_revisions <- function(
 #' This requires priors$reporting_changepoints. The form of the rate at which
 #' wrong records are entered is set by priors$revisions$wrong_rate (see
 #' deaths-wrong-rate.R and \code{wrong_rate_settings}): "cases" (the default,
-#' in proportion to the genuine cases being reported) or "constant" (at a
+#' in proportion to the genuine cases being reported), "constant" (at a
 #' constant rate 'eta_bg' for each day recorded for and each later day, with
 #' a gamma prior of mean priors$revisions$eta_bg_mu and sd eta_bg_sigma, and
 #' a starting value initial_revision_parameters$eta_bg, by default the mean of
-#' the prior). With "constant" the 'revisions' of the results hold 'eta_bg'
-#' and an 'eta' of NA, and the results include "wrong_cap", the probability
-#' that more wrong records are present than max_erroneous at the posterior
-#' mean (see \code{wrong_records_cap}).
+#' the prior) or "walk" (in proportion to the genuine cases being reported,
+#' at a rate which is constant over each interval between reports, of every
+#' onset time, and whose log follows a random walk; see
+#' \code{wrong_rate_settings} for its priors, and \code{initial_wrong_rate}
+#' for its starting values, which by default are all 'eta'; the sd of the
+#' changes proposed in the log of the sd of its steps is
+#' revision_metropolis_parameters$tau_eta_step, 0.3 by default). With these
+#' the 'revisions' of the results have an 'eta' of NA and hold 'eta_bg', or
+#' 'tau_eta' and 'eta_<day>' for the interval ending on each report day, and
+#' the results include "wrong_cap", the probability that more wrong records
+#' are present than max_erroneous at the posterior mean (see
+#' \code{wrong_records_cap}).
 #' @param progress_file an optional path of a file to which progress is
 #' written (the number of iterations completed and the time taken), so that
 #' a chain run in the background or in parallel can be followed. The file is
@@ -1386,8 +1394,14 @@ mcmc_single <- function(
       stop("If revisions to reported cases are allowed a prior must be provided for the revision parameters.")
     if(maximise)
       stop("Maximisation when revisions to reported cases are allowed is not yet allowed.")
+    # a walk of the rate has an interval ending at each report, of every
+    # onset time
     if(wrong_rate_options$form != "cases")
-      revision_current <- initial_wrong_rate(revision_current, wrong_rate_options)
+      revision_current <- initial_wrong_rate(
+        revision_current, wrong_rate_options,
+        c(snapshot_with_Rt_index_df$time_reported, deaths$uncorrected$time_reported),
+        ifelse(is.null(revision_metropolis_parameters$tau_eta_step), 0.3,
+               revision_metropolis_parameters$tau_eta_step))
     else if(revision_current$eta <= 0 | revision_current$rho <= 0 | revision_current$rho >= 1)
       stop("Initial revision parameters must satisfy: eta > 0 and 0 < rho < 1.")
     if("max_erroneous" %in% names(priors))

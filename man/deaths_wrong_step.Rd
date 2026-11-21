@@ -24,10 +24,10 @@ for each onset time: the delay from onset to a case being reported}
 
 \item{revision_parameters}{NULL, or a named list which can contain 'eta'
 and 'rho' (if wrong records are allowed for: see
-\code{observation_process_revisions_logp}), or 'background_rate' in place
-of 'eta' for another form of the rate at which they are entered (see
-deaths-wrong-rate.R), and anything which alters the reporting delay (see
-\code{log_undetected_days})}
+\code{observation_process_revisions_logp}), or 'background_rate' or
+'wrong_walk' in place of 'eta' for another form of the rate at which they
+are entered (see deaths-wrong-rate.R), and anything which alters the
+reporting delay (see \code{log_undetected_days})}
 
 \item{settings}{as returned by \code{deaths_settings}}
 
@@ -47,7 +47,8 @@ probability that a wrong record is shown as dead is drawn from its beta
 conditional distribution; eta, the expected number of wrong records
 entered for each genuine case reported, is drawn from its gamma
 conditional distribution (or, where they arrive at a constant rate, that
-rate from its own: see \code{wrong_constant_rate_draw}); and rho, the
-daily probability a wrong record is removed, is updated by Metropolis steps
-on the logit scale (see \code{deaths_wrong_rho_logp}).
+rate from its own, and where the rate follows a walk, the walk: see
+\code{deaths_wrong_rate_step}); and rho, the daily probability a wrong
+record is removed, is updated by Metropolis steps on the logit scale (see
+\code{deaths_wrong_rho_logp}).
 }

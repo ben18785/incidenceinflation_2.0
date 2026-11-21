@@ -17,15 +17,16 @@ of the result of \code{mcmc_single}, possibly of several chains or calls)}
 \value{
 a named list of 'largest' (the largest of the probabilities),
 'expected' (their sum, the expected number of days recorded for at which
-the limit is exceeded), the posterior means used ('eta_bg' and 'rho') and
-'by_day' (as returned by \code{deaths_wrong_cap})
+the limit is exceeded), the posterior means used ('eta_bg' or 'eta_\if{html}{\out{<day>}}',
+and 'rho') and 'by_day' (as returned by \code{deaths_wrong_cap})
 }
 \description{
 With a rate other than that of the main model, the model allows at most
 max_erroneous wrong records to be present at once in the reports of a day
-recorded for. This gives, at the posterior mean of the rate and of rho,
-the probability under the model that more are present at some report, for
-each day recorded for (and each uncorrected series), with the true cases,
-delays and reports of the state given. A warning is given if it exceeds one per cent for any of them, since
-the limit is then not negligible.
+recorded for. This gives, at the posterior mean of the rate (or of each
+rate of the walk) and of rho, the probability under the model that more
+are present at some report, for each day recorded for (and each
+uncorrected series), with the true cases, delays and reports of the state
+given. A warning is given if it exceeds one per cent for any of them,
+since the limit is then not negligible.
 }

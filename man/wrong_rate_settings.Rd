@@ -9,9 +9,13 @@ wrong_rate_settings(prior_parameters, is_deaths = TRUE)
 \arguments{
 \item{prior_parameters}{the element 'revisions' of the priors of
 \code{mcmc_single}, which can contain 'wrong_rate': "cases" (the default),
-or "constant" (see the start of deaths-wrong-rate.R). With "constant" it
-must contain 'eta_bg_mu' and 'eta_bg_sigma', the mean and sd of the gamma
-prior of the rate.}
+"constant" or "walk" (see the start of deaths-wrong-rate.R). With
+"constant" it must contain 'eta_bg_mu' and 'eta_bg_sigma', the mean and sd
+of the gamma prior of the rate. With "walk" it can contain 'eta_walk_mu'
+and 'eta_walk_sigma' (the normal prior of the log of the first rate;
+log(0.07) and 1.2 by default) and 'tau_eta_scale' (the scale of the
+half-normal prior of the sd of the steps of the walk over seven days; 0.5
+by default).}
 
 \item{is_deaths}{whether there is a model of deaths}
 }

@@ -14,10 +14,10 @@ deaths_wrong_rho_logp(rho, series, revision_parameters, prior_parameters)
 
 \item{revision_parameters}{NULL, or a named list which can contain 'eta'
 and 'rho' (if wrong records are allowed for: see
-\code{observation_process_revisions_logp}), or 'background_rate' in place
-of 'eta' for another form of the rate at which they are entered (see
-deaths-wrong-rate.R), and anything which alters the reporting delay (see
-\code{log_undetected_days})}
+\code{observation_process_revisions_logp}), or 'background_rate' or
+'wrong_walk' in place of 'eta' for another form of the rate at which they
+are entered (see deaths-wrong-rate.R), and anything which alters the
+reporting delay (see \code{log_undetected_days})}
 
 \item{prior_parameters}{named list with elements 'eta_mu', 'eta_sigma',
 'rho_alpha' and 'rho_beta' (see \code{prior_revision_parameters}), and

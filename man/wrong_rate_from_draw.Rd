@@ -16,7 +16,8 @@ runs happens one day, two days, ... after onset); or NULL}
 \code{mcmc_single}) for one iteration}
 }
 \value{
-the revision parameters with the rate of the draw
+the revision parameters with the rate of the draw (and, for a walk,
+the sd of its steps, if the draw has it)
 }
 \description{
 The rate at which wrong records are entered at a kept draw

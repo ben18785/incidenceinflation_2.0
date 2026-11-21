@@ -334,9 +334,10 @@ deaths_triggered_step <- function(state, cases_true, reporting_by_onset,
 #' conditional distribution; eta, the expected number of wrong records
 #' entered for each genuine case reported, is drawn from its gamma
 #' conditional distribution (or, where they arrive at a constant rate, that
-#' rate from its own: see \code{wrong_constant_rate_draw}); and rho, the
-#' daily probability a wrong record is removed, is updated by Metropolis steps
-#' on the logit scale (see \code{deaths_wrong_rho_logp}).
+#' rate from its own, and where the rate follows a walk, the walk: see
+#' \code{deaths_wrong_rate_step}); and rho, the daily probability a wrong
+#' record is removed, is updated by Metropolis steps on the logit scale (see
+#' \code{deaths_wrong_rho_logp}).
 #'
 #' @inheritParams deaths_paths_step
 #' @param settings as returned by \code{deaths_settings}
@@ -369,8 +370,9 @@ deaths_wrong_step <- function(state, cases_true, reporting_by_onset,
         entered_alive + entered_dead,
       rate=prior_parameters$eta_mu / prior_parameters$eta_sigma^2 + exposure)
   } else
-    revision_parameters$background_rate <- wrong_constant_rate_draw(series,
-                                                                    prior_parameters)
+    revision_parameters <- deaths_wrong_rate_step(series, revision_parameters,
+                                                  prior_parameters,
+                                                  settings$n_parameter_steps)
 
   f_logp <- function(rho)
     deaths_wrong_rho_logp(rho, series, revision_parameters, prior_parameters)

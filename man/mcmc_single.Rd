@@ -181,14 +181,22 @@ and 'rho') and effects of the day of the week ('weekday') are allowed for.
 This requires priors$reporting_changepoints. The form of the rate at which
 wrong records are entered is set by priors$revisions$wrong_rate (see
 deaths-wrong-rate.R and \code{wrong_rate_settings}): "cases" (the default,
-in proportion to the genuine cases being reported) or "constant" (at a
+in proportion to the genuine cases being reported), "constant" (at a
 constant rate 'eta_bg' for each day recorded for and each later day, with
 a gamma prior of mean priors$revisions$eta_bg_mu and sd eta_bg_sigma, and
 a starting value initial_revision_parameters$eta_bg, by default the mean of
-the prior). With "constant" the 'revisions' of the results hold 'eta_bg'
-and an 'eta' of NA, and the results include "wrong_cap", the probability
-that more wrong records are present than max_erroneous at the posterior
-mean (see \code{wrong_records_cap}).}
+the prior) or "walk" (in proportion to the genuine cases being reported,
+at a rate which is constant over each interval between reports, of every
+onset time, and whose log follows a random walk; see
+\code{wrong_rate_settings} for its priors, and \code{initial_wrong_rate}
+for its starting values, which by default are all 'eta'; the sd of the
+changes proposed in the log of the sd of its steps is
+revision_metropolis_parameters$tau_eta_step, 0.3 by default). With these
+the 'revisions' of the results have an 'eta' of NA and hold 'eta_bg', or
+'tau_eta' and 'eta_\if{html}{\out{<day>}}' for the interval ending on each report day, and
+the results include "wrong_cap", the probability that more wrong records
+are present than max_erroneous at the posterior mean (see
+\code{wrong_records_cap}).}
 
 \item{progress_file}{an optional path of a file to which progress is
 written (the number of iterations completed and the time taken), so that

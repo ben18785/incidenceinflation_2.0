@@ -5,17 +5,31 @@
 \title{Starting values of the rate at which wrong records are entered, where it
 is not that of the main model}
 \usage{
-initial_wrong_rate(revision_parameters, settings)
+initial_wrong_rate(
+  revision_parameters,
+  settings,
+  report_days = NULL,
+  tau_step = 0.3
+)
 }
 \arguments{
 \item{revision_parameters}{the starting revision parameters of
-\code{mcmc_single}, which can contain 'eta_bg' (by default the mean of its
-prior)}
+\code{mcmc_single}. With a constant rate these can contain 'eta_bg' (by
+default the mean of its prior); with a walk, 'eta_walk' (one rate, or one
+for each interval between reports; by default 'eta') and 'tau_eta' (by
+default 0.2).}
 
 \item{settings}{as returned by \code{wrong_rate_settings}}
+
+\item{report_days}{the days of the reports of every day recorded for,
+including those made before a correction (for a walk)}
+
+\item{tau_step}{the standard deviation of the changes proposed in the log
+of tau_eta (for a walk)}
 }
 \value{
-the revision parameters, with 'background_rate' in place of 'eta'
+the revision parameters, with 'background_rate' or 'wrong_walk' in
+place of 'eta'
 }
 \description{
 Starting values of the rate at which wrong records are entered, where it

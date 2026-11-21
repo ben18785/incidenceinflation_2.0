@@ -20,8 +20,9 @@ probability a wrong record is removed, and anything which alters the
 reporting delay (see \code{log_undetected_days})}
 }
 \value{
-as \code{wrong_entry_units} for the main model and
-\code{wrong_constant_units} for a constant rate
+as \code{wrong_entry_units} for the main model,
+\code{wrong_constant_units} for a constant rate and \code{wrong_walk_units}
+for a walk
 }
 \description{
 What governs the wrong records of the cases recorded for one day, in the

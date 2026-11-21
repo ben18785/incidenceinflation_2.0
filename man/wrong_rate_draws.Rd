@@ -16,7 +16,9 @@ runs happens one day, two days, ... after onset); or NULL}
 }
 \value{
 a tibble with one row and columns 'eta' (NA, since the rate is not
-that of the main model), 'rho', 'pi' (0), 'iteration' and 'eta_bg'
+that of the main model), 'rho', 'pi' (0) and 'iteration', with 'eta_bg'
+for a constant rate, or 'tau_eta' and 'eta_\if{html}{\out{<day>}}' (the rate of the
+interval ending with the report on that day) for a walk
 }
 \description{
 The rate at which wrong records are entered, for storage

@@ -157,10 +157,15 @@ sample_cases_history <- function(
   reporting_latest_onset_time <- list(mean=reporting_latest_onset_time$mean[1],
                                       sd=reporting_latest_onset_time$sd[1])
   uncertain_period <- max_uncertain_days(p_gamma_cutoff, reporting_latest_onset_time)
-  # a heavier-tailed delay extends the period for which reporting is incomplete
-  if(!is.null(revision_parameters$tail))
+  # a heavier-tailed delay extends the period for which reporting is
+  # incomplete; where the share in the tail differs by onset week, it is that
+  # of the latest onset time
+  if(!is.null(revision_parameters$tail)) {
+    revision_latest <- revision_parameters
+    revision_latest$tail <- tail_of_onset(revision_parameters$tail, latest_onset_time)
     uncertain_period <- delay_quantile(p_gamma_cutoff, reporting_latest_onset_time,
-                                       revision_parameters)
+                                       revision_latest)
+  }
 
   start_uncertain_period <- latest_onset_time - uncertain_period
 
@@ -1184,7 +1189,16 @@ metropolis_step_revisions <- function(
 #' a random effect of each report). See \code{log_undetected_days}. Their
 #' priors can be set through priors$reporting_effects (see
 #' \code{metropolis_step_tail}, \code{metropolis_step_weekday} and
-#' \code{sample_report_sd}).
+#' \code{sample_report_sd}). With a model of deaths, the share of cases in
+#' the tail can differ by onset week (weeks of seven onset days from the
+#' first onset time), following a random walk on the logit scale: this is
+#' switched on by priors$reporting_effects$tail_weight_walk, TRUE or a named
+#' list of its settings (see \code{tail_walk_settings}). The tail then starts
+#' from 'weight', a single share or one for each onset week; the results'
+#' "reporting_effects" hold the share of each week ('tail_weight_week_1',
+#' ...) and the standard deviation of the walk's steps
+#' ('tail_weight_rw_sd'), with 'tail_weight' NA. It is not allowed for
+#' without a model of deaths.
 #' @param revision_metropolis_parameters named list of 'eta_step' and 'rho_step'
 #' containing step sizes for Metropolis step for revision parameters (see
 #' \code{propose_revision_parameters})
@@ -1410,6 +1424,20 @@ mcmc_single <- function(
     names_steps <- intersect(names(steps_reporting),
                              names(revision_metropolis_parameters))
     steps_reporting[names_steps] <- revision_metropolis_parameters[names_steps]
+  }
+  # the share of cases in the tail can differ by onset week, following a
+  # random walk (deaths-tail-walk.R)
+  tail_walk <- priors$reporting_effects$tail_weight_walk
+  is_tail_walk <- !is.null(tail_walk) && !isFALSE(tail_walk)
+  if(is_tail_walk) {
+    if(!is_tail)
+      stop("A share of the tail of the reporting delay for each onset week (tail_weight_walk) needs the tail: initial_revision_parameters$tail.")
+    if(!is_deaths)
+      stop("A share of the tail of the reporting delay for each onset week (tail_weight_walk) is allowed for only with a model of deaths.")
+    priors_reporting$tail_weight_walk <- tail_walk_settings(tail_walk)
+    revision_current$tail <- initial_tail_walk(
+      revision_current$tail, unique(snapshot_with_Rt_index_df$time_onset),
+      priors_reporting$tail_weight_walk)
   }
   if(is_weekday | is_report_effects) {
     revision_current$report_days <- sort(unique(
@@ -1734,8 +1762,12 @@ mcmc_single <- function(
       if(is_reporting_extensions) {
         reporting_effects_tmp <- dplyr::tibble(
           iteration=i,
-          tail_weight=ifelse(is_tail, revision_current$tail$weight, NA),
+          tail_weight=ifelse(is_tail & !is_tail_walk, revision_current$tail$weight, NA),
           tail_mean=ifelse(is_tail, revision_current$tail$mean, NA), report_sd=NA)
+        # with a share for each onset week, those shares
+        if(is_tail_walk)
+          reporting_effects_tmp <- dplyr::bind_cols(
+            reporting_effects_tmp, dplyr::as_tibble(tail_walk_draws(revision_current$tail)))
         for(weekday in names(revision_current$weekday_log_effects))
           reporting_effects_tmp[[paste0("weekday_", weekday)]] <-
             exp(revision_current$weekday_log_effects[[weekday]])

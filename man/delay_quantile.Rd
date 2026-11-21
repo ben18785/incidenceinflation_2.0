@@ -14,11 +14,15 @@ delay_quantile(p, reporting_parameters, revision_parameters = NULL)
 \item{revision_parameters}{named list which can contain 'tail' and
 'report_multipliers' (see above) and 'before' (a named list with element
 'lag_probabilities': the probability that the event from which the delay
-runs happens one day, two days, ... after onset); or NULL}
+runs happens one day, two days, ... after onset); or NULL. Where the tail
+has a share for each onset week, that of the week of day_onset is used
+(see \code{tail_of_onset}).}
 }
 \value{
 a delay in days
 }
 \description{
-Multipliers on the rate of detection are not allowed for.
+Multipliers on the rate of detection are not allowed for. A tail with a
+share for each onset week must first be given the share of one onset day
+(see \code{tail_of_onset}).
 }

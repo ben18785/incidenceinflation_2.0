@@ -50,7 +50,13 @@ the gamma-distributed time from onset to death of those cases, which is
 rounded up to a whole number of days; not needed with onset_to_death) and,
 optionally, 'reporting' (a named list of the 'mean' and 'sd' of the delay
 from the day of death to those cases being reported; with onset_to_death
-the default is instead the delay from a death to its being recorded)}
+the default is instead the delay from a death to its being recorded) and
+'position' (TRUE or a named list, as for \code{dated_position_settings},
+with onset_to_death only: such a case is then recorded for a day z1 days
+after onset and dies z2 days after that day, with z1 and z2 drawn from the
+distributions given there, and is reported after the delay from its death
+to its being recorded, with the share of the backlog and the delay of the
+day it is recorded for)}
 
 \item{wrong}{an optional named list of 'eta', 'rho' and 'delta', which adds
 wrong records to the reports. On each day after the day for which cases

@@ -14,7 +14,8 @@ joint_survivals(
   dated_reporting_parameters = NULL,
   recording_effects = NULL,
   nu = 0,
-  triggered = 0
+  triggered = 0,
+  after_probabilities = NULL
 )
 }
 \arguments{
@@ -51,6 +52,12 @@ that of others (both its mean and its sd)}
 
 \item{triggered}{the proportion of fatal cases which are reported when
 their death is recorded, if they have not been reported by then}
+
+\item{after_probabilities}{NULL, or, where fatal cases dated by death are
+recorded for a day part of the way from onset to death (and are reported
+after the delay from a death to its being recorded), the probability that
+such a case dies 0, 1, 2, ... days after the day it is recorded for (see
+\code{log_dated_recorded})}
 }
 \value{
 a named list of vectors with an element for each report:

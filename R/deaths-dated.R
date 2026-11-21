@@ -47,19 +47,31 @@
 #' the current fraction) and 'ridge' (NULL, the default, or TRUE or a named
 #' list of settings for the joint move of \code{deaths_ridge_step}, which
 #' needs the exact form and a single fraction: see \code{ridge_settings})
+#' and 'position' (NULL, the default, or TRUE or a named list: those cases
+#' are then recorded for a day part of the way from onset to death, rather
+#' than for the day of death, and are reported after the delay from their
+#' death to its being recorded, so this needs reporting "recording": see
+#' \code{dated_position_settings}. 'max_lag' is then the longest time from
+#' onset to the day recorded for, by default the 99.9th percentile of its
+#' distribution)
 #' @param onset_to_death NULL, or the element of that name of the result of
 #' \code{deaths_settings}: the time from onset to death of every fatal case
 #'
 #' @return NULL if no fatal cases are dated by death; otherwise the list with
 #' 'fraction' given for each onset time, defaults filled in,
 #' 'lag_probabilities' added (the probability of each time from onset to
-#' death, from one day to max_lag), 'fraction_prior' (NULL if the fraction
+#' death, or, with 'position', to the day recorded for, from one day to
+#' max_lag), 'fraction_prior' (NULL if the fraction
 #' is known or varies by onset week; otherwise a named list of 'alpha' and
-#' 'beta') and, only if the fraction varies by onset week, 'walk' (see
-#' \code{dated_walk_settings})
+#' 'beta'), only if the fraction varies by onset week, 'walk' (see
+#' \code{dated_walk_settings}) and, only if they are recorded part of the way
+#' to death, 'position' (see \code{dated_position_settings})
 dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
   if(is.null(dated))
     return(NULL)
+  # with 'position', a longest time from onset to death of other fatal cases
+  # is not that to the day recorded for
+  is_max_lag_given <- !is.null(dated$max_lag)
   if(!is.null(onset_to_death)) {
     for(name in c("mean", "sd", "max_lag"))
       if(is.null(dated[[name]]))
@@ -90,7 +102,7 @@ dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
   }
   unknown <- setdiff(names(dated),
                      c("fraction", "mean", "sd", "max_lag", "reporting", "n_moves",
-                       "exact", "collapse_fraction", "ridge"))
+                       "exact", "collapse_fraction", "ridge", "position"))
   if(length(unknown) > 0)
     stop(paste0("Unknown settings for dated_by_death: ",
                 paste(unknown, collapse=", "), "."))
@@ -124,6 +136,18 @@ dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
       reporting$mean <= 0 || reporting$sd <= 0))
     stop("The delay from death to being reported must have a positive mean and sd.")
   lag_probabilities <- diff(stats::pgamma(0:max_lag, shape=shape, rate=rate))
+  lag_probabilities <- lag_probabilities / sum(lag_probabilities)
+  # recorded for a day part of the way to death: the labels hold the time
+  # from onset to that day
+  position <- dated_position_settings(dated$position, shape, rate,
+                                      if(is_max_lag_given) max_lag)
+  if(!is.null(position)) {
+    if(!identical(reporting, "recording"))
+      stop("Fatal cases recorded for a day part of the way to death are reported after the delay from their death to its being recorded, which needs reporting \"recording\" (the default with onset_to_death).")
+    lag_probabilities <- position$lag_probabilities
+    max_lag <- length(lag_probabilities)
+    position$lag_probabilities <- NULL
+  }
   is_exact <- isTRUE(dated$exact)
   n_moves <- dated$n_moves
   if(is.null(n_moves))
@@ -137,7 +161,7 @@ dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
               fraction_prior=fraction_prior,
               mean=dated$mean, sd=dated$sd,
               max_lag=max_lag,
-              lag_probabilities=lag_probabilities / sum(lag_probabilities),
+              lag_probabilities=lag_probabilities,
               reporting=reporting,
               n_moves=n_moves,
               exact=is_exact,
@@ -147,7 +171,84 @@ dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
   # they were
   if(!is.null(walk))
     out$walk <- walk
+  if(!is.null(position))
+    out$position <- position
   out
+}
+
+#' Settings for fatal cases recorded for a day part of the way from onset to
+#' death
+#'
+#' A fatal case dated by death with onset on day t is recorded for day
+#' t + z1, z1 >= 1, and dies z2 >= 0 days after that day, z1 and z2
+#' independent. With the time from onset to death gamma with shape a and rate
+#' c, z1 is gamma with shape a1 and rate c rounded up to a whole number of
+#' days (the probability of (z1 - 1, z1]) and z2 gamma with shape a - a1 and
+#' rate c rounded down (the probability of (z2, z2 + 1]), each truncated at
+#' its 99.9th percentile and rescaled. This is the time to death divided at a
+#' share of the way which has a Beta(a1, a - a1) distribution, independent of
+#' it; the default a1 = a / 2 puts the day recorded for anywhere between
+#' onset and death, most often near the middle. Since one part is rounded up
+#' and the other down, z1 + z2 has a mean about half a day shorter than the
+#' time to death of other fatal cases. With a1 = a, z1 has the distribution
+#' of the time to death and z2 is zero: the model in which they are recorded
+#' for their day of death.
+#'
+#' @param supplied NULL or FALSE (recorded for the day of death), TRUE (the
+#' default a1) or a named list of either 'share_shape' (a1, which must lie in
+#' (0, a]) or both 'lag_probabilities' (the probability of z1 = 1, 2, ...)
+#' and 'after_probabilities' (the probability of z2 = 0, 1, ...), each
+#' non-negative and summing to one
+#' @param shape,rate the shape and rate of the gamma time from onset to death
+#' @param max_lag NULL, or the largest z1 allowed for (in place of the 99.9th
+#' percentile)
+#'
+#' @return NULL or a named list of 'share_shape' (NULL if the probabilities
+#' are given), 'lag_probabilities' and 'after_probabilities'
+dated_position_settings <- function(supplied, shape, rate, max_lag=NULL) {
+  if(is.null(supplied) || identical(supplied, FALSE))
+    return(NULL)
+  if(isTRUE(supplied))
+    supplied <- list(share_shape=shape / 2)
+  if(!is.list(supplied))
+    stop("The position of the day recorded for must be TRUE or a named list of settings.")
+  unknown <- setdiff(names(supplied),
+                     c("share_shape", "lag_probabilities", "after_probabilities"))
+  if(length(unknown) > 0)
+    stop(paste0("Unknown settings for the position of the day recorded for: ",
+                paste(unknown, collapse=", "), "."))
+  f_check <- function(p)
+    is.numeric(p) && length(p) >= 1 && all(is.finite(p)) && all(p >= 0) &&
+    abs(sum(p) - 1) < 1e-8
+  if(is.null(supplied$share_shape)) {
+    if(!f_check(supplied$lag_probabilities) | !f_check(supplied$after_probabilities))
+      stop("The position of the day recorded for needs 'share_shape', or both 'lag_probabilities' and 'after_probabilities', each non-negative and summing to one.")
+    return(list(share_shape=NULL,
+                lag_probabilities=supplied$lag_probabilities,
+                after_probabilities=supplied$after_probabilities))
+  }
+  if(!is.null(supplied$lag_probabilities) | !is.null(supplied$after_probabilities))
+    stop("The position of the day recorded for is set by 'share_shape' or by the probabilities, not both.")
+  share_shape <- supplied$share_shape
+  if(length(share_shape) != 1 || !is.finite(share_shape) || share_shape <= 0 ||
+     share_shape > shape * (1 + 1e-8))
+    stop(paste0("The shape of the time from onset to the day recorded for ('share_shape') must lie in (0, ",
+                signif(shape, 4), "], the shape of the time from onset to death."))
+  # a value which differs from the shape by rounding alone is the shape
+  share_shape <- min(share_shape, shape)
+  f_quantile <- function(a) max(1, ceiling(stats::qgamma(0.999, shape=a, rate=rate)))
+  if(is.null(max_lag))
+    max_lag <- f_quantile(share_shape)
+  lag_probabilities <- diff(stats::pgamma(0:max_lag, shape=share_shape, rate=rate))
+  after_probabilities <- 1
+  if(share_shape < shape) {
+    after_shape <- shape - share_shape
+    after_probabilities <- diff(stats::pgamma(0:f_quantile(after_shape),
+                                              shape=after_shape, rate=rate))
+  }
+  list(share_shape=share_shape,
+       lag_probabilities=lag_probabilities / sum(lag_probabilities),
+       after_probabilities=after_probabilities / sum(after_probabilities))
 }
 
 #' Settings for a fraction dated by death which varies by onset week

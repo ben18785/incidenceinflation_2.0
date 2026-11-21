@@ -60,7 +60,14 @@ predict_state_from_draw <- function(variables, draw) {
     revision$weekday_log_effects <- f_weekday("weekday_", revision$weekday_log_effects)
     revision <- update_report_multipliers(revision)
   }
-  if(!is.null(revision$tail)) {
+  if(!is.null(revision$tail$day_first)) {
+    # a share of the tail for each onset week: onset times after the last
+    # week would take the share of the last
+    revision$tail$weight <- vapply(seq_along(revision$tail$weight), function(w)
+      draw$reporting_effects[[paste0("tail_weight_week_", w)]], numeric(1))
+    revision$tail$mean <- draw$reporting_effects$tail_mean
+    revision$tail$rw_sd <- draw$reporting_effects$tail_weight_rw_sd
+  } else if(!is.null(revision$tail)) {
     revision$tail$weight <- draw$reporting_effects$tail_weight
     revision$tail$mean <- draw$reporting_effects$tail_mean
   }

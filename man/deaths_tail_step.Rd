@@ -29,7 +29,9 @@ reporting delay (see \code{log_undetected_days})}
 \item{settings}{as returned by \code{deaths_settings}, with elements
 'tail_prior' (a named list of 'tail_weight_alpha', 'tail_weight_beta',
 'tail_mean_mu' and 'tail_mean_sigma') and 'tail_steps' (a named list of
-'tail_weight_step' and 'tail_mean_step') added}
+'tail_weight_step' and 'tail_mean_step') added; 'tail_prior' also holds
+'tail_weight_walk' (see \code{tail_walk_settings}) where the share differs
+by onset week}
 }
 \value{
 the revision parameters with element 'tail' updated
@@ -38,5 +40,7 @@ the revision parameters with element 'tail' updated
 A proportion 'weight' of cases, fatal or not, have a delay which is
 exponential with mean 'mean' (see \code{log_undetected_days}). The weight
 has a beta prior and the mean a gamma prior; proposals are made on the
-logit and log scales, as in \code{metropolis_step_tail}.
+logit and log scales, as in \code{metropolis_step_tail}. Where the share
+differs by onset week, it is updated instead by
+\code{deaths_tail_walk_step}.
 }

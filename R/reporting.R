@@ -4,7 +4,9 @@
 # parameters:
 #
 # - 'tail': a named list of 'weight' and 'mean'. A proportion 'weight' of cases
-#   have a delay which is exponential with mean 'mean' rather than gamma.
+#   have a delay which is exponential with mean 'mean' rather than gamma. The
+#   proportion can instead differ by onset week (see tail_of_onset), with
+#   'weight' holding one for each week and 'day_first' the first onset time.
 # - 'report_multipliers': a named list of 'day_first' and 'values', giving for
 #   each day from day_first onwards a multiplier on the rate at which cases not
 #   yet detected are detected on that day. The multiplier for a day is that of
@@ -36,7 +38,9 @@
 #' @param revision_parameters named list which can contain 'tail' and
 #' 'report_multipliers' (see above) and 'before' (a named list with element
 #' 'lag_probabilities': the probability that the event from which the delay
-#' runs happens one day, two days, ... after onset); or NULL
+#' runs happens one day, two days, ... after onset); or NULL. Where the tail
+#' has a share for each onset week, that of the week of day_onset is used
+#' (see \code{tail_of_onset}).
 #'
 #' @return a vector of log-probabilities
 log_undetected_days <- function(days, day_onset, reporting_parameters,
@@ -45,6 +49,10 @@ log_undetected_days <- function(days, day_onset, reporting_parameters,
   if(!is.null(revision_parameters$backlog))
     return(log_undetected_days_backlog(days, day_onset, reporting_parameters,
                                        revision_parameters))
+  # the share of cases in the tail can differ by onset week (the name is
+  # matched exactly, since 'tail_multipliers' has a 'day_first' too)
+  if(!is.null(revision_parameters[["tail"]]$day_first))
+    revision_parameters$tail <- tail_of_onset(revision_parameters[["tail"]], day_onset)
   tail <- revision_parameters$tail
   # where the tail has multipliers of its own, the probability is found for
   # each part of the delay apart and the two are mixed
@@ -107,6 +115,39 @@ log_undetected_days <- function(days, day_onset, reporting_parameters,
   values[is_within] <- multipliers$values[index[is_within]]
   log_effective <- log_base[1] - c(0, cumsum(values * -diff(log_base)))
   log_effective[round(days - day_onset) + 1]
+}
+
+#' The heavier tail of the reporting delay of the cases of an onset day
+#'
+#' The share of cases in the tail can differ by onset week (S8 of the
+#' sensitivity analyses). The tail then holds a share for each onset week in
+#' 'weight' and the first onset time in 'day_first': onset week w is made of
+#' the onset days day_first + 7 (w - 1) to day_first + 7 w - 1. An onset day
+#' before the first week takes the share of the first, and one after the last
+#' (as in predictions) the share of the last.
+#'
+#' @param tail the element 'tail' of the revision parameters: a named list of
+#' 'weight' and 'mean', and 'day_first' where the share differs by onset week
+#' @param day_onset an onset day
+#'
+#' @return a named list of the 'weight' and 'mean' of the tail of day_onset
+#' (tail itself if the share is the same for every onset day)
+tail_of_onset <- function(tail, day_onset) {
+  if(is.null(tail$day_first))
+    return(tail)
+  list(weight=tail$weight[tail_week_of_days(tail, day_onset)], mean=tail$mean)
+}
+
+#' The onset week of each of a set of onset days, for a tail with a share for
+#' each onset week
+#'
+#' @inheritParams tail_of_onset
+#' @param days onset days
+#'
+#' @return a vector of the indices of the weeks (see \code{tail_of_onset})
+tail_week_of_days <- function(tail, days) {
+  week <- floor(round(days - tail$day_first) / 7) + 1
+  pmin(pmax(week, 1), length(tail$weight))
 }
 
 #' A cache of the log-probabilities of remaining undetected by the days
@@ -271,7 +312,9 @@ update_report_multipliers <- function(revision_parameters) {
 
 #' Delay by which a given proportion of cases have been detected
 #'
-#' Multipliers on the rate of detection are not allowed for.
+#' Multipliers on the rate of detection are not allowed for. A tail with a
+#' share for each onset week must first be given the share of one onset day
+#' (see \code{tail_of_onset}).
 #'
 #' @param p a proportion
 #' @inheritParams log_undetected_days

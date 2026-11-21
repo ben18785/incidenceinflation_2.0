@@ -18,7 +18,8 @@ simulate_cases_deaths(
   triggered = 0,
   onset_to_death = NULL,
   recording_tail = NULL,
-  recording_backlog = NULL
+  recording_backlog = NULL,
+  reporting_tail = NULL
 )
 }
 \arguments{
@@ -55,8 +56,9 @@ the default is instead the delay from a death to its being recorded)}
 wrong records to the reports. On each day after the day for which cases
 are recorded, a Poisson number of wrong records is entered, with mean eta
 times the cases recorded for the day times the probability a case is first
-reported on that day. Each is shown as dead with probability delta and is
-removed with probability rho on each later day.}
+reported on that day (allowing for reporting_tail). Each is shown as dead
+with probability delta and is removed with probability rho on each later
+day.}
 
 \item{correction}{an optional named list describing a report which
 corrects the records of some onset times: 'time_reported' (the day of that
@@ -91,6 +93,14 @@ death_parameters, and a death in the backlog is recorded on each day with
 that hazard, counted from the middle of the day hold_days after the day of
 death. The share of a case dated by death is that of the day it is
 recorded for. Needs onset_to_death}
+
+\item{reporting_tail}{an optional named list of 'weight' (a single value or
+one for each onset time) and 'mean': that share of the cases recorded for
+each day are reported after an exponential delay with that mean, in place
+of the delay of reporting_parameters (or fatal_reporting_parameters, or
+that of dated_by_death$reporting). The share of a case dated by death is
+that of the day it is recorded for; such a case reported after the delay
+from a death to its being recorded is not affected}
 }
 \value{
 a named list of 'snapshots' (a tibble with columns time_onset,

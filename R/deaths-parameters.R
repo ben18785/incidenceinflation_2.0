@@ -445,19 +445,27 @@ deaths_reporting_weekday_step <- function(state, cases_true, reporting_by_onset,
 #' A proportion 'weight' of cases, fatal or not, have a delay which is
 #' exponential with mean 'mean' (see \code{log_undetected_days}). The weight
 #' has a beta prior and the mean a gamma prior; proposals are made on the
-#' logit and log scales, as in \code{metropolis_step_tail}.
+#' logit and log scales, as in \code{metropolis_step_tail}. Where the share
+#' differs by onset week, it is updated instead by
+#' \code{deaths_tail_walk_step}.
 #'
 #' @inheritParams deaths_paths_step
 #' @param settings as returned by \code{deaths_settings}, with elements
 #' 'tail_prior' (a named list of 'tail_weight_alpha', 'tail_weight_beta',
 #' 'tail_mean_mu' and 'tail_mean_sigma') and 'tail_steps' (a named list of
-#' 'tail_weight_step' and 'tail_mean_step') added
+#' 'tail_weight_step' and 'tail_mean_step') added; 'tail_prior' also holds
+#' 'tail_weight_walk' (see \code{tail_walk_settings}) where the share differs
+#' by onset week
 #'
 #' @return the revision parameters with element 'tail' updated
 deaths_tail_step <- function(state, cases_true, reporting_by_onset,
                              revision_parameters, settings) {
   if(is.null(revision_parameters$tail))
     return(revision_parameters)
+  # a share for each onset week (deaths-tail-walk.R)
+  if(!is.null(revision_parameters$tail$day_first))
+    return(deaths_tail_walk_step(state, cases_true, reporting_by_onset,
+                                 revision_parameters, settings))
   prior <- settings$tail_prior
   f_logp <- function(tail) {
     proposed <- revision_parameters

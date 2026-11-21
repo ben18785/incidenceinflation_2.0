@@ -1848,12 +1848,20 @@ deaths_draws <- function(state, iteration) {
 #' that hazard, counted from the middle of the day hold_days after the day of
 #' death. The share of a case dated by death is that of the day it is
 #' recorded for. Needs onset_to_death
+#' @param reporting_tail an optional named list of 'weight' (a single value or
+#' one for each onset time) and 'mean': that share of the cases recorded for
+#' each day are reported after an exponential delay with that mean, in place
+#' of the delay of reporting_parameters (or fatal_reporting_parameters, or
+#' that of dated_by_death$reporting). The share of a case dated by death is
+#' that of the day it is recorded for; such a case reported after the delay
+#' from a death to its being recorded is not affected
 #' @param wrong an optional named list of 'eta', 'rho' and 'delta', which adds
 #' wrong records to the reports. On each day after the day for which cases
 #' are recorded, a Poisson number of wrong records is entered, with mean eta
 #' times the cases recorded for the day times the probability a case is first
-#' reported on that day. Each is shown as dead with probability delta and is
-#' removed with probability rho on each later day.
+#' reported on that day (allowing for reporting_tail). Each is shown as dead
+#' with probability delta and is removed with probability rho on each later
+#' day.
 #' @param correction an optional named list describing a report which
 #' corrects the records of some onset times: 'time_reported' (the day of that
 #' report), 'onset_times' (the onset times corrected) and any of 'wrong' (the
@@ -1882,7 +1890,7 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
                                   dated_by_death=NULL, wrong=NULL,
                                   correction=NULL, triggered=0,
                                   onset_to_death=NULL, recording_tail=NULL,
-                                  recording_backlog=NULL) {
+                                  recording_backlog=NULL, reporting_tail=NULL) {
   death_from <- match.arg(death_from)
   if(!is.null(onset_to_death) & death_from == "report")
     stop("A time from onset to death needs death_from 'onset'.")
@@ -1908,6 +1916,15 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
     cfr <- rep(cfr, n_days)
   if(length(cfr) != n_days)
     stop("There must be a case fatality ratio for each onset time.")
+  if(!is.null(reporting_tail)) {
+    tail_share <- reporting_tail$weight
+    if(length(tail_share) == 1)
+      tail_share <- rep(tail_share, n_days)
+    if(length(tail_share) != n_days)
+      stop("The share of the tail of the reporting delay must be a single value or one for each onset time.")
+    if(any(tail_share < 0 | tail_share > 1) | reporting_tail$mean <= 0)
+      stop("The share of the tail of the reporting delay must lie between 0 and 1 and its mean must be positive.")
+  }
   f_delay <- function(mean, sd)
     stats::rgamma(length(mean), shape=mean^2 / sd^2, rate=mean / sd^2)
   # a proportion of deaths are recorded after an exponential delay
@@ -2017,6 +2034,16 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
       f_tail(f_delay(death$mean[day_dated], death$sd[day_dated])),
       day[is_dated_by_death], f_share(recording_backlog$share, day_dated))
   }
+  # a share of cases are reported after an exponential delay, that of the
+  # day they are recorded for
+  if(!is.null(reporting_tail)) {
+    is_eligible <- !(is_dated_by_death & !is.list(dated_by_death$reporting) &
+                       !is.null(onset_to_death))
+    day_share <- ifelse(is_dated_by_death, pmin(day, n_days), source)
+    is_reporting_tail <- is_eligible & stats::runif(n) < tail_share[day_share]
+    delay_reported[is_reporting_tail] <- stats::rexp(sum(is_reporting_tail),
+                                                     1 / reporting_tail$mean)
+  }
   delay_recorded <- f_delay(death$mean[source], death$sd[source])
   delay_recorded <- f_tail(delay_recorded)
   if(!is.null(recording_backlog)) {
@@ -2081,6 +2108,13 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
       rate <- reporting$mean[t] / reporting$sd[t]^2
       p_first_reported <- diff(stats::pgamma(c(t, days_after) + 0.5 - t,
                                              shape=shape, rate=rate))
+      if(!is.null(reporting_tail)) {
+        elapsed_after <- c(t, days_after) + 0.5 - t
+        p_first_reported <- -diff(
+          (1 - tail_share[t]) * stats::pgamma(elapsed_after, shape=shape, rate=rate,
+                                              lower.tail=FALSE) +
+            tail_share[t] * exp(-elapsed_after / reporting_tail$mean))
+      }
       entered <- rep(days_after, stats::rpois(
         length(days_after), wrong$eta * sum(is_day) * p_first_reported))
       removed <- entered + stats::rgeom(length(entered), wrong$rho) + 1

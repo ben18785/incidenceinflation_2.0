@@ -112,7 +112,16 @@ the day of the week, from 1 to 7, of time 1); and 'report_effects' (TRUE for
 a random effect of each report). See \code{log_undetected_days}. Their
 priors can be set through priors$reporting_effects (see
 \code{metropolis_step_tail}, \code{metropolis_step_weekday} and
-\code{sample_report_sd}).}
+\code{sample_report_sd}). With a model of deaths, the share of cases in
+the tail can differ by onset week (weeks of seven onset days from the
+first onset time), following a random walk on the logit scale: this is
+switched on by priors$reporting_effects$tail_weight_walk, TRUE or a named
+list of its settings (see \code{tail_walk_settings}). The tail then starts
+from 'weight', a single share or one for each onset week; the results'
+"reporting_effects" hold the share of each week ('tail_weight_week_1',
+...) and the standard deviation of the walk's steps
+('tail_weight_rw_sd'), with 'tail_weight' NA. It is not allowed for
+without a model of deaths.}
 
 \item{revision_metropolis_parameters}{named list of 'eta_step' and 'rho_step'
 containing step sizes for Metropolis step for revision parameters (see

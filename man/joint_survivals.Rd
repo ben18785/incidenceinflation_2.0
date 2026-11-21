@@ -31,7 +31,9 @@ onset to a death being recorded}
 \item{revision_parameters}{named list which can contain 'tail' and
 'report_multipliers' (see above) and 'before' (a named list with element
 'lag_probabilities': the probability that the event from which the delay
-runs happens one day, two days, ... after onset); or NULL}
+runs happens one day, two days, ... after onset); or NULL. Where the tail
+has a share for each onset week, that of the week of day_onset is used
+(see \code{tail_of_onset}).}
 
 \item{dated_reporting_parameters}{named list of the 'mean' and 'sd' of the
 delay from death to being reported, for fatal cases recorded for their day

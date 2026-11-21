@@ -12,6 +12,16 @@
 # Draw continuous gamma delays by mean and sd.
 sim_rgamma_ms <- function(n, mean, sd) stats::rgamma(n, shape = (mean / sd)^2, rate = mean / sd^2)
 
+# Reporting delays of n cases of one onset day with a heavier tail (sensitivity_extensions.tex,
+# S8): with probability share the delay is exponential with mean tail_mean, otherwise
+# gamma, so that P(T > d + 1/2) = (1 - q_t){1 - G(d + 1/2)} + q_t exp{-(d + 1/2)/mu}.
+sim_rdelay_tail <- function(n, delay, share = 0, tail_mean = 1) {
+  tc <- sim_rgamma_ms(n, delay$mean, delay$sd)
+  is_tail <- stats::runif(n) < share
+  tc[is_tail] <- stats::rexp(sum(is_tail), 1 / tail_mean)
+  tc
+}
+
 # Poisson or NB renewal (A.2): I_t ~ Pois(R_t Lambda_t) or NB(R_t Lambda_t, kappa).
 sim_renewal <- function(R, history, omega, kappa = Inf) {
   I <- numeric(length(R))
@@ -101,16 +111,21 @@ sim_reports_wrong <- function(I, report_days, delay, eta, rho) {
 # own delay T_C <= r - t + 1/2 or, if fatal and of the triggered kind (probability tau),
 # once its death is recorded (A.5). A fatal case is shown as dead once reported and its
 # death recorded. Wrong records as above, entered in proportion to S_C, each shown dead
-# with probability delta.
+# with probability delta. S8: tail_share (one per onset day, or NULL) gives each case of
+# day t its case delay from sim_rdelay_tail, and S_C of the wrong records has the tail.
 sim_reports_deaths <- function(I, report_days, delay, cfr, pdie, rec_mean, rec_sd,
-                               tau = 1, eta = 0, rho = 0.5, delta = 0) {
-  surv <- function(d) ref_surv_case(d, delay$mean, delay$sd)
+                               tau = 1, eta = 0, rho = 0.5, delta = 0,
+                               tail_share = NULL, tail_mean = 1) {
+  q <- if (is.null(tail_share)) rep(0, length(I)) else tail_share
   rows <- list(); fatal <- integer(length(I))
   for (t in seq_along(I)) {
     rd <- report_days[report_days >= t]
     if (!length(rd)) next
     n <- I[t]
-    tc <- sim_rgamma_ms(n, delay$mean, delay$sd)
+    surv <- function(d) ref_surv_case(d, delay$mean, delay$sd, tail_weight = q[t],
+                                      tail_mean = tail_mean)
+    tc <- if (is.null(tail_share)) sim_rgamma_ms(n, delay$mean, delay$sd)
+    else sim_rdelay_tail(n, delay, q[t], tail_mean)
     is_f <- stats::runif(n) < cfr[t]; fatal[t] <- sum(is_f)
     z <- sample.int(length(pdie), n, replace = TRUE, prob = pdie)
     trec <- sim_rgamma_ms(n, rec_mean[t], rec_sd[t])

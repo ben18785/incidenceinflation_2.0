@@ -1225,7 +1225,7 @@ delay_of_onset <- function(by_onset, k) {
 #'
 #' @return TRUE or FALSE
 is_wrong_records <- function(revision_parameters) {
-  !is.null(revision_parameters$eta)
+  !is.null(revision_parameters$eta) | !is.null(revision_parameters$background_rate)
 }
 
 #' Draws a number of true fatal cases of one onset time which the reports
@@ -1267,8 +1267,10 @@ possible_fatal_start <- function(f_forward, f_logp, smallest, largest) {
 #' for each onset time: the delay from onset to a case being reported
 #' @param revision_parameters NULL, or a named list which can contain 'eta'
 #' and 'rho' (if wrong records are allowed for: see
-#' \code{observation_process_revisions_logp}) and anything which alters the
-#' reporting delay (see \code{log_undetected_days})
+#' \code{observation_process_revisions_logp}), or 'background_rate' in place
+#' of 'eta' for another form of the rate at which they are entered (see
+#' deaths-wrong-rate.R), and anything which alters the reporting delay (see
+#' \code{log_undetected_days})
 #' @inheritParams erroneous_transitions
 #'
 #' @param n_proposals the number of times a change in the true fatal cases
@@ -1312,11 +1314,12 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
       state$recording_effects, state$nu, state$triggered)
     wrong <- NULL
     if(is_wrong) {
-      l_units[[k]] <- wrong_entry_units(reports$time_reported, state$onset_times[k],
-                                        reporting_parameters, revision_parameters)
+      l_units[[k]] <- deaths_wrong_units(reports$time_reported, state$onset_times[k],
+                                         reporting_parameters, revision_parameters)
       wrong <- list(
-        lambda=revision_parameters$eta *
-          (cases_true[k] - dated$out[k] + dated$into[k]) * l_units[[k]]$unit,
+        lambda=wrong_entry_mean(l_units[[k]],
+                                cases_true[k] - dated$out[k] + dated$into[k],
+                                revision_parameters),
         w=l_units[[k]]$w, delta=state$delta, max_erroneous=max_erroneous)
     }
     # in the exact form the wrong records are held at those of the path
@@ -1407,7 +1410,7 @@ deaths_refresh_survivals <- function(state, reporting_by_onset,
       revision_parameters, state$dated$reporting, state$recording_effects,
       state$nu, state$triggered)
     if(is_wrong)
-      state$wrong_units[[k]] <- wrong_entry_units(
+      state$wrong_units[[k]] <- deaths_wrong_units(
         days, state$onset_times[k], reporting_parameters, revision_parameters)
   }
   if(!is.null(state$uncorrected)) {
@@ -1456,10 +1459,12 @@ deaths_cases_logp_function <- function(state, time_onset,
 #' @inheritParams deaths_paths_step
 #' @param k the onset time, counted from one
 #'
-#' @return NULL if wrong records are not allowed for; otherwise a vector with
-#' an element for each report
+#' @return NULL if wrong records are not allowed for, or if they arrive at a
+#' constant rate (when they do not depend on the cases); otherwise a vector
+#' with an element for each report
 deaths_wrong_mean <- function(state, k, revision_parameters=NULL) {
-  if(!is_wrong_records(revision_parameters))
+  if(!is_wrong_records(revision_parameters) ||
+     wrong_rate_form(revision_parameters) == "constant")
     return(NULL)
   revision_parameters$eta * state$wrong_units[[k]]$unit
 }
@@ -1564,12 +1569,12 @@ deaths_reporting_day_logp <- function(state, k, cases_true, reporting_parameters
     path$survivors_new, path$survivors_before,
     cases_true[k] - state$deaths_true[k], survival_steps(survivals$log_reported))
   if(is_wrong_records(revision_parameters)) {
-    units <- wrong_entry_units(days, state$onset_times[k], reporting_parameters,
-                               revision_parameters)
+    units <- deaths_wrong_units(days, state$onset_times[k], reporting_parameters,
+                                revision_parameters)
     logp <- logp +
       sum(stats::dpois(path$wrong_entered_alive + path$wrong_entered_dead,
-                       revision_parameters$eta *
-                         (cases_true[k] - dated$out + dated$into) * units$unit,
+                       wrong_entry_mean(units, cases_true[k] - dated$out + dated$into,
+                                        revision_parameters),
                        log=TRUE)) +
       sum(dbinom_log_recycled(path$wrong_removed, path$wrong_before, units$w))
   }
@@ -1853,7 +1858,10 @@ deaths_draws <- function(state, iteration) {
 #' are recorded, a Poisson number of wrong records is entered, with mean eta
 #' times the cases recorded for the day times the probability a case is first
 #' reported on that day. Each is shown as dead with probability delta and is
-#' removed with probability rho on each later day.
+#' removed with probability rho on each later day. With 'eta_bg' in place of
+#' 'eta', the wrong records entered on each day after the day for which cases
+#' are recorded are Poisson with mean eta_bg, whatever the cases (a constant
+#' rate: see deaths-wrong-rate.R).
 #' @param correction an optional named list describing a report which
 #' corrects the records of some onset times: 'time_reported' (the day of that
 #' report), 'onset_times' (the onset times corrected) and any of 'wrong' (the
@@ -2081,8 +2089,10 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
       rate <- reporting$mean[t] / reporting$sd[t]^2
       p_first_reported <- diff(stats::pgamma(c(t, days_after) + 0.5 - t,
                                              shape=shape, rate=rate))
-      entered <- rep(days_after, stats::rpois(
-        length(days_after), wrong$eta * sum(is_day) * p_first_reported))
+      # or at a constant rate, whatever the cases
+      mean_entered <- if(!is.null(wrong$eta_bg)) rep(wrong$eta_bg, length(days_after))
+        else wrong$eta * sum(is_day) * p_first_reported
+      entered <- rep(days_after, stats::rpois(length(days_after), mean_entered))
       removed <- entered + stats::rgeom(length(entered), wrong$rho) + 1
       is_dead <- stats::runif(length(entered)) < wrong$delta
       f_present <- function(is_kind)

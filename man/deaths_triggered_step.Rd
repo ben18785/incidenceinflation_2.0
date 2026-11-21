@@ -23,8 +23,10 @@ for each onset time: the delay from onset to a case being reported}
 
 \item{revision_parameters}{NULL, or a named list which can contain 'eta'
 and 'rho' (if wrong records are allowed for: see
-\code{observation_process_revisions_logp}) and anything which alters the
-reporting delay (see \code{log_undetected_days})}
+\code{observation_process_revisions_logp}), or 'background_rate' in place
+of 'eta' for another form of the rate at which they are entered (see
+deaths-wrong-rate.R), and anything which alters the reporting delay (see
+\code{log_undetected_days})}
 
 \item{triggered}{the element of that name of the result of
 \code{deaths_settings}; nothing is done if it is FALSE}

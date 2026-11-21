@@ -56,7 +56,10 @@ wrong records to the reports. On each day after the day for which cases
 are recorded, a Poisson number of wrong records is entered, with mean eta
 times the cases recorded for the day times the probability a case is first
 reported on that day. Each is shown as dead with probability delta and is
-removed with probability rho on each later day.}
+removed with probability rho on each later day. With 'eta_bg' in place of
+'eta', the wrong records entered on each day after the day for which cases
+are recorded are Poisson with mean eta_bg, whatever the cases (a constant
+rate: see deaths-wrong-rate.R).}
 
 \item{correction}{an optional named list describing a report which
 corrects the records of some onset times: 'time_reported' (the day of that

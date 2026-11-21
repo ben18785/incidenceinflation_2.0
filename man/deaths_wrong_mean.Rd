@@ -14,12 +14,15 @@ deaths_wrong_mean(state, k, revision_parameters = NULL)
 
 \item{revision_parameters}{NULL, or a named list which can contain 'eta'
 and 'rho' (if wrong records are allowed for: see
-\code{observation_process_revisions_logp}) and anything which alters the
-reporting delay (see \code{log_undetected_days})}
+\code{observation_process_revisions_logp}), or 'background_rate' in place
+of 'eta' for another form of the rate at which they are entered (see
+deaths-wrong-rate.R), and anything which alters the reporting delay (see
+\code{log_undetected_days})}
 }
 \value{
-NULL if wrong records are not allowed for; otherwise a vector with
-an element for each report
+NULL if wrong records are not allowed for, or if they arrive at a
+constant rate (when they do not depend on the cases); otherwise a vector
+with an element for each report
 }
 \description{
 Expected wrong records entered between reports for each genuine case

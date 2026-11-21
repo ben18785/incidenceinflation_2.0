@@ -178,7 +178,17 @@ onset times (see \code{split_corrected_reports}); these inform the delays
 and the parameters of wrong records only, fatal cases dated by death being
 ignored in them, and the results then include "deaths_uncorrected". Wrong records (initial_revision_parameters with 'eta'
 and 'rho') and effects of the day of the week ('weekday') are allowed for.
-This requires priors$reporting_changepoints.}
+This requires priors$reporting_changepoints. The form of the rate at which
+wrong records are entered is set by priors$revisions$wrong_rate (see
+deaths-wrong-rate.R and \code{wrong_rate_settings}): "cases" (the default,
+in proportion to the genuine cases being reported) or "constant" (at a
+constant rate 'eta_bg' for each day recorded for and each later day, with
+a gamma prior of mean priors$revisions$eta_bg_mu and sd eta_bg_sigma, and
+a starting value initial_revision_parameters$eta_bg, by default the mean of
+the prior). With "constant" the 'revisions' of the results hold 'eta_bg'
+and an 'eta' of NA, and the results include "wrong_cap", the probability
+that more wrong records are present than max_erroneous at the posterior
+mean (see \code{wrong_records_cap}).}
 
 \item{progress_file}{an optional path of a file to which progress is
 written (the number of iterations completed and the time taken), so that

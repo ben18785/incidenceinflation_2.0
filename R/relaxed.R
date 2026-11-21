@@ -219,6 +219,8 @@ relaxed_stan_data <- function(snapshot_df, serial_parameters, cases_before=NULL,
   fatal_delay_settings <- list(probability_same=0.5, sd=0.5)
   if(is.list(fatal_delay))
     fatal_delay_settings[names(fatal_delay)] <- fatal_delay
+  if(!is.null(dated_by_death$position) && !identical(dated_by_death$position, FALSE))
+    stop("The relaxed model does not allow for fatal cases recorded for a day part of the way to death.")
   dated <- dated_by_death_settings(n_days, dated_by_death)
   is_dated <- !is.null(dated)
   if(is_dated && !is.null(dated$walk))

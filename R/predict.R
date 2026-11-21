@@ -144,7 +144,8 @@ predict_onset_terms <- function(prediction, k, days) {
   survivals <- joint_survivals(
     days, state$onset_times[k], reporting_parameters,
     delay_of_onset(deaths_delay_by_onset(state), k), revision,
-    state$dated$reporting, state$recording_effects, state$nu, state$triggered)
+    state$dated$reporting, state$recording_effects, state$nu, state$triggered,
+    state$dated$position$after_probabilities)
   wrong <- NULL
   if(is_wrong_records(revision)) {
     dated <- dated_counts(state)

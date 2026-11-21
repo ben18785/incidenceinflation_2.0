@@ -23,3 +23,7 @@ it. A value is drawn from the beta distribution with the same mode and
 curvature there as the distribution of the fraction, and is accepted with
 the Metropolis-Hastings probability.
 }
+\details{
+If the fraction varies by onset week, its random walk is updated instead,
+by \code{deaths_dated_walk_step}.
+}

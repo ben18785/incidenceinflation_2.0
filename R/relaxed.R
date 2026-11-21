@@ -221,6 +221,8 @@ relaxed_stan_data <- function(snapshot_df, serial_parameters, cases_before=NULL,
     fatal_delay_settings[names(fatal_delay)] <- fatal_delay
   dated <- dated_by_death_settings(n_days, dated_by_death)
   is_dated <- !is.null(dated)
+  if(is_dated && !is.null(dated$walk))
+    stop("The relaxed model does not allow for a fraction dated by death which varies by onset week.")
   if((is_fatal_delay | is_dated) & !is_deaths)
     stop("deaths_df must be supplied if fatal cases are reported differently or dated by death.")
   if((is_fatal_delay | is_dated) & !is.null(misdating))

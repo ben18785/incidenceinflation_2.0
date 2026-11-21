@@ -21,7 +21,10 @@
 #' a single value or one for each onset time if it is known; or, if it is to
 #' be estimated, a named list of 'alpha' and 'beta', the parameters of its
 #' beta prior, and optionally 'initial', the value to start from. An
-#' estimated fraction is the same for every onset time); 'mean' and 'sd' (of
+#' estimated fraction is the same for every onset time, unless the list is
+#' instead one of 'walk', TRUE or a named list of settings (see
+#' \code{dated_walk_settings}): the fraction then varies by onset week as a
+#' random walk on the logit scale); 'mean' and 'sd' (of
 #' the time from onset to death of those cases, which has a gamma distribution
 #' rounded up to a whole number of days, so is at least one day; by default
 #' those of onset_to_death); and optionally
@@ -37,21 +40,23 @@
 #' the fatal cases dated by onset and by death among those reported are
 #' followed separately, which is exact and slower; by default each fatal
 #' case recorded for a day is taken to be dated by death with a probability)
-#' and 'collapse_fraction' (if TRUE, and the fraction is estimated, the
+#' and 'collapse_fraction' (if TRUE, and a single fraction is estimated, the
 #' changes to which fatal cases are dated by death are made with the fraction
 #' integrated out, and the fraction is then drawn exactly given them: see
 #' \code{dated_fraction_marginal}. By default FALSE, the changes are made at
 #' the current fraction) and 'ridge' (NULL, the default, or TRUE or a named
 #' list of settings for the joint move of \code{deaths_ridge_step}, which
-#' needs the exact form: see \code{ridge_settings})
+#' needs the exact form and a single fraction: see \code{ridge_settings})
 #' @param onset_to_death NULL, or the element of that name of the result of
 #' \code{deaths_settings}: the time from onset to death of every fatal case
 #'
 #' @return NULL if no fatal cases are dated by death; otherwise the list with
 #' 'fraction' given for each onset time, defaults filled in,
 #' 'lag_probabilities' added (the probability of each time from onset to
-#' death, from one day to max_lag) and 'fraction_prior' (NULL if the fraction
-#' is known; otherwise a named list of 'alpha' and 'beta')
+#' death, from one day to max_lag), 'fraction_prior' (NULL if the fraction
+#' is known or varies by onset week; otherwise a named list of 'alpha' and
+#' 'beta') and, only if the fraction varies by onset week, 'walk' (see
+#' \code{dated_walk_settings})
 dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
   if(is.null(dated))
     return(NULL)
@@ -63,7 +68,13 @@ dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
       dated$reporting <- "recording"
   }
   fraction_prior <- NULL
-  if(is.list(dated$fraction)) {
+  walk <- NULL
+  if(is.list(dated$fraction) && "walk" %in% names(dated$fraction)) {
+    if(length(dated$fraction) > 1)
+      stop("The prior and starting value of a fraction dated by death which varies by onset week are set in 'walk'.")
+    walk <- dated_walk_settings(n_days, dated$fraction$walk)
+    dated$fraction <- stats::plogis(walk$logit_fraction[walk$week_of_day])
+  } else if(is.list(dated$fraction)) {
     fraction_prior <- list(alpha=1, beta=1, initial=0.2)
     unknown <- setdiff(names(dated$fraction), names(fraction_prior))
     if(length(unknown) > 0)
@@ -88,9 +99,11 @@ dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
     stop("The fraction dated by death must be a single value or one for each onset time.")
   if(any(is.na(fraction)) || any(fraction < 0 | fraction > 1))
     stop("The fraction dated by death must lie between 0 and 1.")
-  if(all(fraction == 0) & is.null(fraction_prior))
+  if(all(fraction == 0) & is.null(fraction_prior) & is.null(walk))
     return(NULL)
   is_collapsed <- isTRUE(dated$collapse_fraction)
+  if(is_collapsed & !is.null(walk))
+    stop("A fraction dated by death which varies by onset week cannot be integrated out.")
   if(is_collapsed & is.null(fraction_prior))
     stop("The fraction dated by death can be integrated out only if it is estimated.")
   if(is.null(dated$mean) || is.null(dated$sd) || dated$mean <= 0 || dated$sd <= 0)
@@ -118,16 +131,82 @@ dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
   ridge <- ridge_settings(dated$ridge)
   if(!is.null(ridge) & !is_exact)
     stop("The joint move of the fraction dated by death and the delay to a death being recorded needs the exact form.")
-  list(fraction=rep_len(fraction, n_days),
-       fraction_prior=fraction_prior,
-       mean=dated$mean, sd=dated$sd,
-       max_lag=max_lag,
-       lag_probabilities=lag_probabilities / sum(lag_probabilities),
-       reporting=reporting,
-       n_moves=n_moves,
-       exact=is_exact,
-       collapse_fraction=is_collapsed,
-       ridge=ridge)
+  if(!is.null(ridge) & !is.null(walk))
+    stop("The joint move of the fraction dated by death and the delay to a death being recorded is not allowed for with a fraction which varies by onset week.")
+  out <- list(fraction=rep_len(fraction, n_days),
+              fraction_prior=fraction_prior,
+              mean=dated$mean, sd=dated$sd,
+              max_lag=max_lag,
+              lag_probabilities=lag_probabilities / sum(lag_probabilities),
+              reporting=reporting,
+              n_moves=n_moves,
+              exact=is_exact,
+              collapse_fraction=is_collapsed,
+              ridge=ridge)
+  # held only if the fraction varies, so that the settings are otherwise as
+  # they were
+  if(!is.null(walk))
+    out$walk <- walk
+  out
+}
+
+#' Settings for a fraction dated by death which varies by onset week
+#'
+#' The onset times are put in weeks of 'week' days, counted from the first.
+#' The logit of the fraction of the first week is normal, and that of each
+#' later week is that of the week before plus a normal step whose standard
+#' deviation has a half-normal prior. Each onset time has the fraction of its
+#' week, and the fatal cases with onset before the first day that of the
+#' first week.
+#'
+#' @inheritParams dated_by_death_settings
+#' @param supplied TRUE or a named list of settings to change
+#'
+#' @return a named list of the settings: 'first_mean' and 'first_sd' (the
+#' normal prior of the logit of the fraction of the first week, by default 0
+#' and 1.6), 'step_sd_scale' (the scale of the half-normal prior of the
+#' standard deviation of the weekly steps, by default 0.3), 'week' (the days
+#' in a week, 7), 'rw_sd_step' (the standard deviation of the changes
+#' proposed in the log of the standard deviation of the steps, 0.3) and
+#' 'n_steps' (the updates in each iteration, 1); and the values to start
+#' from: 'logit_fraction' (for each week, from setting 'initial', the
+#' starting fraction, by default 0.2: a single value or one for each onset
+#' time, of which the mean of each week is taken), 'step_sd' (from setting
+#' 'initial_step_sd', by default 0.2) and 'week_of_day' (the week of each
+#' onset time)
+dated_walk_settings <- function(n_days, supplied) {
+  walk <- list(first_mean=0, first_sd=1.6, step_sd_scale=0.3, initial=0.2,
+               initial_step_sd=0.2, week=7, rw_sd_step=0.3, n_steps=1)
+  if(isTRUE(supplied))
+    supplied <- list()
+  if(!is.list(supplied))
+    stop("The walk of the fraction dated by death must be TRUE or a named list of settings.")
+  unknown <- setdiff(names(supplied), names(walk))
+  if(length(unknown) > 0)
+    stop(paste0("Unknown settings for the walk of the fraction dated by death: ",
+                paste(unknown, collapse=", "), "."))
+  walk[names(supplied)] <- supplied
+  single <- c("first_mean", "first_sd", "step_sd_scale", "initial_step_sd",
+              "week", "rw_sd_step", "n_steps")
+  if(any(lengths(walk[single]) != 1) || any(!is.finite(unlist(walk[single]))))
+    stop("Each setting of the walk of the fraction dated by death but its starting value must be a single number.")
+  if(any(unlist(walk[setdiff(single, "first_mean")]) <= 0))
+    stop("The scales, steps and starting standard deviation of the walk of the fraction dated by death must be positive.")
+  if(walk$week != round(walk$week) | walk$n_steps != round(walk$n_steps))
+    stop("The days in a week and the updates of the walk of the fraction dated by death must be whole numbers.")
+  initial <- walk$initial
+  if(!length(initial) %in% c(1, n_days))
+    stop("The starting fraction dated by death must be a single value or one for each onset time.")
+  if(any(is.na(initial)) || any(initial <= 0 | initial >= 1))
+    stop("The starting fraction dated by death must lie strictly between 0 and 1.")
+  week_of_day <- (seq_len(n_days) - 1) %/% walk$week + 1
+  walk$logit_fraction <- stats::qlogis(as.numeric(tapply(
+    rep_len(initial, n_days), week_of_day, mean)))
+  walk$week_of_day <- week_of_day
+  walk$step_sd <- walk$initial_step_sd
+  walk$initial <- NULL
+  walk$initial_step_sd <- NULL
+  walk
 }
 
 #' Adds fatal cases dated by death to the starting state of the model of
@@ -607,12 +686,17 @@ dated_fraction_draw <- function(state) {
 #' curvature there as the distribution of the fraction, and is accepted with
 #' the Metropolis-Hastings probability.
 #'
+#' If the fraction varies by onset week, its random walk is updated instead,
+#' by \code{deaths_dated_walk_step}.
+#'
 #' @inheritParams deaths_delay_by_onset
 #' @param n_steps the number of values proposed
 #'
 #' @return the state with element 'fraction' of its element 'dated' updated
 deaths_dated_fraction_step <- function(state, n_steps=2) {
   dated <- state$dated
+  if(!is.null(dated$walk))
+    return(deaths_dated_walk_step(state))
   prior <- dated$fraction_prior
   if(is.null(dated) || is.null(prior))
     return(state)
@@ -649,6 +733,83 @@ deaths_dated_fraction_step <- function(state, n_steps=2) {
       current <- proposed
   }
   state$dated$fraction <- rep(current, length(dated$fraction))
+  state
+}
+
+#' The fatal cases dated by death and by onset with onset in each week
+#'
+#' @inheritParams deaths_delay_by_onset
+#'
+#' @return a named list of 'dated' and 'by_onset' (for each week of the walk
+#' of the fraction, the fatal cases with onset in it which are dated by death,
+#' including those which die after the last day, and those dated by onset),
+#' 'inflow' (the fatal cases recorded for any day whose onset was before the
+#' first day) and 'r' (the number of these expected for each unit of the
+#' fraction of the first week)
+dated_walk_counts <- function(state) {
+  dated <- state$dated
+  weeks <- factor(dated$walk$week_of_day, seq_along(dated$walk$logit_fraction))
+  f_sum <- function(x) as.vector(tapply(x, weeks, sum, default=0))
+  list(dated=f_sum(dated$out),
+       by_onset=f_sum(state$deaths_true - dated$out),
+       inflow=sum(dated$inflow),
+       r=sum(dated$inflow_weight) * state$cfr[1])
+}
+
+#' Log-likelihood of the walk of the fraction dated by death given which
+#' fatal cases are dated by death
+#'
+#' With f_w the fraction of week w, this is the log of
+#'   prod_w f_w^(dated_w) (1 - f_w)^(by_onset_w) f_1^(inflow) exp(-r f_1),
+#' the factors of the model in which the fractions appear (as in
+#' \code{dated_fraction_terms}, by week).
+#'
+#' @param logit_fraction the logit of the fraction of each week
+#' @param counts as returned by \code{dated_walk_counts}
+#'
+#' @return a log-likelihood
+dated_walk_logl <- function(logit_fraction, counts) {
+  log_f <- stats::plogis(logit_fraction, log.p=TRUE)
+  log_not <- stats::plogis(logit_fraction, lower.tail=FALSE, log.p=TRUE)
+  sum(counts$dated * log_f + counts$by_onset * log_not) +
+    counts$inflow * log_f[1] - counts$r * exp(log_f[1])
+}
+
+#' Updates a fraction dated by death which varies by onset week
+#'
+#' Given which fatal cases are dated by death, the walk of the logit of the
+#' fraction is drawn whole by elliptical slice sampling, with the
+#' log-likelihood of \code{dated_walk_logl}, and the standard deviation of
+#' its steps is then updated as those of the backlog are (see
+#' \code{random_walk_slice_step}).
+#'
+#' @inheritParams deaths_delay_by_onset
+#'
+#' @return the state with elements 'fraction' and 'walk' of its element
+#' 'dated' updated
+deaths_dated_walk_step <- function(state) {
+  walk <- state$dated$walk
+  counts <- dated_walk_counts(state)
+  f_logl <- function(x) dated_walk_logl(x, counts)
+  n_weeks <- length(walk$logit_fraction)
+  prior <- list(
+    mu=walk$first_mean, sd_first=walk$first_sd, scale=walk$step_sd_scale,
+    step_sd=function(sd) rep(sd, n_weeks - 1),
+    f_log_prior=function(x, sd_step)
+      stats::dnorm(x[1], walk$first_mean, walk$first_sd, log=TRUE) +
+      sum(stats::dnorm(diff(x), 0, sd_step, log=TRUE)))
+  x <- walk$logit_fraction
+  sd <- walk$step_sd
+  logl <- f_logl(x)
+  for(step in seq_len(walk$n_steps)) {
+    out <- random_walk_slice_step(x, sd, prior, f_logl, logl, walk$rw_sd_step)
+    x <- out$x
+    sd <- out$sd
+    logl <- out$logl
+  }
+  state$dated$walk$logit_fraction <- x
+  state$dated$walk$step_sd <- sd
+  state$dated$fraction <- stats::plogis(x[walk$week_of_day])
   state
 }
 

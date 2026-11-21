@@ -328,6 +328,70 @@ elliptical_slice <- function(x, mean, f_draw, f_logl, logl, max_shrink=60) {
   list(x=x, logl=logl)
 }
 
+#' One update of a random walk with a normal prior and of the standard
+#' deviation of its steps
+#'
+#' The walk is drawn whole by elliptical slice sampling given the standard
+#' deviation, which is then changed by random-walk Metropolis on the log
+#' scale, with its half-normal prior: once with the walk held (no likelihood
+#' is needed), and once with the steps of the walk scaled with it, from the
+#' same first value (non-centred, which lets a walk and its standard
+#' deviation move together).
+#'
+#' @param x the current walk
+#' @param sd the current standard deviation of its steps
+#' @param walk a named list of 'mu' and 'sd_first' (the normal prior of the
+#' first value, and the prior mean of every value), 'scale' (of the
+#' half-normal prior of the standard deviation), 'step_sd' (a function giving
+#' the standard deviation of each step from sd) and 'f_log_prior' (the
+#' log-prior of a walk given sd)
+#' @param f_logl the log-likelihood of a walk
+#' @param logl the log-likelihood of x
+#' @param rw_sd_step the standard deviation of the changes proposed in the
+#' log of sd
+#'
+#' @return a named list of the updated walk 'x', standard deviation 'sd' and
+#' log-likelihood 'logl'
+random_walk_slice_step <- function(x, sd, walk, f_logl, logl, rw_sd_step) {
+  f_accept <- function(log_ratio)
+    !is.na(log_ratio) && log(stats::runif(1)) < log_ratio
+  f_half_normal <- function(x, scale) stats::dnorm(x, 0, scale, log=TRUE)
+  # a walk with its steps scaled by r, from the same first value
+  f_scale <- function(x, r) c(x[1], x[1] + cumsum(diff(x) * r))
+  # the whole walk, given its standard deviation
+  n <- length(x)
+  sd_steps <- walk$step_sd(sd)
+  out <- elliptical_slice(
+    x, rep(walk$mu, n),
+    function() cumsum(c(stats::rnorm(1, 0, walk$sd_first),
+                        stats::rnorm(n - 1, 0, sd_steps))),
+    f_logl, logl)
+  x <- out$x
+  logl <- out$logl
+  if(n == 1)
+    return(list(x=x, sd=sd, logl=logl))
+  # its standard deviation with the walk held: no likelihood is needed
+  proposed_sd <- sd * exp(stats::rnorm(1, 0, rw_sd_step))
+  log_ratio <- walk$f_log_prior(x, proposed_sd) - walk$f_log_prior(x, sd) +
+    f_half_normal(proposed_sd, walk$scale) - f_half_normal(sd, walk$scale) +
+    log(proposed_sd) - log(sd)
+  if(f_accept(log_ratio))
+    sd <- proposed_sd
+  # and with its steps scaled with it, the standardised steps held
+  proposed_sd <- sd * exp(stats::rnorm(1, 0, rw_sd_step))
+  proposed <- f_scale(x, proposed_sd / sd)
+  logl_proposed <- f_logl(proposed)
+  log_ratio <- logl_proposed - logl +
+    f_half_normal(proposed_sd, walk$scale) - f_half_normal(sd, walk$scale) +
+    log(proposed_sd) - log(sd)
+  if(f_accept(log_ratio)) {
+    x <- proposed
+    sd <- proposed_sd
+    logl <- logl_proposed
+  }
+  list(x=x, sd=sd, logl=logl)
+}
+
 #' The updates of the backlog with sampler 'slice'
 #'
 #' @param backlog the element 'backlog' of the effects on recording
@@ -342,9 +406,6 @@ backlog_slice_steps <- function(backlog, settings, f_logl, f_log_prior_share,
                                 f_log_prior_rate, gaps) {
   f_accept <- function(log_ratio)
     !is.na(log_ratio) && log(stats::runif(1)) < log_ratio
-  f_half_normal <- function(x, scale) stats::dnorm(x, 0, scale, log=TRUE)
-  # a walk with its steps scaled by r, from the same first value
-  f_scale <- function(x, r) c(x[1], x[1] + cumsum(diff(x) * r))
   walks <- list(
     list(name="logit_share", sd="share_rw_sd", mu=settings$share_mu,
          sd_first=settings$share_sd, scale=settings$share_rw_sd_scale,
@@ -356,46 +417,18 @@ backlog_slice_steps <- function(backlog, settings, f_logl, f_log_prior_share,
          f_log_prior=f_log_prior_rate))
   logl <- f_logl(backlog)
   for(step in seq_len(settings$n_steps)) {
+    # each walk and the standard deviation of its steps
     for(walk in walks) {
-      # the whole walk, given its standard deviation
-      n <- length(backlog[[walk$name]])
-      sd_steps <- walk$step_sd(backlog[[walk$sd]])
-      out <- elliptical_slice(
-        backlog[[walk$name]], rep(walk$mu, n),
-        function() cumsum(c(stats::rnorm(1, 0, walk$sd_first),
-                            stats::rnorm(n - 1, 0, sd_steps))),
+      out <- random_walk_slice_step(
+        backlog[[walk$name]], backlog[[walk$sd]], walk,
         function(x) {
           proposed <- backlog
           proposed[[walk$name]] <- x
           f_logl(proposed)
-        }, logl)
+        }, logl, settings$rw_sd_step)
       backlog[[walk$name]] <- out$x
+      backlog[[walk$sd]] <- out$sd
       logl <- out$logl
-      if(n == 1)
-        next
-      # its standard deviation with the walk held: no likelihood is needed
-      current <- backlog[[walk$sd]]
-      proposed_sd <- current * exp(stats::rnorm(1, 0, settings$rw_sd_step))
-      log_ratio <- walk$f_log_prior(backlog[[walk$name]], proposed_sd) -
-        walk$f_log_prior(backlog[[walk$name]], current) +
-        f_half_normal(proposed_sd, walk$scale) - f_half_normal(current, walk$scale) +
-        log(proposed_sd) - log(current)
-      if(f_accept(log_ratio))
-        backlog[[walk$sd]] <- proposed_sd
-      # and with its steps scaled with it, the standardised steps held
-      current <- backlog[[walk$sd]]
-      proposed_sd <- current * exp(stats::rnorm(1, 0, settings$rw_sd_step))
-      proposed <- backlog
-      proposed[[walk$sd]] <- proposed_sd
-      proposed[[walk$name]] <- f_scale(backlog[[walk$name]], proposed_sd / current)
-      logl_proposed <- f_logl(proposed)
-      log_ratio <- logl_proposed - logl +
-        f_half_normal(proposed_sd, walk$scale) - f_half_normal(current, walk$scale) +
-        log(proposed_sd) - log(current)
-      if(f_accept(log_ratio)) {
-        backlog <- proposed
-        logl <- logl_proposed
-      }
     }
     # along the ridge: more deaths in the backlog, cleared more slowly
     delta <- stats::rnorm(1, 0, settings$ridge_step)

@@ -1740,7 +1740,11 @@ deaths_parameters_step <- function(state, cases_true, settings) {
 #' death is recorded if not before, 'dated_fraction', the fraction of fatal
 #' cases which are recorded for their day of death (that of the first onset
 #' time, if it differs between them), 'wrong_dead', the probability a wrong record is shown as dead, and the
-#' effect of each day of the week on the delay to a death being recorded)
+#' effect of each day of the week on the delay to a death being recorded).
+#' If the fraction dated by death varies by onset week, 'deaths' also has
+#' column 'dated_fraction', the fraction of each onset time, and
+#' 'deaths_parameters' column 'dated_fraction_step_sd', the standard
+#' deviation of the weekly steps of the logit of the fraction
 deaths_draws <- function(state, iteration) {
   delays <- deaths_delay_by_onset(state)
   dated <- dated_counts(state)
@@ -1756,6 +1760,8 @@ deaths_draws <- function(state, iteration) {
     triggered=ifelse(is.null(state$triggered), 0, state$triggered),
     dated_fraction=ifelse(is.null(state$dated), 0, state$dated$fraction[1]),
     wrong_dead=state$delta)
+  if(!is.null(state$dated$walk))
+    parameters$dated_fraction_step_sd <- state$dated$walk$step_sd
   if(!is.null(state$dated$ridge))
     parameters$ridge_accepted <- ifelse(is.null(state$ridge_accepted), 0,
                                         state$ridge_accepted)
@@ -1785,6 +1791,8 @@ deaths_draws <- function(state, iteration) {
     delay_sd=delays$sd,
     deaths_recorded=dated$fatal_recorded,
     dated_by_death=dated$into)
+  if(!is.null(state$dated$walk))
+    deaths$dated_fraction <- state$dated$fraction
   if(!is.null(backlog))
     deaths$backlog_share <- backlog$share[pmin(pmax(round(state$onset_times), 1),
                                                length(backlog$share))]

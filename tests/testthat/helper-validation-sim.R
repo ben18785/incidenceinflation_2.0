@@ -132,6 +132,79 @@ sim_reports_deaths <- function(I, report_days, delay, cfr, pdie, rec_mean, rec_s
        deaths = d[, c("time_onset", "time_reported", "deaths_reported")], fatal = fatal)
 }
 
+# ---- Full deaths process with misdated cases (appendix A, 'Cases recorded for their
+# day of death'; sensitivity_extensions.tex, S9) ----------------------------------------
+# As sim_reports_deaths, except that each fatal case of onset day t is misdated with
+# probability fraction[t] (one value per onset day, so a fraction varying by onset week
+# is given week by week). A misdated case dying z ~ pdie days after onset is recorded for
+# its day of death d = t + z: it is in no report if d is after the last onset day
+# (n_days); otherwise it enters the records when its death does, already shown as dead,
+# in report r >= d if its recording delay Trec (gamma rec_mean[d], rec_sd[d], those of
+# the day it is recorded for) has Trec <= r - d + 1/2. Fatal cases with onset before
+# day 1 and dying on day d >= 1, misdated: G_0(d) ~ Poisson(sum_s history_s cfr[1]
+# fraction[1] pdie(d - s)), history being the cases of the days before day 1 (the last
+# is day 0), recorded as other misdated cases. Wrong records arise in proportion to the
+# genuine cases recorded for the day, Itilde(d) = I(d) - (its misdated cases) +
+# (misdated cases recorded for d), eq. (A.wrong-entered). Returns also, for each onset
+# day, the true fatal cases and those misdated.
+sim_reports_deaths_dated <- function(I, report_days, delay, cfr, pdie, rec_mean, rec_sd,
+                                     fraction, history = NULL, tau = 1, eta = 0,
+                                     rho = 0.5, delta = 0) {
+  n_days <- length(I)
+  surv <- function(d) ref_surv_case(d, delay$mean, delay$sd)
+  zmax <- length(pdie)
+  fatal <- misdated <- integer(n_days)
+  # the misdated cases recorded for each day: their recording delays
+  arrivals <- vector("list", n_days)
+  f_arrive <- function(d, n) {
+    if (n > 0) arrivals[[d]] <<- c(arrivals[[d]], sim_rgamma_ms(n, rec_mean[d], rec_sd[d]))
+  }
+  correct <- vector("list", n_days)
+  for (t in seq_len(n_days)) {
+    n <- I[t]
+    tc <- sim_rgamma_ms(n, delay$mean, delay$sd)
+    is_f <- stats::runif(n) < cfr[t]; fatal[t] <- sum(is_f)
+    is_mis <- is_f & stats::runif(n) < fraction[t]; misdated[t] <- sum(is_mis)
+    z <- sample.int(zmax, n, replace = TRUE, prob = pdie)
+    for (d in (t + z[is_mis])[t + z[is_mis] <= n_days]) f_arrive(d, 1)
+    keep <- !is_mis
+    correct[[t]] <- list(tc = tc[keep], is_f = is_f[keep], z = z[keep],
+                         trec = sim_rgamma_ms(sum(keep), rec_mean[t], rec_sd[t]),
+                         trig = stats::runif(sum(keep)) < tau)
+  }
+  if (length(history)) {
+    days_before <- seq_along(history) - length(history)       # ..., -1, 0
+    for (d in seq_len(min(n_days, zmax))) {
+      lag <- d - days_before
+      ok <- lag >= 1 & lag <= zmax
+      f_arrive(d, stats::rpois(1, sum(history[ok] * cfr[1] * fraction[1] * pdie[lag[ok]])))
+    }
+  }
+  rows <- list()
+  for (t in seq_len(n_days)) {
+    rd <- report_days[report_days >= t]
+    if (!length(rd)) next
+    k <- correct[[t]]; a <- arrivals[[t]]
+    cr <- dr <- numeric(length(rd))
+    for (j in seq_along(rd)) {
+      x <- rd[j] - t
+      own <- k$tc <= x + 0.5
+      rec <- k$is_f & k$z <= x & k$trec <= x - k$z + 0.5
+      rep <- own | (rec & k$trig)
+      mis <- sum(a <= x + 0.5)
+      cr[j] <- sum(rep) + mis; dr[j] <- sum(rep & rec) + mis
+    }
+    w <- sim_wrong_records(t, length(k$tc) + length(a), rd, surv, eta, rho, delta)
+    rows[[t]] <- data.frame(time_onset = t, time_reported = rd,
+                            cases_reported = cr + w$present, deaths_reported = dr + w$dead)
+  }
+  d <- tibble::as_tibble(do.call(rbind, rows)); d[] <- lapply(d, as.integer)
+  list(cases = d[, c("time_onset", "time_reported", "cases_reported")],
+       deaths = d[, c("time_onset", "time_reported", "deaths_reported")],
+       fatal = fatal, misdated = misdated,
+       recorded_misdated = vapply(arrivals, length, 0))
+}
+
 # Report days with gaps drawn from gaps (with replacement), from first up to and
 # including last.
 sim_report_days <- function(first, last, gaps) {

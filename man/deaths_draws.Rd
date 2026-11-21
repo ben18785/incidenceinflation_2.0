@@ -22,7 +22,11 @@ ratio of the reporting delay of fatal cases to that of others,
 death is recorded if not before, 'dated_fraction', the fraction of fatal
 cases which are recorded for their day of death (that of the first onset
 time, if it differs between them), 'wrong_dead', the probability a wrong record is shown as dead, and the
-effect of each day of the week on the delay to a death being recorded)
+effect of each day of the week on the delay to a death being recorded).
+If the fraction dated by death varies by onset week, 'deaths' also has
+column 'dated_fraction', the fraction of each onset time, and
+'deaths_parameters' column 'dated_fraction_step_sd', the standard
+deviation of the weekly steps of the logit of the fraction
 }
 \description{
 The values held in the state of the model of deaths, for storage

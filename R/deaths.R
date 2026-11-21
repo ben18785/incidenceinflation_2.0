@@ -1225,7 +1225,8 @@ delay_of_onset <- function(by_onset, k) {
 #'
 #' @return TRUE or FALSE
 is_wrong_records <- function(revision_parameters) {
-  !is.null(revision_parameters$eta)
+  !is.null(revision_parameters$eta) | !is.null(revision_parameters$background_rate) |
+    !is.null(revision_parameters$wrong_walk)
 }
 
 #' Draws a number of true fatal cases of one onset time which the reports
@@ -1267,7 +1268,9 @@ possible_fatal_start <- function(f_forward, f_logp, smallest, largest) {
 #' for each onset time: the delay from onset to a case being reported
 #' @param revision_parameters NULL, or a named list which can contain 'eta'
 #' and 'rho' (if wrong records are allowed for: see
-#' \code{observation_process_revisions_logp}) and anything which alters the
+#' \code{observation_process_revisions_logp}), or 'background_rate' or
+#' 'wrong_walk' in place of 'eta' for another form of the rate at which they
+#' are entered (see deaths-wrong-rate.R), and anything which alters the
 #' reporting delay (see \code{log_undetected_days})
 #' @inheritParams erroneous_transitions
 #'
@@ -1312,11 +1315,12 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
       state$recording_effects, state$nu, state$triggered)
     wrong <- NULL
     if(is_wrong) {
-      l_units[[k]] <- wrong_entry_units(reports$time_reported, state$onset_times[k],
-                                        reporting_parameters, revision_parameters)
+      l_units[[k]] <- deaths_wrong_units(reports$time_reported, state$onset_times[k],
+                                         reporting_parameters, revision_parameters)
       wrong <- list(
-        lambda=revision_parameters$eta *
-          (cases_true[k] - dated$out[k] + dated$into[k]) * l_units[[k]]$unit,
+        lambda=wrong_entry_mean(l_units[[k]],
+                                cases_true[k] - dated$out[k] + dated$into[k],
+                                revision_parameters),
         w=l_units[[k]]$w, delta=state$delta, max_erroneous=max_erroneous)
     }
     # in the exact form the wrong records are held at those of the path
@@ -1407,7 +1411,7 @@ deaths_refresh_survivals <- function(state, reporting_by_onset,
       revision_parameters, state$dated$reporting, state$recording_effects,
       state$nu, state$triggered)
     if(is_wrong)
-      state$wrong_units[[k]] <- wrong_entry_units(
+      state$wrong_units[[k]] <- deaths_wrong_units(
         days, state$onset_times[k], reporting_parameters, revision_parameters)
   }
   if(!is.null(state$uncorrected)) {
@@ -1456,11 +1460,15 @@ deaths_cases_logp_function <- function(state, time_onset,
 #' @inheritParams deaths_paths_step
 #' @param k the onset time, counted from one
 #'
-#' @return NULL if wrong records are not allowed for; otherwise a vector with
-#' an element for each report
+#' @return NULL if wrong records are not allowed for, or if they arrive at a
+#' constant rate (when they do not depend on the cases); otherwise a vector
+#' with an element for each report
 deaths_wrong_mean <- function(state, k, revision_parameters=NULL) {
-  if(!is_wrong_records(revision_parameters))
+  if(!is_wrong_records(revision_parameters) ||
+     wrong_rate_form(revision_parameters) == "constant")
     return(NULL)
+  if(wrong_rate_form(revision_parameters) == "walk")
+    return(wrong_entry_mean(state$wrong_units[[k]], 1, revision_parameters))
   revision_parameters$eta * state$wrong_units[[k]]$unit
 }
 
@@ -1564,12 +1572,12 @@ deaths_reporting_day_logp <- function(state, k, cases_true, reporting_parameters
     path$survivors_new, path$survivors_before,
     cases_true[k] - state$deaths_true[k], survival_steps(survivals$log_reported))
   if(is_wrong_records(revision_parameters)) {
-    units <- wrong_entry_units(days, state$onset_times[k], reporting_parameters,
-                               revision_parameters)
+    units <- deaths_wrong_units(days, state$onset_times[k], reporting_parameters,
+                                revision_parameters)
     logp <- logp +
       sum(stats::dpois(path$wrong_entered_alive + path$wrong_entered_dead,
-                       revision_parameters$eta *
-                         (cases_true[k] - dated$out + dated$into) * units$unit,
+                       wrong_entry_mean(units, cases_true[k] - dated$out + dated$into,
+                                        revision_parameters),
                        log=TRUE)) +
       sum(dbinom_log_recycled(path$wrong_removed, path$wrong_before, units$w))
   }
@@ -1869,7 +1877,16 @@ deaths_draws <- function(state, iteration) {
 #' times the cases recorded for the day times the probability a case is first
 #' reported on that day (allowing for reporting_tail). Each is shown as dead
 #' with probability delta and is removed with probability rho on each later
-#' day.
+#' day. With 'eta_bg' in place of
+#' 'eta', the wrong records entered on each day after the day for which cases
+#' are recorded are Poisson with mean eta_bg, whatever the cases (a constant
+#' rate: see deaths-wrong-rate.R). With 'eta' one value for each interval
+#' between reports, the intervals ending on the days 'interval_days' (by
+#' default report_days; days after the last have the last rate), the rate on
+#' each day is that of its interval; with 'tau' too, the rates are drawn as a
+#' random walk on the log scale starting from the first value of 'eta', with
+#' steps of sd tau times the square root of the days in the interval over
+#' seven (a walk of the rate: see deaths-wrong-rate.R).
 #' @param correction an optional named list describing a report which
 #' corrects the records of some onset times: 'time_reported' (the day of that
 #' report), 'onset_times' (the onset times corrected) and any of 'wrong' (the
@@ -1888,7 +1905,9 @@ deaths_draws <- function(state, iteration) {
 #' (the cases and fatal cases whose onset was on the day), cfr,
 #' n_dated_by_death (the fatal cases recorded for the day which are dated by
 #' death), and the mean and sd of the delay from the day to being shown as
-#' dead)
+#' dead), and, where the rate of wrong records differs between intervals,
+#' 'wrong_rates' (a tibble of the last day of each interval, time_reported,
+#' and its rate, eta)
 #' @export
 #' @importFrom rlang .data
 simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
@@ -2093,6 +2112,21 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
   }
   day_counted <- ifelse(day > 0, day, day_before)
 
+  # the rate of wrong records of each interval between reports, given or
+  # drawn as a random walk on the log scale
+  is_wrong_walk <- !is.null(wrong) && (length(wrong$eta) > 1 || !is.null(wrong$tau))
+  if(is_wrong_walk) {
+    interval_days <- sort(unique(if(is.null(wrong$interval_days)) report_days
+                                 else wrong$interval_days))
+    wrong_rates <- wrong$eta
+    if(!length(wrong_rates) %in% c(1, length(interval_days)))
+      stop("The rate of wrong records must be one value or one for each interval between reports.")
+    wrong_rates <- rep_len(wrong_rates, length(interval_days))
+    if(!is.null(wrong$tau))
+      wrong_rates <- exp(log(wrong_rates[1]) + cumsum(c(0, stats::rnorm(
+        length(interval_days) - 1, 0, wrong$tau * sqrt(diff(interval_days) / 7)))))
+  }
+
   results <- purrr::map(seq_len(n_days), function(t) {
     is_day <- day == t
     days <- report_days[report_days >= t]
@@ -2123,8 +2157,13 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
                                               lower.tail=FALSE) +
             tail_share[t] * exp(-elapsed_after / reporting_tail$mean))
       }
-      entered <- rep(days_after, stats::rpois(
-        length(days_after), wrong$eta * sum(is_day) * p_first_reported))
+      # or at a constant rate, whatever the cases, or at the rate of the
+      # interval between reports in which each day falls
+      mean_entered <- if(!is.null(wrong$eta_bg)) rep(wrong$eta_bg, length(days_after))
+        else if(is_wrong_walk) wrong_rates[wrong_walk_interval(days_after, interval_days)] *
+          sum(is_day) * p_first_reported
+        else wrong$eta * sum(is_day) * p_first_reported
+      entered <- rep(days_after, stats::rpois(length(days_after), mean_entered))
       removed <- entered + stats::rgeom(length(entered), wrong$rho) + 1
       is_dead <- stats::runif(length(entered)) < wrong$delta
       f_present <- function(is_kind)
@@ -2146,6 +2185,9 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
         delay_dead_mean=mean(delay_dead[is_day & is_fatal]),
         delay_dead_sd=stats::sd(delay_dead[is_day & is_fatal])))
   })
-  list(snapshots=purrr::map_dfr(results, "snapshots"),
-       truth=purrr::map_dfr(results, "truth"))
+  out <- list(snapshots=purrr::map_dfr(results, "snapshots"),
+              truth=purrr::map_dfr(results, "truth"))
+  if(is_wrong_walk)
+    out$wrong_rates <- dplyr::tibble(time_reported=interval_days, eta=wrong_rates)
+  out
 }

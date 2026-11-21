@@ -3,9 +3,10 @@
 # helper-validation-spec.R). They are slow, so they run only when
 # VALIDATION_TIER asks for them:
 #   fast    T1-T10, the samplers and simulators one at a time (~15 min)
-#   medium  also M1-M6, whole-sampler runs with exact posteriors and Geweke's
-#           test (~20 min more)
-#   slow    also S2, S8 and S9, recovery of deaths-model fits (~5 h more)
+#   medium  also M1-M8, whole-sampler runs with exact posteriors and Geweke
+#           tests (~40 min more)
+#   slow    also S2, S6, S7, S8 and S9, recovery of deaths-model fits (~5 h
+#           more, each its own job on GitHub)
 #   all     also S1, simulation-based calibration (~1.5 h more)
 # Thresholds are fixed in advance (helper-validation-stats.R): a failure is a
 # finding to investigate, not a tolerance to retune.

@@ -333,13 +333,17 @@ deaths_triggered_step <- function(state, cases_true, reporting_by_onset,
 #' probability that a wrong record is shown as dead is drawn from its beta
 #' conditional distribution; eta, the expected number of wrong records
 #' entered for each genuine case reported, is drawn from its gamma
-#' conditional distribution; and rho, the daily probability a wrong record is
-#' removed, is updated by Metropolis steps on the logit scale.
+#' conditional distribution (or, where they arrive at a constant rate, that
+#' rate from its own, and where the rate follows a walk, the walk: see
+#' \code{deaths_wrong_rate_step}); and rho, the daily probability a wrong
+#' record is removed, is updated by Metropolis steps on the logit scale (see
+#' \code{deaths_wrong_rho_logp}).
 #'
 #' @inheritParams deaths_paths_step
 #' @param settings as returned by \code{deaths_settings}
 #' @param prior_parameters named list with elements 'eta_mu', 'eta_sigma',
-#' 'rho_alpha' and 'rho_beta' (see \code{prior_revision_parameters})
+#' 'rho_alpha' and 'rho_beta' (see \code{prior_revision_parameters}), and
+#' 'eta_bg_mu' and 'eta_bg_sigma' for a constant rate
 #' @param rho_step the standard deviation of the changes proposed in the
 #' logit of rho
 #'
@@ -349,51 +353,29 @@ deaths_wrong_step <- function(state, cases_true, reporting_by_onset,
                               rho_step=0.5) {
   if(!is_wrong_records(revision_parameters))
     return(list(state=state, revision_parameters=revision_parameters))
-  dated <- dated_counts(state)
-  cases_recorded <- cases_true - dated$out + dated$into
   # the uncorrected series are further series of reports with wrong records
-  sub <- uncorrected_state(state)
-  paths <- c(state$paths, sub$paths)
-  reports <- c(state$reports, sub$reports)
-  onset_times <- c(state$onset_times, sub$onset_times)
-  wrong_units <- c(state$wrong_units, sub$wrong_units)
-  cases_recorded <- c(cases_recorded, sub$cases_true)
-  reporting_by_onset <- rbind(
-    as.data.frame(reporting_by_onset[, c("mean", "sd")]),
-    as.data.frame(reporting_by_onset[sub$day, c("mean", "sd")]))
-  n_days <- length(onset_times)
-  f_total <- function(name) sum(purrr::map_dbl(paths, ~sum(.[[name]])))
+  series <- deaths_wrong_series(state, cases_true, reporting_by_onset)
+  f_total <- function(name) sum(purrr::map_dbl(series$paths, ~sum(.[[name]])))
   entered_alive <- f_total("wrong_entered_alive")
   entered_dead <- f_total("wrong_entered_dead")
   state$delta <- stats::rbeta(1, settings$wrong_dead_alpha + entered_dead,
                               settings$wrong_dead_beta + entered_alive)
 
-  exposure <- sum(cases_recorded *
-                    purrr::map_dbl(wrong_units, ~sum(.$unit)))
-  revision_parameters$eta <- stats::rgamma(
-    1,
-    shape=prior_parameters$eta_mu^2 / prior_parameters$eta_sigma^2 +
-      entered_alive + entered_dead,
-    rate=prior_parameters$eta_mu / prior_parameters$eta_sigma^2 + exposure)
+  if(wrong_rate_form(revision_parameters) == "cases") {
+    exposure <- sum(series$cases_recorded *
+                      purrr::map_dbl(series$wrong_units, ~sum(.$unit)))
+    revision_parameters$eta <- stats::rgamma(
+      1,
+      shape=prior_parameters$eta_mu^2 / prior_parameters$eta_sigma^2 +
+        entered_alive + entered_dead,
+      rate=prior_parameters$eta_mu / prior_parameters$eta_sigma^2 + exposure)
+  } else
+    revision_parameters <- deaths_wrong_rate_step(series, revision_parameters,
+                                                  prior_parameters,
+                                                  settings$n_parameter_steps)
 
-  # rho acts on the removal of wrong records present at a report and on how
-  # many of those entered since the report before are still present
-  f_logp <- function(rho) {
-    proposed <- revision_parameters
-    proposed$rho <- rho
-    logl <- sum(purrr::map_dbl(seq_len(n_days), function(k) {
-      path <- paths[[k]]
-      units <- wrong_entry_units(reports[[k]]$time_reported,
-                                 onset_times[k],
-                                 delay_of_onset(reporting_by_onset, k), proposed)
-      sum(dbinom_log_recycled(path$wrong_removed, path$wrong_before, units$w)) +
-        sum(stats::dpois(path$wrong_entered_alive + path$wrong_entered_dead,
-                         proposed$eta * cases_recorded[k] * units$unit, log=TRUE))
-    }))
-    logl + stats::dbeta(rho, prior_parameters$rho_alpha,
-                        prior_parameters$rho_beta, log=TRUE) +
-      log(rho) + log1p(-rho)
-  }
+  f_logp <- function(rho)
+    deaths_wrong_rho_logp(rho, series, revision_parameters, prior_parameters)
   rho <- revision_parameters$rho
   logp <- f_logp(rho)
   for(step in seq_len(settings$n_parameter_steps)) {

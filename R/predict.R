@@ -48,7 +48,7 @@ predict_state_from_draw <- function(variables, draw) {
   # wrong records and the effects of the day of the week on reporting
   revision <- variables$revision_current
   revision$lag_cache <- NULL
-  revision$eta <- draw$revisions$eta
+  revision <- wrong_rate_from_draw(revision, draw$revisions)
   revision$rho <- draw$revisions$rho
   values_drawn <- c(as.list(draw$reporting_effects), as.list(parameters))
   f_weekday <- function(prefix, current) {
@@ -155,11 +155,11 @@ predict_onset_terms <- function(prediction, k, days) {
   wrong <- NULL
   if(is_wrong_records(revision)) {
     dated <- dated_counts(state)
-    units <- wrong_entry_units(days, state$onset_times[k], reporting_parameters,
-                               revision)
+    units <- deaths_wrong_units(days, state$onset_times[k], reporting_parameters,
+                                revision)
     wrong <- list(
-      lambda=revision$eta *
-        (prediction$cases_true[k] - dated$out[k] + dated$into[k]) * units$unit,
+      lambda=wrong_entry_mean(
+        units, prediction$cases_true[k] - dated$out[k] + dated$into[k], revision),
       w=units$w, delta=state$delta, max_erroneous=prediction$max_erroneous)
   }
   list(survivals=survivals, wrong=wrong)

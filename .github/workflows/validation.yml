@@ -3,15 +3,17 @@
 # independent code. They are too slow for R-CMD-check, which skips them. Each group of
 # tests runs as its own job, in parallel, so each has GitHub's 6-hour limit to itself:
 #   T    T1-T10, the samplers and simulators one at a time (~30 min)
-#   M    M1-M6, whole-sampler runs with exact posteriors and Geweke's test (~45 min)
+#   M    M1-M8, whole-sampler runs with exact posteriors and Geweke tests (~1 h)
 #   S02  S2, recovery of a deaths-model fit (~5 h)
+#   S06  S6, recovery with wrong records at a constant rate (four chains in parallel)
+#   S07  S7, recovery with a walk of the rate of wrong records (four chains in parallel)
 #   S08  S8, recovery of a fit with a share of the tail of the reporting delay for
 #        each onset week, four chains in parallel (~4 h)
 #   S09  S9, recovery with a fraction dated by death varying by onset week (4 chains
 #        in parallel, each stopped at 4.5 h; ~1.5 h)
 #   S01  S1, simulation-based calibration (~3 h)
 # Pull requests and pushes to main run the medium tier (T and M); the slow tiers run on
-# demand: slow adds S02, S08 and S09, all adds S01.
+# demand: slow adds S02, S06, S07, S08 and S09, all adds S01.
 on:
   push:
     branches: [main, master]
@@ -39,8 +41,8 @@ jobs:
           case "${{ inputs.tier || 'medium' }}" in
             fast)   groups='["T"]' ;;
             medium) groups='["T", "M"]' ;;
-            slow)   groups='["T", "M", "S02", "S08", "S09"]' ;;
-            all)    groups='["T", "M", "S02", "S08", "S09", "S01"]' ;;
+            slow)   groups='["T", "M", "S02", "S06", "S07", "S08", "S09"]' ;;
+            all)    groups='["T", "M", "S02", "S06", "S07", "S08", "S09", "S01"]' ;;
           esac
           echo "groups=$groups" >> "$GITHUB_OUTPUT"
 

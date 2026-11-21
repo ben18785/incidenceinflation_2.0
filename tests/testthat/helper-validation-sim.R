@@ -89,6 +89,53 @@ sim_wrong_records <- function(t, I, rd, surv, eta, rho, delta = 0) {
   out
 }
 
+# ---- Wrong records at a constant rate (sensitivity_extensions.tex, S6) --------------
+# On each day k = t+1, ..., last, Poisson(eta_bg) wrong records are entered for onset day
+# t, whatever its cases (eq. s6-entered); withdrawn and shown dead as in
+# sim_wrong_records. Returns what sim_wrong_records returns.
+sim_wrong_records_constant <- function(t, rd, eta_bg, rho, delta = 0) {
+  out <- list(present = numeric(length(rd)), dead = numeric(length(rd)))
+  last <- max(rd)
+  if (eta_bg <= 0 || last < t + 1) return(out)
+  k <- (t + 1):last
+  n <- stats::rpois(length(k), eta_bg)
+  if (!sum(n)) return(out)
+  day <- rep(k, n)
+  life <- stats::rgeom(length(day), rho)          # days survived after entry
+  dead <- stats::runif(length(day)) < delta
+  for (j in seq_along(rd)) {
+    here <- day <= rd[j] & day + life >= rd[j]
+    out$present[j] <- sum(here); out$dead[j] <- sum(here & dead)
+  }
+  out
+}
+
+# ---- Wrong records at a rate which varies over the intervals between reports (S7) --
+# The interval of day k: the index of the first of all the report days on or after k, or
+# of the last for later days.
+sim_interval_of_day <- function(k, all_rd)
+  vapply(k, function(d) { j <- which(all_rd >= d)[1]; if (is.na(j)) length(all_rd) else j }, 0)
+
+# On each day k = t+1, ..., last, Poisson(eta_day(k) I [S(k-1-t) - S(k-t)]) wrong records
+# are entered for onset day t (eq. s7-entered), eta_day giving the rate of the interval
+# of each day; withdrawn and shown dead as in sim_wrong_records.
+sim_wrong_records_day <- function(t, I, rd, surv, eta_day, rho, delta = 0) {
+  out <- list(present = numeric(length(rd)), dead = numeric(length(rd)))
+  last <- max(rd)
+  if (last < t + 1) return(out)
+  k <- (t + 1):last
+  n <- stats::rpois(length(k), eta_day(k) * I * (surv(k - 1 - t) - surv(k - t)))
+  if (!sum(n)) return(out)
+  day <- rep(k, n)
+  life <- stats::rgeom(length(day), rho)
+  dead <- stats::runif(length(day)) < delta
+  for (j in seq_along(rd)) {
+    here <- day <= rd[j] & day + life >= rd[j]
+    out$present[j] <- sum(here); out$dead[j] <- sum(here & dead)
+  }
+  out
+}
+
 # Cases-only reports with wrong records (the S1 generative model).
 sim_reports_wrong <- function(I, report_days, delay, eta, rho) {
   surv <- function(d) ref_surv_case(d, delay$mean, delay$sd)
@@ -111,11 +158,13 @@ sim_reports_wrong <- function(I, report_days, delay, eta, rho) {
 # own delay T_C <= r - t + 1/2 or, if fatal and of the triggered kind (probability tau),
 # once its death is recorded (A.5). A fatal case is shown as dead once reported and its
 # death recorded. Wrong records as above, entered in proportion to S_C, each shown dead
-# with probability delta. S8: tail_share (one per onset day, or NULL) gives each case of
-# day t its case delay from sim_rdelay_tail, and S_C of the wrong records has the tail.
+# with probability delta; or, with eta_bg given, at the constant rate eta_bg (S6); or,
+# with eta_day given (a function of the day), in proportion to S_C at the rate of each
+# day (S7). S8: tail_share (one per onset day, or NULL) gives each case of day t its case
+# delay from sim_rdelay_tail, and S_C of the wrong records has the tail.
 sim_reports_deaths <- function(I, report_days, delay, cfr, pdie, rec_mean, rec_sd,
-                               tau = 1, eta = 0, rho = 0.5, delta = 0,
-                               tail_share = NULL, tail_mean = 1) {
+                               tau = 1, eta = 0, rho = 0.5, delta = 0, eta_bg = NULL,
+                               eta_day = NULL, tail_share = NULL, tail_mean = 1) {
   q <- if (is.null(tail_share)) rep(0, length(I)) else tail_share
   rows <- list(); fatal <- integer(length(I))
   for (t in seq_along(I)) {
@@ -138,7 +187,9 @@ sim_reports_deaths <- function(I, report_days, delay, cfr, pdie, rec_mean, rec_s
       rep <- own | (rec & trig)
       cr[j] <- sum(rep); dr[j] <- sum(rep & rec)
     }
-    w <- sim_wrong_records(t, n, rd, surv, eta, rho, delta)
+    w <- if (!is.null(eta_bg)) sim_wrong_records_constant(t, rd, eta_bg, rho, delta)
+      else if (!is.null(eta_day)) sim_wrong_records_day(t, n, rd, surv, eta_day, rho, delta)
+      else sim_wrong_records(t, n, rd, surv, eta, rho, delta)
     rows[[t]] <- data.frame(time_onset = t, time_reported = rd,
                             cases_reported = cr + w$present, deaths_reported = dr + w$dead)
   }

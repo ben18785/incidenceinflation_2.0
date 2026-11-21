@@ -26,14 +26,17 @@ for each onset time: the delay from onset to a case being reported}
 
 \item{revision_parameters}{NULL, or a named list which can contain 'eta'
 and 'rho' (if wrong records are allowed for: see
-\code{observation_process_revisions_logp}) and anything which alters the
+\code{observation_process_revisions_logp}), or 'background_rate' or
+'wrong_walk' in place of 'eta' for another form of the rate at which they
+are entered (see deaths-wrong-rate.R), and anything which alters the
 reporting delay (see \code{log_undetected_days})}
 
 \item{settings}{as returned by \code{deaths_settings}, with elements
 'weekday_sd' and 'weekday_step' added}
 
 \item{prior_parameters}{named list with elements 'eta_mu', 'eta_sigma',
-'rho_alpha' and 'rho_beta' (see \code{prior_revision_parameters})}
+'rho_alpha' and 'rho_beta' (see \code{prior_revision_parameters}), and
+'eta_bg_mu' and 'eta_bg_sigma' for a constant rate}
 
 \item{rho_step}{the standard deviation of the changes proposed in the
 logit of rho}

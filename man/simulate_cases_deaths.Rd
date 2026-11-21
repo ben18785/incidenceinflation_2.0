@@ -58,7 +58,16 @@ are recorded, a Poisson number of wrong records is entered, with mean eta
 times the cases recorded for the day times the probability a case is first
 reported on that day (allowing for reporting_tail). Each is shown as dead
 with probability delta and is removed with probability rho on each later
-day.}
+day. With 'eta_bg' in place of
+'eta', the wrong records entered on each day after the day for which cases
+are recorded are Poisson with mean eta_bg, whatever the cases (a constant
+rate: see deaths-wrong-rate.R). With 'eta' one value for each interval
+between reports, the intervals ending on the days 'interval_days' (by
+default report_days; days after the last have the last rate), the rate on
+each day is that of its interval; with 'tau' too, the rates are drawn as a
+random walk on the log scale starting from the first value of 'eta', with
+steps of sd tau times the square root of the days in the interval over
+seven (a walk of the rate: see deaths-wrong-rate.R).}
 
 \item{correction}{an optional named list describing a report which
 corrects the records of some onset times: 'time_reported' (the day of that
@@ -111,7 +120,9 @@ cases and fatal cases recorded for the day), cases_onset and deaths_onset
 (the cases and fatal cases whose onset was on the day), cfr,
 n_dated_by_death (the fatal cases recorded for the day which are dated by
 death), and the mean and sd of the delay from the day to being shown as
-dead)
+dead), and, where the rate of wrong records differs between intervals,
+'wrong_rates' (a tibble of the last day of each interval, time_reported,
+and its rate, eta)
 }
 \description{
 Each case is reported after a delay from onset. A case dies with a

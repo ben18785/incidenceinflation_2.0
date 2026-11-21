@@ -1235,7 +1235,25 @@ metropolis_step_revisions <- function(
 #' and the parameters of wrong records only, fatal cases dated by death being
 #' ignored in them, and the results then include "deaths_uncorrected". Wrong records (initial_revision_parameters with 'eta'
 #' and 'rho') and effects of the day of the week ('weekday') are allowed for.
-#' This requires priors$reporting_changepoints.
+#' This requires priors$reporting_changepoints. The form of the rate at which
+#' wrong records are entered is set by priors$revisions$wrong_rate (see
+#' deaths-wrong-rate.R and \code{wrong_rate_settings}): "cases" (the default,
+#' in proportion to the genuine cases being reported), "constant" (at a
+#' constant rate 'eta_bg' for each day recorded for and each later day, with
+#' a gamma prior of mean priors$revisions$eta_bg_mu and sd eta_bg_sigma, and
+#' a starting value initial_revision_parameters$eta_bg, by default the mean of
+#' the prior) or "walk" (in proportion to the genuine cases being reported,
+#' at a rate which is constant over each interval between reports, of every
+#' onset time, and whose log follows a random walk; see
+#' \code{wrong_rate_settings} for its priors, and \code{initial_wrong_rate}
+#' for its starting values, which by default are all 'eta'; the sd of the
+#' changes proposed in the log of the sd of its steps is
+#' revision_metropolis_parameters$tau_eta_step, 0.3 by default). With these
+#' the 'revisions' of the results have an 'eta' of NA and hold 'eta_bg', or
+#' 'tau_eta' and 'eta_<day>' for the interval ending on each report day, and
+#' the results include "wrong_cap", the probability that more wrong records
+#' are present than max_erroneous at the posterior mean (see
+#' \code{wrong_records_cap}).
 #' @param progress_file an optional path of a file to which progress is
 #' written (the number of iterations completed and the time taken), so that
 #' a chain run in the background or in parallel can be followed. The file is
@@ -1381,12 +1399,24 @@ mcmc_single <- function(
   is_revisions <- !is.null(initial_revision_parameters)
   revision_current <- initial_revision_parameters
   max_erroneous <- 3
+  # the form of the rate at which wrong records are entered (deaths-wrong-rate.R)
+  wrong_rate_options <- wrong_rate_settings(priors$revisions, is_deaths)
+  if(wrong_rate_options$form != "cases" & !is_revisions)
+    stop("A rate of wrong records other than 'cases' needs initial_revision_parameters.")
   if(is_revisions) {
     if(!"revisions" %in% names(priors))
       stop("If revisions to reported cases are allowed a prior must be provided for the revision parameters.")
     if(maximise)
       stop("Maximisation when revisions to reported cases are allowed is not yet allowed.")
-    if(revision_current$eta <= 0 | revision_current$rho <= 0 | revision_current$rho >= 1)
+    # a walk of the rate has an interval ending at each report, of every
+    # onset time
+    if(wrong_rate_options$form != "cases")
+      revision_current <- initial_wrong_rate(
+        revision_current, wrong_rate_options,
+        c(snapshot_with_Rt_index_df$time_reported, deaths$uncorrected$time_reported),
+        ifelse(is.null(revision_metropolis_parameters$tau_eta_step), 0.3,
+               revision_metropolis_parameters$tau_eta_step))
+    else if(revision_current$eta <= 0 | revision_current$rho <= 0 | revision_current$rho >= 1)
       stop("Initial revision parameters must satisfy: eta > 0 and 0 < rho < 1.")
     if("max_erroneous" %in% names(priors))
       max_erroneous <- priors$max_erroneous
@@ -1754,8 +1784,10 @@ mcmc_single <- function(
       if(is_uncorrected)
         uncorrected_samples[[i]] <- uncorrected_draws(deaths_state, i)
       if(is_revisions) {
-        revision_tmp <- dplyr::tibble(eta=revision_current$eta,
-                                      rho=revision_current$rho, pi=0, iteration=i)
+        revision_tmp <- if(wrong_rate_options$form != "cases")
+          wrong_rate_draws(revision_current, i)
+        else dplyr::tibble(eta=revision_current$eta,
+                           rho=revision_current$rho, pi=0, iteration=i)
         revision_samples <- if(i == 1) revision_tmp
         else dplyr::bind_rows(revision_samples, revision_tmp)
       }
@@ -2226,6 +2258,15 @@ mcmc_single <- function(
       check=state_check)
     list_results$iterations_done <- iterations_done
   }
+
+  # with another form of the rate of wrong records, how likely more are
+  # present than are allowed for, at the posterior mean of the draws made
+  if(is_deaths & wrong_rate_options$form != "cases")
+    list_results$wrong_cap <- wrong_records_cap(
+      list(revision_current=revision_current, is_deaths=is_deaths,
+           deaths_state=deaths_state, deaths_cases_true=deaths_cases_true,
+           deaths_running_df=deaths_running_df, max_erroneous=max_erroneous),
+      revision_samples)
 
   list_results
 }

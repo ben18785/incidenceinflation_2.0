@@ -12,8 +12,8 @@ skip_validation("slow")
 # q_t is the share of the onset week of day t (weeks of 7 days from day 1), rising
 # linearly from 0.02 in week 1 to 0.10 in week 12. Reports with gaps drawn from 1-7 days
 # from day 2 to day 80.
-# Fit: four chains of 2000 iterations, run in parallel (S2's one chain of 3000 takes about
-# 5 h on GitHub, whose limit for a job is 6 h), the tail starting from a single share of 0.036 and
+# Fit: four chains of 2000 iterations, run in parallel, each stopped at 5 h (GitHub's limit
+# for a job is 6 h), the second halves taken to the iterations all have done; the tail starting from a single share of 0.036 and
 # a mean of 30; prior of the walk as in the note (logit q_(1) ~ N(logit 0.036, 1.2^2),
 # tau_q ~ half-normal(0.15)); gamma prior of the mean of the tail with mean 30 and sd 20.
 # Checks, on the second half of each chain: max split R-hat < 1.2 over the CFR, the
@@ -38,14 +38,14 @@ s08_data <- function() {
        cases = sim$cases, deaths = sim$deaths)
 }
 
-s08_fit <- function(dat, niter, chain) {
+s08_fit <- function(dat, niter, chain, time_limit = NULL) {
   snap <- dat$cases; snap$Rt_index <- 1L
   last <- tapply(snap$cases_reported, snap$time_onset, function(x) x[length(x)])
   init_cases <- tibble::tibble(time_onset = 1:dat$Tn,
                                cases_true = as.integer(ceiling(c(1.3, 1.1, 1.5, 1.2)[chain] * last) + 5))
   set.seed(8802 + chain)
   mcmc_single(
-    niter, snap,
+    niter, snap, time_limit = time_limit,
     priors = list(Rt = list(shape = 1, rate = 1),
                   reporting = list(mean_mu = 5, mean_sigma = 3, sd_mu = 3, sd_sigma = 2),
                   max_cases = 400, Rt_changepoints = list(), reporting_changepoints = list(),
@@ -78,13 +78,19 @@ test_that("S8 (C9) the deaths model with a share of the tail for each onset week
   niter <- 2000
   n_chains <- 4
   t0 <- proc.time()[["elapsed"]]
-  fits <- parallel::mclapply(seq_len(n_chains), function(chain) s08_fit(dat, niter, chain),
+  # each chain stops at the time limit (minutes), inside the job's limit of six hours
+  fits <- parallel::mclapply(seq_len(n_chains), function(chain) s08_fit(dat, niter, chain, 300),
                              mc.cores = min(n_chains, parallel::detectCores()))
   failed <- vapply(fits, function(f) inherits(f, "try-error"), logical(1))
   expect(!any(failed), paste("S8: a chain failed:", paste(unlist(fits[failed]), collapse = "; ")))
   if (any(failed)) return(invisible())
+  # the iterations all the chains have done
+  niter <- min(vapply(fits, function(fit) max(col_of(fit$deaths, "iteration")), 0))
   note("S8: %d chains of %d iterations took %.1f min", n_chains, niter,
        (proc.time()[["elapsed"]] - t0) / 60)
+  expect(niter >= 500, sprintf("S8: only %d iterations done in each chain", niter))
+  fits <- lapply(fits, function(fit) lapply(fit, function(x)
+    if (is.data.frame(x) && "iteration" %in% names(x)) x[col_of(x, "iteration") <= niter, ] else x))
 
   # the second half of each chain of a quantity, and its chain
   f_kept <- function(f_draws) {

@@ -46,7 +46,7 @@
 #' \code{dated_fraction_marginal}. By default FALSE, the changes are made at
 #' the current fraction) and 'ridge' (NULL, the default, or TRUE or a named
 #' list of settings for the joint move of \code{deaths_ridge_step}, which
-#' needs the exact form and a single fraction: see \code{ridge_settings})
+#' needs the exact form: see \code{ridge_settings})
 #' and 'position' (NULL, the default, or TRUE or a named list: those cases
 #' are then recorded for a day part of the way from onset to death, rather
 #' than for the day of death, and are reported after the delay from their
@@ -155,8 +155,6 @@ dated_by_death_settings <- function(n_days, dated, onset_to_death=NULL) {
   ridge <- ridge_settings(dated$ridge)
   if(!is.null(ridge) & !is_exact)
     stop("The joint move of the fraction dated by death and the delay to a death being recorded needs the exact form.")
-  if(!is.null(ridge) & !is.null(walk))
-    stop("The joint move of the fraction dated by death and the delay to a death being recorded is not allowed for with a fraction which varies by onset week.")
   out <- list(fraction=rep_len(fraction, n_days),
               fraction_prior=fraction_prior,
               mean=dated$mean, sd=dated$sd,
@@ -268,8 +266,11 @@ dated_position_settings <- function(supplied, shape, rate, max_lag=NULL) {
 #' and 1.6), 'step_sd_scale' (the scale of the half-normal prior of the
 #' standard deviation of the weekly steps, by default 0.3), 'week' (the days
 #' in a week, 7), 'rw_sd_step' (the standard deviation of the changes
-#' proposed in the log of the standard deviation of the steps, 0.3) and
-#' 'n_steps' (the updates in each iteration, 1); and the values to start
+#' proposed in the log of the standard deviation of the steps, 0.3),
+#' 'n_steps' (the updates in each iteration, 1) and 'ridge_slope' (the change
+#' in the logit of every week's fraction, in the joint move of
+#' \code{deaths_ridge_step}, for each unit of change in the share of fatal
+#' cases dated by death, 5, about 1 / (f (1 - f)) for f near 0.2-0.3); and the values to start
 #' from: 'logit_fraction' (for each week, from setting 'initial', the
 #' starting fraction, by default 0.2: a single value or one for each onset
 #' time, of which the mean of each week is taken), 'step_sd' (from setting
@@ -277,7 +278,8 @@ dated_position_settings <- function(supplied, shape, rate, max_lag=NULL) {
 #' onset time)
 dated_walk_settings <- function(n_days, supplied) {
   walk <- list(first_mean=0, first_sd=1.6, step_sd_scale=0.3, initial=0.2,
-               initial_step_sd=0.2, week=7, rw_sd_step=0.3, n_steps=1)
+               initial_step_sd=0.2, week=7, rw_sd_step=0.3, n_steps=1,
+               ridge_slope=5)
   if(isTRUE(supplied))
     supplied <- list()
   if(!is.list(supplied))
@@ -288,7 +290,7 @@ dated_walk_settings <- function(n_days, supplied) {
                 paste(unknown, collapse=", "), "."))
   walk[names(supplied)] <- supplied
   single <- c("first_mean", "first_sd", "step_sd_scale", "initial_step_sd",
-              "week", "rw_sd_step", "n_steps")
+              "week", "rw_sd_step", "n_steps", "ridge_slope")
   if(any(lengths(walk[single]) != 1) || any(!is.finite(unlist(walk[single]))))
     stop("Each setting of the walk of the fraction dated by death but its starting value must be a single number.")
   if(any(unlist(walk[setdiff(single, "first_mean")]) <= 0))

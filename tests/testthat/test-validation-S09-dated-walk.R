@@ -13,8 +13,9 @@ skip_validation("slow")
 # (days 43-80), and those of the history with 0.2. Reports with gaps drawn from 1-7 days
 # from day 2 to day 80 (about 25).
 # Fit: four chains of mcmc_single with misdating in the exact form and the fraction a
-# random walk over onset weeks (dated_by_death fraction = list(walk = TRUE)), the
-# recording delay constant; at most 4 wrong records present (the largest fall in the data
+# random walk over onset weeks (dated_by_death fraction = list(walk = TRUE)) and the
+# joint move along the ridge (which shifts the whole walk; without it the chains did not
+# mix, split R-hat 2.6 for the CFR), the recording delay constant; at most 4 wrong records present (the largest fall in the data
 # is 2; the exact form is slow with many more). About 0.5-1 s an iteration on a Mac.
 # Checks: max split R-hat < 1.2 over the CFR, the fraction of onset days 28 and 56, the
 # sd of the walk's steps and the true cases of the last 14 onset days in total; the
@@ -61,7 +62,8 @@ s9_chain <- function(dat, niter, seed, time_limit) {
                                   initial_delay = list(mean = 3, sd = 2),
                                   delay_prior = list(mean_mu = 3, mean_sigma = 3, sd_mu = 2, sd_sigma = 2),
                                   delay_changepoints = FALSE,
-                                  dated_by_death = list(fraction = list(walk = TRUE), exact = TRUE),
+                                  dated_by_death = list(fraction = list(walk = TRUE), exact = TRUE,
+                                                        ridge = TRUE),
                                   triggered = list(alpha = 1, beta = 1, initial = 1, step = 0.1, n_steps = 0),
                                   wrong_dead_alpha = 1, wrong_dead_beta = 1)))
 }
@@ -106,6 +108,9 @@ test_that("S9 a fraction dated by death which varies by onset week is recovered 
     "true cases of the last 14 onset days" = lapply(fits, f_last_cases))
   rhat <- vapply(series, function(x) split_rhat(unlist(x), rep(seq_along(x), lengths(x))), 0)
   for (name in names(rhat)) note("S9 split R-hat, %s: %.3f", name, rhat[[name]])
+  for (name in names(series))
+    note("S9 chain means, %s: %s", name,
+         paste(sprintf("%.4g", vapply(series[[name]], mean, 0)), collapse = " "))
   rhat[is.na(rhat)] <- Inf   # too few draws to tell
   expect(max(rhat) < 1.2, sprintf("S9: max split R-hat %.3f (%s) is not below 1.2",
                                   max(rhat), names(rhat)[which.max(rhat)]))

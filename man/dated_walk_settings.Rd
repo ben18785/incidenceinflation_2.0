@@ -17,8 +17,11 @@ normal prior of the logit of the fraction of the first week, by default 0
 and 1.6), 'step_sd_scale' (the scale of the half-normal prior of the
 standard deviation of the weekly steps, by default 0.3), 'week' (the days
 in a week, 7), 'rw_sd_step' (the standard deviation of the changes
-proposed in the log of the standard deviation of the steps, 0.3) and
-'n_steps' (the updates in each iteration, 1); and the values to start
+proposed in the log of the standard deviation of the steps, 0.3),
+'n_steps' (the updates in each iteration, 1) and 'ridge_slope' (the change
+in the logit of every week's fraction, in the joint move of
+\code{deaths_ridge_step}, for each unit of change in the share of fatal
+cases dated by death, 5, about 1 / (f (1 - f)) for f near 0.2-0.3); and the values to start
 from: 'logit_fraction' (for each week, from setting 'initial', the
 starting fraction, by default 0.2: a single value or one for each onset
 time, of which the mean of each week is taken), 'step_sd' (from setting

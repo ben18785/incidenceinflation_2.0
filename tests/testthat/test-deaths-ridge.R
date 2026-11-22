@@ -216,3 +216,93 @@ test_that("a fit with the joint move runs and can be taken up again", {
     expect_equal(dplyr::bind_rows(first[[name]], second[[name]]), whole[[name]],
                  info=name)
 })
+
+# with a fraction which varies by onset week (S9 of the sensitivity analyses):
+# the move shifts the whole walk on the logit scale
+ridge_walk_state <- function() {
+  set.seed(3)
+  fit <- ridge_fit(ridge_example(), 4, fraction=list(walk=list(initial=0.3)),
+                   return_state=TRUE)
+  v <- fit$state$variables
+  list(state=v$deaths_state, cases_true=v$deaths_cases_true,
+       reporting_by_onset=v$deaths_running_df, revision=v$revision_current,
+       settings=v$deaths_options,
+       renewal=dated_renewal(rep(1, length(v$deaths_cases_true)), 10, TRUE,
+                             list(mean=5, sd=3), 40, v$cases_before))
+}
+
+test_that("with a fraction which varies by onset week, the joint move shifts its walk and can be reversed", {
+  x <- ridge_walk_state()
+  walk <- x$state$dated$walk
+  expect_false(is.null(walk))
+  expect_gt(length(walk$logit_fraction), 1)
+  n_fatal <- sum(x$state$deaths_true)
+  logp <- ridge_logp(x$state, x$cases_true, x$renewal, x$settings)$logp
+  set.seed(12)
+  for(sign in c(1, -1)) {
+    # a move which the reports allow (some are impossible, and rejected)
+    for(attempt in 1:20) {
+      forward <- ridge_propose(x$state, x$cases_true, x$reporting_by_onset,
+                               x$revision, sign, 6, 0.04)
+      expect_false(is.null(forward))
+      logp_forward <- ridge_logp(forward$state, forward$cases_true, x$renewal,
+                                 x$settings)$logp
+      if(is.finite(logp_forward))
+        break
+    }
+    shifted <- forward$state$dated$walk
+    expect_equal(shifted$logit_fraction - walk$logit_fraction,
+                 rep(walk$ridge_slope * sign * 6 / n_fatal, length(walk$logit_fraction)))
+    expect_equal(shifted$step_sd, walk$step_sd)
+    expect_equal(forward$state$dated$fraction,
+                 stats::plogis(shifted$logit_fraction[walk$week_of_day]))
+    # the shift of the walk adds nothing to the Jacobian
+    expect_equal(forward$log_jacobian,
+                 (nrow(x$state$recording$parameters) + 1) *
+                   (x$state$dated$ridge$slope * sign * 6 / n_fatal + 0.04))
+    undo <- purrr::map(rev(forward$moves), ~list(type="relabel", day=.$day, lag=.$lag,
+                                                lag_to=NA, sign=-sign))
+    back <- ridge_propose(forward$state, forward$cases_true, x$reporting_by_onset,
+                          x$revision, -sign, 6, -0.04, undo)
+    for(name in c("lags", "out", "into", "unseen", "inflow", "fraction"))
+      expect_equal(back$state$dated[[name]], x$state$dated[[name]], info=name)
+    expect_equal(back$state$dated$walk$logit_fraction, walk$logit_fraction)
+    expect_equal(back$state$recording$parameters, x$state$recording$parameters)
+    expect_equal(back$log_q, -forward$log_q)
+    expect_equal(back$log_jacobian, -forward$log_jacobian)
+    expect_true(is.finite(logp) & is.finite(logp_forward))
+    expect_equal((logp_forward - logp + forward$log_jacobian + forward$log_q) +
+                   (logp - logp_forward + back$log_jacobian + back$log_q), 0)
+  }
+})
+
+test_that("with a fraction which varies by onset week, the log-probability of the joint move has the prior of the walk", {
+  x <- ridge_walk_state()
+  state <- x$state
+  walk <- state$dated$walk
+  terms <- ridge_logp(state, x$cases_true, x$renewal, x$settings)
+  recording <- state$recording
+  prior <- reporting_centre_logp_prior(recording$centre, recording$spread,
+                                       x$settings$delay_prior,
+                                       x$settings$delay_changepoints$spread_sd) +
+    sum(reporting_segments_logp_prior(recording$parameters, recording$centre,
+                                      recording$spread)) +
+    stats::dnorm(walk$logit_fraction[1], walk$first_mean, walk$first_sd, log=TRUE) +
+    sum(stats::dnorm(diff(walk$logit_fraction), 0, walk$step_sd, log=TRUE))
+  expect_equal(terms$logp,
+               prior + dated_logp(state, x$cases_true, cohorts=integer(0)) +
+                 dated_logp(state, x$cases_true, days=integer(0)) +
+                 dated_renewal_logp(x$cases_true, x$renewal))
+  # the walk enters through the fraction of each onset day
+  state$dated$walk$logit_fraction <- walk$logit_fraction + 0.3
+  state$dated$fraction <- stats::plogis(state$dated$walk$logit_fraction[walk$week_of_day])
+  expect_false(isTRUE(all.equal(ridge_logp(state, x$cases_true, x$renewal, x$settings)$logp,
+                                terms$logp)))
+})
+
+test_that("a fit with the joint move and a fraction which varies by onset week runs", {
+  set.seed(6)
+  fit <- ridge_fit(ridge_example(), 12, fraction=list(walk=TRUE))
+  expect_gt(sum(fit$deaths_parameters$ridge_accepted), 0)
+  expect_true(all(is.finite(fit$deaths$dated_fraction)))
+})

@@ -4,7 +4,7 @@
 # tests runs as its own job, in parallel, so each has GitHub's 6-hour limit to itself:
 #   T    T1-T10, the samplers and simulators one at a time (~30 min)
 #   M    M1-M9, whole-sampler runs with exact posteriors and Geweke tests (~1 h)
-#   S02  S2, recovery of a deaths-model fit (~5 h)
+#   S02  S2, recovery of a deaths-model fit (stopped at 5 h 20 min)
 #   S05  S5, recovery with misdated cases recorded part of the way to death (4 chains
 #        in parallel, each stopped at 4.5 h; ~3 h)
 #   S06  S6, recovery with wrong records at a constant rate (four chains in parallel)
@@ -15,7 +15,8 @@
 #        in parallel, each stopped at 4.5 h; ~1.5 h)
 #   S01  S1, simulation-based calibration (~3 h)
 # Pull requests and pushes to main run the medium tier (T and M); the slow tiers run on
-# demand: slow adds S02 and S05-S09, all adds S01.
+# demand: slow adds S02 and S05-S09, all adds S01. On demand, 'groups' (e.g. "M, S09")
+# runs only those of the tier's groups.
 on:
   push:
     branches: [main, master]
@@ -29,6 +30,11 @@ on:
         default: medium
         type: choice
         options: [fast, medium, slow, all]
+      groups:
+        description: "Only these groups of the tier, separated by commas (empty: all of them)"
+        required: false
+        default: ""
+        type: string
 
 name: validation
 
@@ -46,6 +52,10 @@ jobs:
             slow)   groups='["T", "M", "S02", "S05", "S06", "S07", "S08", "S09"]' ;;
             all)    groups='["T", "M", "S02", "S05", "S06", "S07", "S08", "S09", "S01"]' ;;
           esac
+          only="${{ inputs.groups }}"
+          if [ -n "$only" ]; then
+            groups=$(python3 -c 'import json, sys; tier = json.loads(sys.argv[1]); only = [g.strip() for g in sys.argv[2].split(",") if g.strip()]; print(json.dumps([g for g in tier if g in only]))' "$groups" "$only")
+          fi
           echo "groups=$groups" >> "$GITHUB_OUTPUT"
 
   validation:

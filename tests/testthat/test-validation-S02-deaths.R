@@ -56,6 +56,8 @@ test_that("S2 mcmc_single deaths model recovers the truth on one dataset (99% in
     print_to_screen = FALSE, cases_before = dat$hist,
     initial_revision_parameters = list(eta = 0.05, rho = 0.3),
     return_state = TRUE,
+    # stops in time for the job's limit of six hours on GitHub
+    time_limit = 320,
     deaths = list(snapshot = dat$deaths,
                   settings = list(cfr_changepoints = FALSE, initial_cfr = 0.45,
                                   onset_to_death = list(mean = 9.3, sd = 5.5, max_lag = 36),
@@ -64,7 +66,10 @@ test_that("S2 mcmc_single deaths model recovers the truth on one dataset (99% in
                                   delay_changepoints = list(min_length = 20, first_length = 20),
                                   triggered = list(alpha = 1, beta = 1, initial = 1, step = 0.1, n_steps = 0),
                                   wrong_dead_alpha = 1, wrong_dead_beta = 1)))
-  note("S2: %d iterations took %.1f min", niter, (proc.time()[["elapsed"]] - t0) / 60)
+  # the iterations done before the time limit
+  done <- max(col_of(out$deaths, "iteration"))
+  note("S2: %d iterations took %.1f min", done, (proc.time()[["elapsed"]] - t0) / 60)
+  expect(done >= 1000, sprintf("S2: only %d iterations done", done))
 
   ci_check <- function(x, truth, label) {
     ci <- stats::quantile(x, c(0.005, 0.995), names = FALSE)
@@ -73,12 +78,12 @@ test_that("S2 mcmc_single deaths model recovers the truth on one dataset (99% in
            sprintf("S2 %s: truth %.4g outside the 99%% interval [%.4g, %.4g] (posterior mean %.4g)",
                    label, truth, ci[1], ci[2], mean(x)))
   }
-  ci_check(m_series(out$deaths, 1, "cfr", niter), 0.45, "CFR")
-  ci_check(m_series(out$deaths, 20, "delay_mean", niter), 3, "recording delay mean, onset day 20")
-  ci_check(m_series(out$deaths, 60, "delay_mean", niter), 6, "recording delay mean, onset day 60")
-  ci_check(m_kept(out$revisions, "eta", niter), 0.05, "eta")
-  for (t in c(10, 40, 70)) ci_check(m_series(out$Rt, t, "Rt", niter), dat$R[t], sprintf("R_%d", t))
-  cs <- out$cases[col_of(out$cases, "iteration") > niter / 2 & col_of(out$cases, "time_onset") >= dat$Tn - 13, ]
+  ci_check(m_series(out$deaths, 1, "cfr", done), 0.45, "CFR")
+  ci_check(m_series(out$deaths, 20, "delay_mean", done), 3, "recording delay mean, onset day 20")
+  ci_check(m_series(out$deaths, 60, "delay_mean", done), 6, "recording delay mean, onset day 60")
+  ci_check(m_kept(out$revisions, "eta", done), 0.05, "eta")
+  for (t in c(10, 40, 70)) ci_check(m_series(out$Rt, t, "Rt", done), dat$R[t], sprintf("R_%d", t))
+  cs <- out$cases[col_of(out$cases, "iteration") > done / 2 & col_of(out$cases, "time_onset") >= dat$Tn - 13, ]
   tot <- tapply(col_of(cs, "cases_true"), col_of(cs, "iteration"), sum)
   ci_check(as.numeric(tot), sum(dat$I[(dat$Tn - 13):dat$Tn]), "true cases of the last 14 onset days")
 })

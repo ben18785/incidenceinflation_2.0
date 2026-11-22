@@ -115,8 +115,9 @@ test_that("the settings of a fraction which varies by onset week are checked", {
   expect_error(f_error(list(walk=list(initial=rep(0.2, 7)))), "one for each onset time")
   # what is not allowed for with a fraction which varies
   expect_error(f_error(list(walk=TRUE), collapse_fraction=TRUE), "cannot be integrated out")
-  expect_error(f_error(list(walk=TRUE), exact=TRUE, ridge=TRUE),
-               "not allowed for with a fraction which varies")
+  # the joint move along the ridge is allowed for, in the exact form
+  expect_equal(f_error(list(walk=TRUE), exact=TRUE, ridge=TRUE)$ridge, ridge_settings(TRUE))
+  expect_equal(f_error(list(walk=TRUE))$walk$ridge_slope, 5)
   expect_error(relaxed_stan_data(
     dplyr::tibble(time_onset=1, time_reported=1, cases_reported=1), list(mean=5, sd=3),
     deaths_df=dplyr::tibble(time_onset=1, time_reported=1, deaths_reported=0),

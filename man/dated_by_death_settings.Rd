@@ -39,7 +39,7 @@ integrated out, and the fraction is then drawn exactly given them: see
 \code{dated_fraction_marginal}. By default FALSE, the changes are made at
 the current fraction) and 'ridge' (NULL, the default, or TRUE or a named
 list of settings for the joint move of \code{deaths_ridge_step}, which
-needs the exact form and a single fraction: see \code{ridge_settings})
+needs the exact form: see \code{ridge_settings})
 and 'position' (NULL, the default, or TRUE or a named list: those cases
 are then recorded for a day part of the way from onset to death, rather
 than for the day of death, and are reported after the delay from their

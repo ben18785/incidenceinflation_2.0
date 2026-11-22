@@ -19,7 +19,12 @@ skip_validation("slow")
 # and dated_by_death position = TRUE (the default a1 = a / 2), the recording delay
 # constant; at most 4 wrong records present (as in S9: the exact form is slow with many
 # more); three changes of the labels proposed for each onset time in each iteration (the
-# labels mix slowly). Each chain stops at 4.5 hours.
+# labels mix slowly). Each chain stops at 4.5 hours. The chains start near the truth (the
+# true cases, floored at the most reported, and a fraction of 0.35), as fits of S5 start
+# from the main fit: from overdispersed starting values every chain fell into a region
+# where the gamma delay from death to recording collapses (shape near 0, about half the
+# fatal cases misdated; joint log density 1,000-3,000 below the truth) and did not leave it
+# in 4.5 hours, though a chain started at the truth stays there.
 # Checks: max split R-hat < 1.2 over the CFR, the fraction misdated, the mean delay from
 # death to recording and the true cases of the last 14 onset days in total; the central
 # 99% interval (second half of each chain) contains the truth for each of them. A single
@@ -42,8 +47,10 @@ s5_data <- function() {
 
 s5_chain <- function(dat, niter, seed, time_limit) {
   snap <- dat$sim$cases; snap$Rt_index <- 1L
-  last <- tapply(snap$cases_reported, snap$time_onset, function(x) x[length(x)])
-  init_cases <- tibble::tibble(time_onset = 1:dat$Tn, cases_true = as.integer(ceiling(1.3 * last) + 5))
+  most <- tapply(snap$cases_reported, snap$time_onset, max)
+  init_cases <- tibble::tibble(time_onset = 1:dat$Tn,
+                               cases_true = as.integer(pmax(dat$I, most[as.character(1:dat$Tn)],
+                                                            na.rm = TRUE)))
   set.seed(seed)
   mcmc_single(
     niter, snap,
@@ -65,7 +72,7 @@ s5_chain <- function(dat, niter, seed, time_limit) {
                                   initial_delay = list(mean = 3, sd = 2),
                                   delay_prior = list(mean_mu = 3, mean_sigma = 3, sd_mu = 2, sd_sigma = 2),
                                   delay_changepoints = FALSE,
-                                  dated_by_death = list(fraction = list(), exact = TRUE,
+                                  dated_by_death = list(fraction = list(initial = 0.35), exact = TRUE,
                                                         position = TRUE, n_moves = 3 * dat$Tn),
                                   triggered = list(alpha = 1, beta = 1, initial = 1, step = 0.1, n_steps = 0),
                                   wrong_dead_alpha = 1, wrong_dead_beta = 1)))

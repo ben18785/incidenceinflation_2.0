@@ -11,8 +11,9 @@ skip_validation("slow")
 # between reports containing day k: 0.06 for the intervals ending on or before day 40 and
 # 0.12, double, after; withdrawn with probability rho = 0.3 on each later day and shown
 # dead with probability delta = 0.3.
-# Fit: four chains of 1500 iterations, run in parallel, with the default priors of the
-# walk; the second half of each kept.
+# Fit: four chains of up to 1500 iterations, run in parallel, with the default priors of
+# the walk, each stopped at 5 h (GitHub's limit for a job is 6 h); the second halves
+# taken to the iterations all have done.
 # Checks: the central 99% interval of the pooled draws contains the truth for the CFR,
 # rho, the mean rate of the intervals ending on days 12 to 38 (before the change) and of
 # those ending on days 50 to 78 (after it), and the true cases of the last 14 onset days
@@ -43,9 +44,12 @@ test_that("S7 (C9) a rate of wrong records which doubles is recovered with the C
   fits <- s_wrong_chains(function(chain) s_wrong_fit(
     dat, niter, 8710 + chain,
     revisions = list(wrong_rate = "walk", rho_alpha = 1, rho_beta = 1),
-    initial_revisions = list(eta = 0.07, rho = 0.3)))
-  note("S7: four chains of %d iterations took %.1f min", niter, (proc.time()[["elapsed"]] - t0) / 60)
+    initial_revisions = list(eta = 0.07, rho = 0.3), time_limit = 300))
   expect_true(all(vapply(fits, function(fit) is.list(fit) && "revisions" %in% names(fit), logical(1))))
+  # the iterations all the chains have done
+  niter <- min(vapply(fits, function(fit) max(col_of(fit$deaths, "iteration")), 0))
+  note("S7: four chains of %d iterations took %.1f min", niter, (proc.time()[["elapsed"]] - t0) / 60)
+  expect(niter >= 500, sprintf("S7: only %d iterations done in each chain", niter))
   f_deaths <- function(name) function(fit) {
     d <- fit$deaths[col_of(fit$deaths, "time_onset") == 1, ]
     col_of(d, name)[order(col_of(d, "iteration"))]

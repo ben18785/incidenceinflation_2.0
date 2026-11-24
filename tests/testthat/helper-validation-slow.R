@@ -1,14 +1,15 @@
 # Shared fits and checks for the recovery tests of the sensitivity analyses in the slow
 # tier (C9 of sensitivity_extensions.tex: S6, S7).
 
-# a fit of the deaths model to the S6 or S7 data with the form of the rate given
-s_wrong_fit <- function(dat, niter, seed, revisions, initial_revisions) {
+# a fit of the deaths model to the S6 or S7 data with the form of the rate given, stopped
+# at time_limit minutes if given
+s_wrong_fit <- function(dat, niter, seed, revisions, initial_revisions, time_limit = NULL) {
   snap <- dat$cases; snap$Rt_index <- 1L
   last <- tapply(snap$cases_reported, snap$time_onset, function(x) x[length(x)])
   init_cases <- tibble::tibble(time_onset = 1:dat$Tn, cases_true = as.integer(ceiling(1.3 * last) + 5))
   set.seed(seed)
   mcmc_single(
-    niter, snap,
+    niter, snap, time_limit = time_limit,
     priors = list(Rt = list(shape = 1, rate = 1),
                   reporting = list(mean_mu = 5, mean_sigma = 3, sd_mu = 3, sd_sigma = 2),
                   max_cases = 300, Rt_changepoints = list(), reporting_changepoints = list(),
@@ -37,11 +38,12 @@ s_wrong_chains <- function(f_chain, n_chains = 4) {
   else lapply(seq_len(n_chains), f_chain)
 }
 
-# the kept draws of a quantity in each chain (the second half), as a list of vectors
+# the kept draws of a quantity in each chain (the second half of the first niter), as a
+# list of vectors
 s_wrong_kept <- function(fits, f_values, niter)
   lapply(fits, function(fit) {
     x <- f_values(fit)
-    x[seq_along(x) > niter / 2]
+    x[seq_along(x) > niter / 2 & seq_along(x) <= niter]
   })
 
 s_wrong_check <- function(chains, truth, label) {

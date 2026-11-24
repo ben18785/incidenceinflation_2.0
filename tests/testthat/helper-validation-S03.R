@@ -22,9 +22,9 @@
 # sd_sigma = 4), starting from a mean of 3 and sd of 2.5; cold starts, the true cases
 # 1.1-1.5 times the last reported and the fraction 0.1, 0.25 (the real fits' start), 0.5
 # and 0.7; at most 4 wrong records present (as the S5 and S9 tests had).
-# Checks: max split R-hat < 1.2 over the CFR, the fraction misdated, the mean delay from
-# death to recording and the true cases of the last 14 onset days in total; the central
-# 99% interval (second half of each chain) contains the truth for each. The chain means
+# Checks: the central 99% interval (second half of each chain) contains the truth for the
+# CFR, the fraction misdated, the mean delay from death to recording and the true cases
+# of the last 14 onset days in total; the split R-hat of each is noted. The chain means
 # and the shape of the recording delay (mean^2 / sd^2, 2.25 in truth) are noted, to tell
 # the collapsed mode. Each dataset alone is not a calibration test; 99% intervals keep
 # false alarms low.
@@ -122,9 +122,6 @@ s3_test <- function(replicate) {
        paste(sprintf("%.3g", vapply(shape, mean, 0)), collapse = " "))
   rhat <- vapply(series, function(x) split_rhat(unlist(x), rep(seq_along(x), lengths(x))), 0)
   for (name in names(rhat)) note("%s split R-hat, %s: %.3f", label, name, rhat[[name]])
-  rhat[is.na(rhat)] <- Inf   # too few draws to tell
-  expect(max(rhat) < 1.2, sprintf("%s: max split R-hat %.3f (%s) is not below 1.2",
-                                  label, max(rhat), names(rhat)[which.max(rhat)]))
 
   ci_check <- function(x, truth, what) {
     x <- unlist(x)

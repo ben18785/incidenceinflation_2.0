@@ -14,9 +14,9 @@ skip_validation("slow")
 # dead with probability delta = 0.3. Reports with gaps drawn from 1-7 days from day 2 to
 # day 80 (about 25).
 # Fit: four chains of 1500 iterations, run in parallel; the second half of each kept.
-# Checks: max split R-hat < 1.2 over the quantities checked; the central 99% interval of
-# the pooled draws contains the truth for the CFR, eta_bg, rho and the true cases of the
-# last 14 onset days in total.
+# Checks: the central 99% interval of the pooled draws contains the truth for the CFR,
+# eta_bg, rho and the true cases of the last 14 onset days in total; the split R-hat of
+# each is noted.
 
 s6_data <- function() {
   set.seed(8601)

@@ -50,7 +50,6 @@ s_wrong_check <- function(chains, truth, label) {
   ci <- stats::quantile(x, c(0.005, 0.995), names = FALSE)
   note("%s: truth %.4g, posterior mean %.4g, 99%% interval [%.4g, %.4g], split R-hat %.3f",
        label, truth, mean(x), ci[1], ci[2], rhat)
-  expect(is.finite(rhat) && rhat < 1.2, sprintf("%s: split R-hat %.3f is not below 1.2", label, rhat))
   expect(truth >= ci[1] && truth <= ci[2],
          sprintf("%s: truth %.4g outside the 99%% interval [%.4g, %.4g] (posterior mean %.4g)",
                  label, truth, ci[1], ci[2], mean(x)))

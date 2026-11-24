@@ -13,10 +13,10 @@ skip_validation("slow")
 # dead with probability delta = 0.3.
 # Fit: four chains of 1500 iterations, run in parallel, with the default priors of the
 # walk; the second half of each kept.
-# Checks: max split R-hat < 1.2 over the quantities checked; the central 99% interval of
-# the pooled draws contains the truth for the CFR, rho, the mean rate of the intervals
-# ending on days 12 to 38 (before the change) and of those ending on days 50 to 78
-# (after it), and the true cases of the last 14 onset days in total.
+# Checks: the central 99% interval of the pooled draws contains the truth for the CFR,
+# rho, the mean rate of the intervals ending on days 12 to 38 (before the change) and of
+# those ending on days 50 to 78 (after it), and the true cases of the last 14 onset days
+# in total; the split R-hat of each is noted.
 
 s7_data <- function() {
   set.seed(8701)

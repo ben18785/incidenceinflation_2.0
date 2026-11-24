@@ -3,22 +3,19 @@
 # independent code. They are too slow for R-CMD-check, which skips them. Each group of
 # tests runs as its own job, in parallel, so each has GitHub's 6-hour limit to itself:
 #   T    T1-T10, the samplers and simulators one at a time (~30 min)
-#   M    M1-M9, whole-sampler runs with exact posteriors and Geweke tests (~1 h)
+#   M    M1-M4 and M6-M8, whole-sampler runs with exact posteriors and Geweke tests (~1 h)
 #   S02  S2, recovery of a deaths-model fit (stopped at 5 h 20 min)
 #   S03-1, S03-2, S03-3  S3, recovery of the main model's misdating on three datasets,
 #        one a job (4 chains in parallel from cold starts, each stopped at 5 h)
-#   S05  S5, recovery with misdated cases recorded part of the way to death (4 chains
-#        in parallel, each stopped at 4.5 h; ~3 h)
 #   S06  S6, recovery with wrong records at a constant rate (four chains in parallel)
 #   S07  S7, recovery with a walk of the rate of wrong records (four chains in parallel)
 #   S08  S8, recovery of a fit with a share of the tail of the reporting delay for
 #        each onset week, four chains in parallel (~4 h)
-#   S09  S9, recovery with a fraction dated by death varying by onset week (4 chains
-#        in parallel, each stopped at 4.5 h; ~1.5 h)
 #   S01  S1, simulation-based calibration (~3 h)
 # Pull requests and pushes to main run the medium tier (T and M); the slow tiers run on
-# demand: slow adds S02, S03-1 to S03-3 and S05-S09, all adds S01. On demand, 'groups' (e.g. "M, S09")
-# runs only those of the tier's groups.
+# demand: slow adds S02, S03-1 to S03-3 and S06-S08, all adds S01. On demand, 'groups'
+# (e.g. "M, S08") runs only those of the tier's groups. (S5 and S9 were dropped with
+# their analyses; M5 and M9 were their Geweke tests.)
 on:
   push:
     branches: [main, master]
@@ -51,8 +48,8 @@ jobs:
           case "${{ inputs.tier || 'medium' }}" in
             fast)   groups='["T"]' ;;
             medium) groups='["T", "M"]' ;;
-            slow)   groups='["T", "M", "S02", "S03-1", "S03-2", "S03-3", "S05", "S06", "S07", "S08", "S09"]' ;;
-            all)    groups='["T", "M", "S02", "S03-1", "S03-2", "S03-3", "S05", "S06", "S07", "S08", "S09", "S01"]' ;;
+            slow)   groups='["T", "M", "S02", "S03-1", "S03-2", "S03-3", "S06", "S07", "S08"]' ;;
+            all)    groups='["T", "M", "S02", "S03-1", "S03-2", "S03-3", "S06", "S07", "S08", "S01"]' ;;
           esac
           only="${{ inputs.groups }}"
           if [ -n "$only" ]; then

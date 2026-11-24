@@ -83,14 +83,6 @@ predict_state_from_draw <- function(variables, draw) {
     into <- f_onset(deaths, "dated_by_death")
     state$dated$into <- into
     state$dated$out <- state$deaths_true - f_onset(deaths, "deaths_recorded") + into
-    # a fraction which varies by onset week is held for each week
-    walk <- state$dated$walk
-    if(!is.null(walk)) {
-      state$dated$fraction <- f_onset(deaths, "dated_fraction")
-      walk$logit_fraction[walk$week_of_day] <- stats::qlogis(state$dated$fraction)
-      walk$step_sd <- parameters$dated_fraction_step_sd
-      state$dated$walk <- walk
-    }
   }
   state$nu <- log(parameters$fatal_delay_ratio)
   state$triggered <- parameters$triggered
@@ -151,8 +143,7 @@ predict_onset_terms <- function(prediction, k, days) {
   survivals <- joint_survivals(
     days, state$onset_times[k], reporting_parameters,
     delay_of_onset(deaths_delay_by_onset(state), k), revision,
-    state$dated$reporting, state$recording_effects, state$nu, state$triggered,
-    state$dated$position$after_probabilities)
+    state$dated$reporting, state$recording_effects, state$nu, state$triggered)
   wrong <- NULL
   if(is_wrong_records(revision)) {
     dated <- dated_counts(state)

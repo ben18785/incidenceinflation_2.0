@@ -1,9 +1,10 @@
 # S3 (slow tier): recovery of the main model's misdating (fatal cases dated by death in
 # the exact form with a single estimated fraction, as the fits to the Bundibugyo reports)
 # on three datasets from the independent simulator (helper-validation-sim.R,
-# sim_reports_deaths_dated), each its own job (test-validation-S03-1, -2 and -3). S5 and
-# S9 found a second mode in the exact form, with the gamma delay from death to recording
-# collapsed (shape near 0) and too few fatal cases misdated, which chains from cold starts
+# sim_reports_deaths_dated), each its own job (test-validation-S03-1, -2 and -3). The
+# recovery tests of S5 and S9 (sensitivity analyses since dropped) found a second mode in
+# the exact form, with the gamma delay from death to recording collapsed (shape near 0)
+# and too few fatal cases misdated, which chains from cold starts
 # reach and do not leave; S3 asks whether the main model, from starts as the real fits
 # use, finds the truth.
 #
@@ -20,7 +21,7 @@
 # constant with the real fits' prior (mean_mu = 4, mean_sigma = 4, sd_mu = 4,
 # sd_sigma = 4), starting from a mean of 3 and sd of 2.5; cold starts, the true cases
 # 1.1-1.5 times the last reported and the fraction 0.1, 0.25 (the real fits' start), 0.5
-# and 0.7; at most 4 wrong records present (as S5 and S9).
+# and 0.7; at most 4 wrong records present (as the S5 and S9 tests had).
 # Checks: max split R-hat < 1.2 over the CFR, the fraction misdated, the mean delay from
 # death to recording and the true cases of the last 14 onset days in total; the central
 # 99% interval (second half of each chain) contains the truth for each. The chain means

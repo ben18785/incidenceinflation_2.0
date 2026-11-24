@@ -130,13 +130,6 @@ ridge_logp <- function(state, cases_true, renewal, settings) {
     logp <- logp + stats::dbeta(f, dated$fraction_prior$alpha,
                                 dated$fraction_prior$beta, log=TRUE)
   }
-  # a fraction which varies by onset week: the prior of its walk given the sd
-  # of the steps (which the move does not change)
-  walk <- dated$walk
-  if(!is.null(walk))
-    logp <- logp +
-      stats::dnorm(walk$logit_fraction[1], walk$first_mean, walk$first_sd, log=TRUE) +
-      sum(stats::dnorm(diff(walk$logit_fraction), 0, walk$step_sd, log=TRUE))
   if(!is.finite(logp))
     return(list(logp=-Inf))
   # the fatal cases of each kind given the true cases, the cases recorded for
@@ -210,13 +203,6 @@ ridge_propose <- function(state, cases_true, reporting_by_onset,
     return(NULL)
   if(!is.null(state$dated$fraction_prior))
     state$dated$fraction <- state$dated$fraction + sign * m / n_fatal
-  walk <- state$dated$walk
-  if(!is.null(walk)) {
-    # the whole walk is shifted on the logit scale, its steps unchanged
-    walk$logit_fraction <- walk$logit_fraction + walk$ridge_slope * sign * m / n_fatal
-    state$dated$walk <- walk
-    state$dated$fraction <- stats::plogis(walk$logit_fraction[walk$week_of_day])
-  }
   log_scale <- ridge$slope * sign * m / n_fatal + noise
   state$recording$parameters$mean <- state$recording$parameters$mean * exp(log_scale)
   state$recording$centre$mean <- state$recording$centre$mean * exp(log_scale)
@@ -234,10 +220,7 @@ ridge_propose <- function(state, cases_true, reporting_by_onset,
 #' another, to dated by death if s is 1 and the reverse otherwise, each chosen
 #' as in \code{ridge_relabel_logq}; if the fraction is estimated it changes by
 #' s m / N, where N is the number of fatal cases, which is what it would be
-#' were it the share of them dated by death, or, if it varies by onset week,
-#' the logit of the fraction of every week changes by ridge_slope s m / N
-#' (setting 'ridge_slope' of the walk), so that the steps of the walk are
-#' unchanged and the shift adds nothing to the Jacobian; and the means of the delay to a
+#' were it the share of them dated by death; and the means of the delay to a
 #' death being recorded of every segment, and their centre, are multiplied
 #' by exp(slope s m / N + e), with e normal with mean zero and sd 'sd'. The
 #' reverse move has direction -s, the same m and -e, and undoes the changes

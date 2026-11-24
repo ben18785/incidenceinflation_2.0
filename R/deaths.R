@@ -327,11 +327,6 @@ sample_cfr_changepoints <- function(deaths_true, cases_true, p_change,
 #' that of others (both its mean and its sd)
 #' @param triggered the proportion of fatal cases which are reported when
 #' their death is recorded, if they have not been reported by then
-#' @param after_probabilities NULL, or, where fatal cases dated by death are
-#' recorded for a day part of the way from onset to death (and are reported
-#' after the delay from a death to its being recorded), the probability that
-#' such a case dies 0, 1, 2, ... days after the day it is recorded for (see
-#' \code{log_dated_recorded})
 #'
 #' @return a named list of vectors with an element for each report:
 #' 'log_reported' (a case which is not fatal has not been reported),
@@ -345,8 +340,7 @@ sample_cfr_changepoints <- function(deaths_true, cases_true, p_change,
 joint_survivals <- function(days, day_onset, reporting_parameters,
                             death_parameters, revision_parameters=NULL,
                             dated_reporting_parameters=NULL,
-                            recording_effects=NULL, nu=0, triggered=0,
-                            after_probabilities=NULL) {
+                            recording_effects=NULL, nu=0, triggered=0) {
   f <- function(parameters, effects=revision_parameters)
     log_undetected_days(days, day_onset, parameters, effects)
   log_reported <- f(reporting_parameters)
@@ -361,8 +355,7 @@ joint_survivals <- function(days, day_onset, reporting_parameters,
        log_recorded=f(death_parameters, recording_effects),
        log_dated=if(is_dated_same) log_reported_fatal
        else if(is_dated_recording)
-         log_dated_recorded(days, day_onset, death_parameters, recording_effects,
-                            after_probabilities)
+         f(death_parameters, effects_from_death(recording_effects))
        else f(dated_reporting_parameters),
        is_dated_same=is_dated_same,
        is_dated_recording=is_dated_recording,
@@ -380,57 +373,6 @@ effects_from_death <- function(recording_effects) {
   if(length(recording_effects) == 0)
     return(NULL)
   recording_effects
-}
-
-#' Logs of the probabilities that a fatal case dated by death, recorded for a
-#' day, has not been reported by each report, where it is reported after the
-#' delay from its death to its being recorded
-#'
-#' Where such a case dies on the day it is recorded for, this is the
-#' survival of the delay from a death to its being recorded, S(d | t), from
-#' day d = day_recorded. Where it is recorded for a day part of the way from
-#' onset to death, and dies z >= 0 days after that day with probability
-#' p(z), the same for every such case, it is
-#' \deqn{\sum_{z > t - d} p(z) + \sum_{0 \le z \le t - d} p(z) S(d + z | t)}
-#' for a report on day t: not dead by then, or dead and not yet recorded. In
-#' S(d + z | t) the death is on day d + z, but the share of the backlog is
-#' that of the day recorded for, as are the delay and what alters it
-#' (death_parameters are those of that day).
-#'
-#' @param days the times of the reports, in increasing order
-#' @param day_recorded the day for which the case is recorded
-#' @param death_parameters named list of the 'mean' and 'sd' of the delay
-#' from a death to its being recorded, for cases recorded for day_recorded
-#' @param recording_effects see \code{joint_survivals}
-#' @param after_probabilities NULL (the case dies on the day it is recorded
-#' for), or the probability that it dies 0, 1, 2, ... days after that day
-#'
-#' @return a vector of log-probabilities
-log_dated_recorded <- function(days, day_recorded, death_parameters,
-                               recording_effects=NULL, after_probabilities=NULL) {
-  effects <- effects_from_death(recording_effects)
-  if(is.null(after_probabilities) || length(after_probabilities) == 1)
-    return(log_undetected_days(days, day_recorded, death_parameters, effects))
-  # the share of the backlog is that of the day recorded for, whichever day
-  # the death is on
-  backlog <- effects$backlog
-  if(!is.null(backlog))
-    effects$backlog$share[] <- backlog$share[
-      min(max(round(day_recorded), 1), length(backlog$share))]
-  # the part of the delay which does not depend on the day of death is
-  # worked out once for all of them
-  if(is.null(effects$lag_cache))
-    effects$lag_cache <- new_lag_cache()
-  log_terms <- matrix(-Inf, length(days), length(after_probabilities))
-  for(z in seq_along(after_probabilities) - 1) {
-    log_terms[, z + 1] <- log(after_probabilities[z + 1])
-    is_dead <- days >= day_recorded + z
-    if(any(is_dead))
-      log_terms[is_dead, z + 1] <- log_terms[is_dead, z + 1] +
-        log_undetected_days(days[is_dead], day_recorded + z, death_parameters, effects)
-  }
-  log_max <- apply(log_terms, 1, max)
-  pmin(log_max + log(rowSums(exp(log_terms - log_max))), 0)
 }
 
 #' Probability that an event which had not happened by the report before has
@@ -1370,8 +1312,7 @@ deaths_paths_step <- function(state, cases_true, reporting_by_onset,
     survivals <- joint_survivals(
       reports$time_reported, state$onset_times[k], reporting_parameters,
       delay_of_onset(delays, k), revision_parameters, state$dated$reporting,
-      state$recording_effects, state$nu, state$triggered,
-      state$dated$position$after_probabilities)
+      state$recording_effects, state$nu, state$triggered)
     wrong <- NULL
     if(is_wrong) {
       l_units[[k]] <- deaths_wrong_units(reports$time_reported, state$onset_times[k],
@@ -1468,7 +1409,7 @@ deaths_refresh_survivals <- function(state, reporting_by_onset,
     state$survivals[[k]] <- joint_survivals(
       days, state$onset_times[k], reporting_parameters, delay_of_onset(delays, k),
       revision_parameters, state$dated$reporting, state$recording_effects,
-      state$nu, state$triggered, state$dated$position$after_probabilities)
+      state$nu, state$triggered)
     if(is_wrong)
       state$wrong_units[[k]] <- deaths_wrong_units(
         days, state$onset_times[k], reporting_parameters, revision_parameters)
@@ -1722,9 +1663,9 @@ deaths_recording_day_logp <- function(state, k, death_parameters,
     recording_effects)
   is_dated_recording <- isTRUE(survivals$is_dated_recording)
   if(is_dated_recording)
-    survivals$log_dated <- log_dated_recorded(
+    survivals$log_dated <- log_undetected_days(
       state$reports[[k]]$time_reported, state$onset_times[k], death_parameters,
-      recording_effects, state$dated$position$after_probabilities)
+      effects_from_death(recording_effects))
   if((!is.null(survivals$triggered) && survivals$triggered > 0) |
      (is_dated_recording & dated$into > 0))
     return(fatal_reports_logp(path, survivals, dated$fatal_recorded, dated$into))
@@ -1807,11 +1748,7 @@ deaths_parameters_step <- function(state, cases_true, settings) {
 #' death is recorded if not before, 'dated_fraction', the fraction of fatal
 #' cases which are recorded for their day of death (that of the first onset
 #' time, if it differs between them), 'wrong_dead', the probability a wrong record is shown as dead, and the
-#' effect of each day of the week on the delay to a death being recorded).
-#' If the fraction dated by death varies by onset week, 'deaths' also has
-#' column 'dated_fraction', the fraction of each onset time, and
-#' 'deaths_parameters' column 'dated_fraction_step_sd', the standard
-#' deviation of the weekly steps of the logit of the fraction
+#' effect of each day of the week on the delay to a death being recorded)
 deaths_draws <- function(state, iteration) {
   delays <- deaths_delay_by_onset(state)
   dated <- dated_counts(state)
@@ -1827,8 +1764,6 @@ deaths_draws <- function(state, iteration) {
     triggered=ifelse(is.null(state$triggered), 0, state$triggered),
     dated_fraction=ifelse(is.null(state$dated), 0, state$dated$fraction[1]),
     wrong_dead=state$delta)
-  if(!is.null(state$dated$walk))
-    parameters$dated_fraction_step_sd <- state$dated$walk$step_sd
   if(!is.null(state$dated$ridge))
     parameters$ridge_accepted <- ifelse(is.null(state$ridge_accepted), 0,
                                         state$ridge_accepted)
@@ -1858,8 +1793,6 @@ deaths_draws <- function(state, iteration) {
     delay_sd=delays$sd,
     deaths_recorded=dated$fatal_recorded,
     dated_by_death=dated$into)
-  if(!is.null(state$dated$walk))
-    deaths$dated_fraction <- state$dated$fraction
   if(!is.null(backlog))
     deaths$backlog_share <- backlog$share[pmin(pmax(round(state$onset_times), 1),
                                                length(backlog$share))]
@@ -1906,13 +1839,7 @@ deaths_draws <- function(state, iteration) {
 #' rounded up to a whole number of days; not needed with onset_to_death) and,
 #' optionally, 'reporting' (a named list of the 'mean' and 'sd' of the delay
 #' from the day of death to those cases being reported; with onset_to_death
-#' the default is instead the delay from a death to its being recorded) and
-#' 'position' (TRUE or a named list, as for \code{dated_position_settings},
-#' with onset_to_death only: such a case is then recorded for a day z1 days
-#' after onset and dies z2 days after that day, with z1 and z2 drawn from the
-#' distributions given there, and is reported after the delay from its death
-#' to its being recorded, with the share of the backlog and the delay of the
-#' day it is recorded for)
+#' the default is instead the delay from a death to its being recorded)
 #' @param onset_to_death an optional named list of the 'mean' and 'sd' of the
 #' gamma-distributed time from onset to death of every fatal case, which is
 #' rounded up to a whole number of days. death_parameters is then the delay
@@ -2091,8 +2018,6 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
   }
   is_dated_by_death <- rep(FALSE, n)
   day <- onset
-  # the days from the day a case dated by death is recorded for to its death
-  days_after <- rep(0, n)
   days_to_death <- NULL
   if(!is.null(onset_to_death))
     days_to_death <- ceiling(f_delay(rep(onset_to_death$mean, n),
@@ -2106,20 +2031,6 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
                                     rep(dated_by_death$sd, n)))
     if(is.null(days_dated))
       stop("The time from onset to death of fatal cases dated by death must be given.")
-    # recorded for a day part of the way to death, z1 days after onset, and
-    # dying z2 days after that day
-    if(!is.null(dated_by_death$position) && !identical(dated_by_death$position, FALSE)) {
-      if(is.null(onset_to_death) | is.list(dated_by_death$reporting))
-        stop("Fatal cases recorded for a day part of the way to death need onset_to_death, and are reported after the delay from their death to its being recorded.")
-      parameters <- if(is.null(dated_by_death$mean)) onset_to_death else dated_by_death
-      position <- dated_position_settings(
-        dated_by_death$position, parameters$mean^2 / parameters$sd^2,
-        parameters$mean / parameters$sd^2)
-      n_dated <- sum(is_dated_by_death)
-      f_draw <- function(p) sample.int(length(p), n_dated, replace=TRUE, prob=p)
-      days_dated[is_dated_by_death] <- f_draw(position$lag_probabilities)
-      days_after[is_dated_by_death] <- f_draw(position$after_probabilities) - 1
-    }
     # rounded up, so that a case dated by its death is at least a day late
     day[is_dated_by_death] <- onset[is_dated_by_death] +
       days_dated[is_dated_by_death]
@@ -2136,13 +2047,11 @@ simulate_cases_deaths <- function(cases_true, report_days, reporting_parameters,
       rep(dated_by_death$reporting$sd, n_dated))
   } else if(!is.null(onset_to_death) & any(is_dated_by_death)) {
     # reported after the delay from a death to its being recorded, which is
-    # that of the day the case is recorded for (as is the share of the
-    # backlog), counted from the day of death
+    # that of the day the case is recorded for
     day_dated <- pmin(day[is_dated_by_death], n_days)
-    after <- days_after[is_dated_by_death]
-    delay_reported[is_dated_by_death] <- after + f_backlog(
+    delay_reported[is_dated_by_death] <- f_backlog(
       f_tail(f_delay(death$mean[day_dated], death$sd[day_dated])),
-      day[is_dated_by_death] + after, f_share(recording_backlog$share, day_dated))
+      day[is_dated_by_death], f_share(recording_backlog$share, day_dated))
   }
   # a share of cases are reported after an exponential delay, that of the
   # day they are recorded for

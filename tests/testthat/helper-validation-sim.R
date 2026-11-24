@@ -199,7 +199,7 @@ sim_reports_deaths <- function(I, report_days, delay, cfr, pdie, rec_mean, rec_s
 }
 
 # ---- Full deaths process with misdated cases (appendix A, 'Cases recorded for their
-# day of death'; sensitivity_extensions.tex, S9) ----------------------------------------
+# day of death'; the recovery test S3) ------------------------------------------------------
 # As sim_reports_deaths, except that each fatal case of onset day t is misdated with
 # probability fraction[t] (one value per onset day, so a fraction varying by onset week
 # is given week by week). A misdated case dying z ~ pdie days after onset is recorded for
@@ -213,33 +213,17 @@ sim_reports_deaths <- function(I, report_days, delay, cfr, pdie, rec_mean, rec_s
 # genuine cases recorded for the day, Itilde(d) = I(d) - (its misdated cases) +
 # (misdated cases recorded for d), eq. (A.wrong-entered). Returns also, for each onset
 # day, the true fatal cases and those misdated.
-# With p_recorded and p_after (sensitivity_extensions.tex, S5), a misdated case is
-# recorded for a day part of the way to its death: for d = t + z1, z1 ~ p_recorded (from
-# 1), and it dies z2 ~ p_after (from 0) days after d, z1 and z2 independent; it enters
-# the records when its death does, in report r >= d + z2 if Trec <= r - d - z2 + 1/2
-# (Trec those of day d). Those with onset before day 1 are recorded for d with
-# probability p_recorded(d - s) and each has its own z2. The correctly dated fatal cases
-# still die z ~ pdie days after onset.
 sim_reports_deaths_dated <- function(I, report_days, delay, cfr, pdie, rec_mean, rec_sd,
                                      fraction, history = NULL, tau = 1, eta = 0,
-                                     rho = 0.5, delta = 0, p_recorded = NULL,
-                                     p_after = NULL) {
+                                     rho = 0.5, delta = 0) {
   n_days <- length(I)
   surv <- function(d) ref_surv_case(d, delay$mean, delay$sd)
   zmax <- length(pdie)
-  is_position <- !is.null(p_recorded)
-  if (!is_position) p_recorded <- pdie
-  zmax_recorded <- length(p_recorded)
   fatal <- misdated <- integer(n_days)
-  # the misdated cases recorded for each day: their delays from that day to entering
-  # the records (the recording delay, after z2 days to death with p_after)
+  # the misdated cases recorded for each day: their recording delays
   arrivals <- vector("list", n_days)
   f_arrive <- function(d, n) {
-    if (n > 0) {
-      a <- sim_rgamma_ms(n, rec_mean[d], rec_sd[d])
-      if (is_position) a <- a + sample.int(length(p_after), n, replace = TRUE, prob = p_after) - 1
-      arrivals[[d]] <<- c(arrivals[[d]], a)
-    }
+    if (n > 0) arrivals[[d]] <<- c(arrivals[[d]], sim_rgamma_ms(n, rec_mean[d], rec_sd[d]))
   }
   correct <- vector("list", n_days)
   for (t in seq_len(n_days)) {
@@ -248,11 +232,7 @@ sim_reports_deaths_dated <- function(I, report_days, delay, cfr, pdie, rec_mean,
     is_f <- stats::runif(n) < cfr[t]; fatal[t] <- sum(is_f)
     is_mis <- is_f & stats::runif(n) < fraction[t]; misdated[t] <- sum(is_mis)
     z <- sample.int(zmax, n, replace = TRUE, prob = pdie)
-    # the day a misdated case is recorded for: its day of death, or with p_recorded a
-    # day part of the way to it
-    z_mis <- z[is_mis]
-    if (is_position) z_mis <- sample.int(zmax_recorded, sum(is_mis), replace = TRUE, prob = p_recorded)
-    for (d in (t + z_mis)[t + z_mis <= n_days]) f_arrive(d, 1)
+    for (d in (t + z[is_mis])[t + z[is_mis] <= n_days]) f_arrive(d, 1)
     keep <- !is_mis
     correct[[t]] <- list(tc = tc[keep], is_f = is_f[keep], z = z[keep],
                          trec = sim_rgamma_ms(sum(keep), rec_mean[t], rec_sd[t]),
@@ -260,10 +240,10 @@ sim_reports_deaths_dated <- function(I, report_days, delay, cfr, pdie, rec_mean,
   }
   if (length(history)) {
     days_before <- seq_along(history) - length(history)       # ..., -1, 0
-    for (d in seq_len(min(n_days, zmax_recorded))) {
+    for (d in seq_len(min(n_days, zmax))) {
       lag <- d - days_before
-      ok <- lag >= 1 & lag <= zmax_recorded
-      f_arrive(d, stats::rpois(1, sum(history[ok] * cfr[1] * fraction[1] * p_recorded[lag[ok]])))
+      ok <- lag >= 1 & lag <= zmax
+      f_arrive(d, stats::rpois(1, sum(history[ok] * cfr[1] * fraction[1] * pdie[lag[ok]])))
     }
   }
   rows <- list()

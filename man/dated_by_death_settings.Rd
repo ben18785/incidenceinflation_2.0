@@ -14,10 +14,7 @@ fatal cases with onset on a day which are recorded for their day of death:
 a single value or one for each onset time if it is known; or, if it is to
 be estimated, a named list of 'alpha' and 'beta', the parameters of its
 beta prior, and optionally 'initial', the value to start from. An
-estimated fraction is the same for every onset time, unless the list is
-instead one of 'walk', TRUE or a named list of settings (see
-\code{dated_walk_settings}): the fraction then varies by onset week as a
-random walk on the logit scale); 'mean' and 'sd' (of
+estimated fraction is the same for every onset time); 'mean' and 'sd' (of
 the time from onset to death of those cases, which has a gamma distribution
 rounded up to a whole number of days, so is at least one day; by default
 those of onset_to_death); and optionally
@@ -33,20 +30,13 @@ four for each onset time, or one in the exact form) and 'exact' (if TRUE,
 the fatal cases dated by onset and by death among those reported are
 followed separately, which is exact and slower; by default each fatal
 case recorded for a day is taken to be dated by death with a probability)
-and 'collapse_fraction' (if TRUE, and a single fraction is estimated, the
+and 'collapse_fraction' (if TRUE, and the fraction is estimated, the
 changes to which fatal cases are dated by death are made with the fraction
 integrated out, and the fraction is then drawn exactly given them: see
 \code{dated_fraction_marginal}. By default FALSE, the changes are made at
 the current fraction) and 'ridge' (NULL, the default, or TRUE or a named
 list of settings for the joint move of \code{deaths_ridge_step}, which
-needs the exact form: see \code{ridge_settings})
-and 'position' (NULL, the default, or TRUE or a named list: those cases
-are then recorded for a day part of the way from onset to death, rather
-than for the day of death, and are reported after the delay from their
-death to its being recorded, so this needs reporting "recording": see
-\code{dated_position_settings}. 'max_lag' is then the longest time from
-onset to the day recorded for, by default the 99.9th percentile of its
-distribution)}
+needs the exact form: see \code{ridge_settings})}
 
 \item{onset_to_death}{NULL, or the element of that name of the result of
 \code{deaths_settings}: the time from onset to death of every fatal case}
@@ -55,12 +45,8 @@ distribution)}
 NULL if no fatal cases are dated by death; otherwise the list with
 'fraction' given for each onset time, defaults filled in,
 'lag_probabilities' added (the probability of each time from onset to
-death, or, with 'position', to the day recorded for, from one day to
-max_lag), 'fraction_prior' (NULL if the fraction
-is known or varies by onset week; otherwise a named list of 'alpha' and
-'beta'), only if the fraction varies by onset week, 'walk' (see
-\code{dated_walk_settings}) and, only if they are recorded part of the way
-to death, 'position' (see \code{dated_position_settings})
+death, from one day to max_lag) and 'fraction_prior' (NULL if the fraction
+is known; otherwise a named list of 'alpha' and 'beta')
 }
 \description{
 Settings for fatal cases which are recorded for their day of death

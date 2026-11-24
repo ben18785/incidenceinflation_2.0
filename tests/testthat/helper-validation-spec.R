@@ -53,22 +53,6 @@ ref_pdie <- function(mean = 9.3, sd = 5.5, zmax = 36) {
   p / sum(p)
 }
 
-# S5 of the sensitivity analyses (sensitivity_extensions.tex): a misdated case is
-# recorded for the day z1 days after onset and dies z2 days after that day, z1 and z2
-# independent. With T_die ~ Gamma(a, c) (mean, sd) and the share of the way to death
-# at which it is recorded Beta(a1, a - a1), z1 is Gamma(a1, c) on (z1 - 1, z1], z1 >= 1,
-# and z2 is Gamma(a - a1, c) on (z2, z2 + 1], z2 >= 0, each truncated at its 99.9th
-# percentile and rescaled. a1 = share a (by default a / 2).
-ref_position_delays <- function(mean = 9.3, sd = 5.5, share = 1 / 2) {
-  a <- ref_gamma_shape(mean, sd); c <- ref_gamma_rate(mean, sd); a1 <- share * a
-  f_days <- function(shape) {
-    n <- max(1, ceiling(stats::qgamma(0.999, shape, c)))
-    p <- stats::pgamma(seq_len(n), shape, c) - stats::pgamma(seq_len(n) - 1, shape, c)
-    p / sum(p)
-  }
-  list(p_recorded = f_days(a1), p_after = if (a1 < a) f_days(a - a1) else 1)
-}
-
 # ---- Reporting of cases (A.4) ---------------------------------------------------
 # Probability a case with onset on day t has NOT been reported by the end of day
 # t' = t + delta. Onset is taken at the middle of day t, so
